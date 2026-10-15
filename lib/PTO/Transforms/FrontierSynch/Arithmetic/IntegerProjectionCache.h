@@ -41,7 +41,7 @@ public:
             accumulateCost(counts.emptinessHits, 1); return found->second;
         }
         accumulateCost(counts.emptinessBuilds, 1);
-        const bool value = systems[id].isEmpty();
+        const bool value = systems[id].isEmpty(&counts.feasibility);
         empty.emplace(id, value);
         return value;
     }

@@ -10,6 +10,8 @@
 // Both stages borrow an append-only arena and unchanged original invocation.
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include "OriginalCutFacts.h"
+#include "RegionConstruction.h"
+#include <type_traits>
 #include "../../InsertSync/SyncScalarReplay.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -29,6 +31,11 @@ public:
     SmallVector<Value> directInputs, boundInputs;
     SmallVector<Operation*> replay;
 };
+uint32_t cutExpressionRoot(const CutExpressionRecipe& recipe) { return recipe.selected; }
+ArrayRef<uint32_t> cutExpressionSharedExpressions(const CutExpressionRecipe& recipe)
+{
+    return recipe.boundExpressions;
+}
 void appendCutExpressionKey(const CutExpressionRecipe& recipe, SmallVectorImpl<uint64_t>& key)
 {
     key.push_back(reinterpret_cast<uintptr_t>(recipe.owner));
@@ -168,87 +175,154 @@ FailureOr<std::shared_ptr<const CutExpressionRecipe>> RegionExpressions::prepare
     }
     return std::shared_ptr<const CutExpressionRecipe>(std::move(recipe));
 }
-void RegionExpressions::importSharedBindings(const CutExpressionRecipe& recipe, CutEmission& context,
-                                            const SharedCutBindings& shared)
+template<class Memo>
+FailureOr<detail::ScalarToken> detail::RegionConstructionAccess::schedule(RegionExpressions& arena,
+    const CutExpressionRecipe& recipe, ScalarConstruction& construction, Operation* cut,
+    Memo& memo, const RegionConstructionBindings* shared)
 {
-    auto import = [&](auto key, auto& memo, auto lookup) {
-        if (memo.count(key) || !lookup) { return; }
-        if (context.sharedRequests != UINT64_MAX) { ++context.sharedRequests; }
-        if (auto value = lookup(key)) {
-            memo.try_emplace(key, value);
-            if (context.sharedImports != UINT64_MAX) { ++context.sharedImports; }
+    using Id = RegionExpressions::Id;
+    auto reject = [&](const char* message) -> FailureOr<ScalarToken> {
+        arena.emissionMessage = message; return failure();
+    };
+    if (recipe.owner != &arena || recipe.cut != cut || !cut || !arena.valid(recipe.selected) ||
+        !arena.constructionMessage.empty()) {
+        return reject("prepared guarded expression requires its original arena and cut");
+    }
+    bool foreignToken = false;
+    auto token = [&](auto value) -> ScalarToken {
+        if constexpr (std::is_same_v<decltype(value), Value>) { return construction.input(value); }
+        else {
+            if (!construction.owns(value)) { foreignToken = true; return {}; }
+            return value;
         }
     };
-    // Required bindings are checked even when the selected root is cached.
-    // Other expressions are visited only until a local/shared value is found.
-    for (Id id : recipe.boundExpressions) { import(id, context.values, shared.values); }
-    SmallVector<Id> pending{recipe.selected};
+    auto put = [](auto& map, auto key, ScalarToken value) {
+        if constexpr (std::is_same_v<decltype(map.lookup(key)), Value>) { map[key] = value.value; }
+        else { map[key] = value; }
+    };
+    auto increment = [](uint64_t& value) { if (value != UINT64_MAX) { ++value; } };
+    auto import = [&](auto key, auto& map, auto lookup) {
+        if (map.count(key) || !lookup) { return; }
+        increment(memo.sharedRequests);
+        if (auto value = lookup(key)) {
+            if (!construction.owns(value)) { foreignToken = true; return; }
+            put(map, key, value); increment(memo.sharedImports);
+        }
+    };
+    if (shared) {
+        for (Id id : recipe.boundExpressions) { import(id, memo.values, shared->values); }
+        SmallVector<Id> pending{recipe.selected};
+        llvm::DenseSet<Id> seen;
+        while (!pending.empty()) {
+            const auto id = pending.pop_back_val();
+            if (memo.values.count(id) || !seen.insert(id).second) { continue; }
+            import(id, memo.values, shared->values);
+            if (!memo.values.count(id)) { arena.appendOperands(arena.nodes[id], pending); }
+        }
+        for (Value value : recipe.boundInputs) { import(value, memo.inputs, shared->inputs); }
+        for (Operation* op : recipe.replay) {
+            for (Value value : op->getResults()) { import(value, memo.inputs, shared->inputs); }
+        }
+    }
+    for (Id id : recipe.boundExpressions) {
+        if (!token(memo.values.lookup(id))) { return reject("prepared guarded expression lost an expression binding"); }
+    }
+    for (Value value : recipe.boundInputs) {
+        if (!token(memo.inputs.lookup(value))) { return reject("prepared guarded expression lost an input binding"); }
+    }
+    for (Operation* op : recipe.replay) {
+        if (arena.forbiddenRecomputation.contains(op)) {
+            return reject("prepared guarded expression producer is no longer replayable");
+        }
+    }
+    if (foreignToken) { return reject("prepared guarded expression mixes scalar construction owners"); }
+    const auto cached = token(memo.values.lookup(recipe.selected));
+    if (foreignToken) { return reject("prepared guarded expression mixes scalar construction owners"); }
+    if (cached) { return cached; }
+    llvm::DenseMap<Value, ScalarToken> mapping;
+    auto bind = [&](Value original, ScalarToken replacement) {
+        mapping[original] = replacement; increment(memo.replayBindings);
+    };
+    for (Value value : recipe.directInputs) { bind(value, construction.input(value)); }
+    for (Value value : recipe.boundInputs) { bind(value, token(memo.inputs.lookup(value))); }
+    for (Operation* op : recipe.replay) {
+        if (llvm::all_of(op->getResults(), [&](Value value) { return memo.inputs.count(value); })) {
+            for (Value value : op->getResults()) { mapping[value] = token(memo.inputs.lookup(value)); }
+            continue;
+        }
+        SmallVector<ScalarToken> operands;
+        for (auto value : op->getOperands()) {
+            auto found = mapping.find(value);
+            operands.push_back(found == mapping.end() ? construction.input(value) : found->second);
+        }
+        const auto results = construction.replay(*op, operands);
+        if (results.size() != op->getNumResults()) { return reject("prepared scalar replay lost result bindings"); }
+        for (auto [original, result] : llvm::zip(op->getResults(), results)) {
+            mapping[original] = result; put(memo.inputs, original, result);
+        }
+    }
+    auto lookup = [&](Id id) { return token(memo.values.lookup(id)); };
+    for (Id id : recipe.inputs) {
+        if (memo.values.count(id)) { continue; }
+        const auto& node = arena.nodes[id];
+        auto found = mapping.find(node.value);
+        const auto input = found == mapping.end() ? construction.input(node.value) : found->second;
+        put(memo.values, id, arena.constructNode(node, construction, cut->getContext(), lookup, &input));
+    }
+    auto function = cut->getParentOfType<func::FuncOp>();
+    if (!function) { return reject("regional expression emission requires an original function"); }
+    if (arena.dominanceRoot != function.getOperation()) {
+        arena.dominanceRoot = function.getOperation();
+        arena.dominance = std::make_unique<DominanceInfo>(arena.dominanceRoot);
+    }
+    SmallVector<Id> pending{recipe.selected}, order;
     llvm::DenseSet<Id> seen;
     while (!pending.empty()) {
         const auto id = pending.pop_back_val();
-        if (context.values.count(id) || !seen.insert(id).second) { continue; }
-        import(id, context.values, shared.values);
-        if (!context.values.count(id)) { appendOperands(nodes[id], pending); }
+        if (memo.values.count(id) || !seen.insert(id).second) { continue; }
+        const auto& node = arena.nodes[id];
+        if (node.kind == RegionExpressions::Kind::Input &&
+            !detail::originalValueAvailable(node.value, cut, *arena.dominance)) {
+            return reject("regional expression input is unavailable at endpoint cut");
+        }
+        arena.appendOperands(node, pending); order.push_back(id);
     }
-    for (Value value : recipe.boundInputs) { import(value, context.inputs, shared.inputs); }
-    for (Operation* op : recipe.replay) {
-        for (Value value : op->getResults()) { import(value, context.inputs, shared.inputs); }
+    llvm::sort(order);
+    for (Id id : order) {
+        put(memo.values, id, arena.constructNode(arena.nodes[id], construction, cut->getContext(), lookup));
     }
+    auto result = lookup(recipe.selected);
+    if (foreignToken || !result) { return reject("prepared guarded expression lost its construction owner"); }
+    return result;
+}
+FailureOr<detail::ScalarToken> detail::RegionConstructionAccess::construct(RegionExpressions& arena,
+    const CutExpressionRecipe& recipe, ScalarConstruction& construction, Operation* cut,
+    RegionConstructionContext& context, const RegionConstructionBindings* shared)
+{
+    const auto message = arena.emissionMessage;
+    arena.emissionMessage.clear();
+    auto result = schedule(arena, recipe, construction, cut, context, shared);
+    arena.emissionMessage = message;
+    return result;
 }
 FailureOr<Value> RegionExpressions::emitPreparedContextual(const CutExpressionRecipe& recipe,
     OpBuilder& builder, Operation* cut, CutEmission& context, const SharedCutBindings* shared)
 {
     emissionMessage.clear();
-    if (recipe.owner != this || recipe.cut != cut || !valid(recipe.selected) ||
-        !constructionMessage.empty() || !builder.getInsertionBlock() || builder.getInsertionBlock()->getParent()) {
-        emissionMessage = "prepared guarded expression requires its original arena, cut and detached block";
-        return failure();
+    if (!cut || !builder.getInsertionBlock() || builder.getInsertionBlock()->getParent()) {
+        emissionMessage = "prepared guarded expression requires a detached block"; return failure();
     }
-    if (shared) { importSharedBindings(recipe, context, *shared); }
-    // A recipe may depend on earlier cut-local bindings, but never retains
-    // their generated Values. Reject missing dependencies before any mutation.
-    for (Id id : recipe.boundExpressions) {
-        if (!context.values.lookup(id)) {
-            emissionMessage = "prepared guarded expression lost an expression binding"; return failure();
-        }
-    }
-    for (Value value : recipe.boundInputs) {
-        if (!context.inputs.lookup(value)) {
-            emissionMessage = "prepared guarded expression lost an input binding"; return failure();
-        }
-    }
-    for (Operation* op : recipe.replay) {
-        if (forbiddenRecomputation.contains(op)) {
-            emissionMessage = "prepared guarded expression producer is no longer replayable"; return failure();
-        }
-    }
-    if (auto cached = context.values.lookup(recipe.selected)) { return cached; }
-    IRMapping mapping;
-    auto bind = [&](Value original, Value replacement) {
-        mapping.map(original, replacement);
-        if (context.replayBindings != UINT64_MAX) { ++context.replayBindings; }
+    detail::ScalarConstruction construction(builder, cut->getLoc());
+    auto value = [&](Id id) {
+        return shared && shared->values ? construction.input(shared->values(id)) : detail::ScalarToken{};
     };
-    for (Value value : recipe.directInputs) { bind(value, value); }
-    for (Value value : recipe.boundInputs) { bind(value, context.inputs.lookup(value)); }
-    for (Operation* op : recipe.replay) {
-        // Independently planned roots can share original replay producers.
-        // Reuse the accepted cut-local values when another recipe lowered first.
-        if (llvm::all_of(op->getResults(), [&](Value value) { return context.inputs.count(value); })) {
-            for (Value value : op->getResults()) { mapping.map(value, context.inputs.lookup(value)); }
-            continue;
-        }
-        Operation* clone = builder.clone(*op, mapping);
-        for (auto pair : llvm::zip(op->getResults(), clone->getResults())) {
-            context.inputs[std::get<0>(pair)] = std::get<1>(pair);
-        }
-    }
-    for (auto id : recipe.inputs) {
-        if (context.values.count(id)) { continue; }
-        Node node = nodes[id];
-        node.value = mapping.lookupOrDefault(node.value);
-        context.values[id] = emitNode(node, builder, cut->getLoc(), context.values);
-    }
-    return emit(recipe.selected, builder, cut, context.values);
+    auto input = [&](Value original) {
+        return shared && shared->inputs ? construction.input(shared->inputs(original)) : detail::ScalarToken{};
+    };
+    detail::RegionConstructionBindings bindings{value, input};
+    auto result = detail::RegionConstructionAccess::schedule(
+        *this, recipe, construction, cut, context, shared ? &bindings : nullptr);
+    return succeeded(result) ? FailureOr<Value>(result->value) : FailureOr<Value>(failure());
 }
 FailureOr<Value> RegionExpressions::emitContextual(Id expression, OpBuilder& builder,
     Operation* cut, CutEmission& context)

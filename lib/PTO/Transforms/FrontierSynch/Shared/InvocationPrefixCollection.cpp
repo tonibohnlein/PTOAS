@@ -209,11 +209,36 @@ LogicalResult appendPrefixIncoming(
             if (matchPattern(*guard, m_Zero())) {
                 return zero.getResult();
             }
-            auto rank = sourceRank(b, mapping, state, error);
-            if (failed(rank) || !*rank || !(*rank).getType().isIndex()) {
-                return failure();
+            auto prepareRank = [&]() -> FailureOr<Value> {
+                auto rank = sourceRank(b, mapping, state, error);
+                if (failed(rank) || !*rank || !(*rank).getType().isIndex()) { return failure(); }
+                return *rank;
+            };
+            if (matchPattern(*guard, m_One())) {
+                auto rank = prepareRank();
+                if (failed(rank)) { return failure(); }
+                // Keep the prior constant-true form: direct rank forwarding
+                // would also change structural full-acquisition qualification.
+                return b.create<arith::SelectOp>(cut->getLoc(), *guard, *rank, zero).getResult();
             }
-            return b.create<arith::SelectOp>(cut->getLoc(), *guard, *rank, zero).getResult();
+            // Rank selectors only read captured state and construct owned pure
+            // scalar expressions. Qualify the callback once as before, while
+            // executing its code only when this exact incoming edge is active.
+            // Prefix expression caches include the insertion block; then-only
+            // values cannot be reused by a later outer or sibling callback.
+            auto selected = b.create<scf::IfOp>(cut->getLoc(), TypeRange{b.getIndexType()}, *guard, true);
+            {
+                OpBuilder::InsertionGuard restore(b);
+                if (!selected.thenBlock()->empty()) { selected.thenBlock()->getTerminator()->erase(); }
+                b.setInsertionPointToStart(selected.thenBlock());
+                auto rank = prepareRank();
+                if (failed(rank)) { return failure(); }
+                b.create<scf::YieldOp>(cut->getLoc(), *rank);
+                if (!selected.elseBlock()->empty()) { selected.elseBlock()->getTerminator()->erase(); }
+                b.setInsertionPointToStart(selected.elseBlock());
+                b.create<scf::YieldOp>(cut->getLoc(), zero.getResult());
+            }
+            return selected.getResult(0);
         },
         error);
 }

@@ -10,6 +10,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/InvocationPrefixCollection.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrefixExpression.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrefixExpressionProfile.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrefixDemand.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
@@ -135,6 +136,7 @@ struct Execution {
     llvm::DenseMap<Value, int64_t> values;
     std::vector<Event> events;
     bool valid = true;
+    uint64_t rankDivisions = 0;
     int64_t get(Value v) {
         auto it = values.find(v); if (it == values.end()) { valid = false; return 0; } return it->second;
     }
@@ -164,6 +166,7 @@ struct Execution {
         } else if (auto negate = dyn_cast<arith::XOrIOp>(op)) {
             values[negate] = get(negate.getLhs()) ^ get(negate.getRhs());
         } else if (auto divide = dyn_cast<arith::DivUIOp>(op)) {
+            if (divide->hasAttr("test.rank_work")) { ++rankDivisions; }
             auto divisor = uint64_t(get(divide.getRhs()));
             if (!divisor) { return false; }
             values[divide] = uint64_t(get(divide.getLhs())) / divisor;
@@ -395,7 +398,8 @@ bool runCases(MLIRContext& context, bool loops, unsigned& cases) {
 // Supplied child interfaces have native order and no internal demands; the
 // independent graph below supplies the one selected crossing prerequisite.
 bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, unsigned inactive = 0,
-                      bool exported = false, unsigned partitions = 1, bool resetContexts = false)
+                      bool exported = false, unsigned partitions = 1, bool resetContexts = false,
+                      unsigned restriction = 0, bool residualGuard = false, uint64_t* constructed = nullptr)
 {
     OpBuilder b(&context); auto loc = b.getUnknownLoc();
     OwningOpRef<ModuleOp> module(ModuleOp::create(loc));
@@ -540,6 +544,15 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
         const auto comparison = inactive == 2 ? arena->lt(limit, rank) : arena->lt(rank, limit);
         guard = arena->land(guard, arena->land(choose, arena->land(large, comparison)));
     }
+    if (restriction) {
+        // The loop returns its initial flag unchanged. This independent input
+        // spelling is semantically identical, but leaves an unavailable proof
+        // for the exact residual-route comparison.
+        const auto flag = residualGuard ? arena->input(function.getArgument(1)) : choose;
+        const auto active = restriction == 3 ? arena->boolean(false) :
+            restriction == 1 ? flag : arena->lnot(flag);
+        guard = arena->land(guard, active);
+    }
     for (unsigned i = 0; i < partitions; ++i) {
         // Disjoint records select the same two primitive occurrences. Their
         // consumer guards remain separate, but source captures need not grow.
@@ -552,12 +565,90 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
         state->crossings.push_back({selected, outsidePort,
             arena->lt(selectedVisit, arena->input(function.getArgument(0)))});
     }
-    fs::InvocationPrefixCollection collection(function, input);
+    const bool lineageFixture = !inactive && !nested && !resetContexts && !exported && !phased &&
+        partitions == 1 && !restriction;
+    if (lineageFixture) {
+        state->constructionOrigin = "singleton-body";
+        state->constructionAnchor = loop.getOperation();
+        state->diagnosticRegion = 7;
+        // Two exact reflexivity answers share the same source-presence root.
+        // A third unrelated output must not be charged to the incoming guard.
+        auto key = [&](fs::PeriodicEventKind kind, fs::Expr ordinal) {
+            return fs::SequenceAnalysisState::EventKey{0, 0, ordinal, kind, {}};
+        };
+        for (auto kind : {fs::PeriodicEventKind::Start, fs::PeriodicEventKind::Completion}) {
+            const auto event = key(kind, selectedVisit);
+            state->reachabilityCache[{event, event}] = guard;
+        }
+        const auto unrelated = key(fs::PeriodicEventKind::Start, arena->constant(137));
+        state->reachabilityCache[{unrelated, unrelated}] = arena->lt(arena->constant(137), arena->input(count));
+    }
+    fs::InvocationPrefixCollection collection(function, input, lineageFixture);
     std::string diagnostic;
     const auto originalPorts = state->ports.size(), originalChoices = state->portChoices.size();
     if (failed(state->collectPrefix(collection, diagnostic))) { llvm::errs() << diagnostic << "\n"; return false; }
     if (state->ports.size() != originalPorts || state->portChoices.size() != originalChoices) { return false; }
     auto& spec = collection.recipe();
+    if (lineageFixture) {
+        const auto report = spec.expressionProfile->report();
+        const auto* top = report.getArray("largest_recipes");
+        bool found = false;
+        if (!top) { return false; }
+        for (const auto& entry : *top) {
+            const auto* item = entry.getAsObject();
+            const auto* lineage = item ? item->getArray("sequence_lineage_samples") : nullptr;
+            if (!lineage) { continue; }
+            if (lineage->size() != 1) { return false; }
+            const auto* sample = lineage->front().getAsObject();
+            if (!sample || sample->getString("origin") != "singleton-body" ||
+                sample->getInteger("region") != 7 || sample->getInteger("cached_queries") != 3 ||
+                sample->getInteger("reachable_cached_query_pairs") != 2) { return false; }
+            const auto* pairs = sample->getArray("query_pairs");
+            if (!pairs || pairs->size() != 2 || sample->getInteger("omitted_query_details") != 0) { return false; }
+            std::set<std::string> kinds;
+            for (const auto& pair : *pairs) {
+                const auto* query = pair.getAsObject();
+                if (!query || query->getInteger("child") != 0 || query->getInteger("output") != guard) { return false; }
+                const auto* source = query->getObject("source");
+                const auto* target = query->getObject("target");
+                if (!source || !target || source->getString("kind") != target->getString("kind")) { return false; }
+                const auto kind = source->getString("kind");
+                if (!kind) { return false; }
+                kinds.insert(kind->str());
+                for (const auto* event : {source, target}) {
+                    const auto* ordinal = event->getObject("ordinal");
+                    const auto* inputs = ordinal ? ordinal->getArray("inputs") : nullptr;
+                    const auto anchor = event->getString("anchor"), occurrence = event->getString("occurrence_loop");
+                    if (event->getInteger("type") != 0 || event->getInteger("visit_count") != 0 ||
+                        !anchor || !anchor->starts_with("func.call ") ||
+                        !occurrence || !occurrence->starts_with("scf.for ") || !ordinal ||
+                        ordinal->getInteger("expression") != selectedVisit || ordinal->getInteger("input_count") != 1 ||
+                        ordinal->getInteger("constant_u64") || !inputs || inputs->size() != 1) { return false; }
+                    const auto* input = inputs->front().getAsObject();
+                    const auto original = input ? input->getString("original") : std::nullopt;
+                    if (!input || input->getInteger("expression") != choose || !original ||
+                        !original->starts_with("scf.for ") || !original->ends_with(" result 0")) { return false; }
+                }
+            }
+            if (kinds != std::set<std::string>{"start", "completion"}) { return false; }
+            found = true;
+        }
+        if (!found) { return false; }
+    }
+    if (restriction) {
+        const auto expectedSlots = restriction == 3 ? 0U : residualGuard ? 2U : 1U;
+        if (spec.slots.size() != expectedSlots || spec.sources.size() != 1) { return false; }
+        const auto report = spec.expressionProfile->report();
+        const auto* work = report.getObject("incoming_capture_restriction");
+        if (!work || work->getInteger("requests") != 1 ||
+            work->getInteger("pruned_choices") != (restriction == 3 || residualGuard ? 0 : 1) ||
+            work->getInteger("residual_choices") != (restriction != 3 && residualGuard ? 1 : 0)) { return false; }
+        for (const auto& entry : *report.getArray("largest_recipes")) {
+            if (!residualGuard && entry.getAsObject()->getString("producer") == "sequence-source-choice") {
+                return false;
+            }
+        }
+    }
     if (partitions > 1 && spec.slots.size() != 2) { return false; }
     if (resetContexts && spec.slots.size() != 4) { return false; }
     spec.privateScalarControl = true; spec.planId = 19; spec.sourceBounds = {{P, inactive ? 8U : nested ? 4U : 3U}};
@@ -566,6 +657,28 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
     auto prepared = fs::materializeInvocationPrefix(function, spec, error);
     if (inactive == 2) { return failed(prepared) && before == render(module->getOperation()); }
     if (failed(prepared)) { llvm::errs() << error.message << "\n"; return false; }
+    if (constructed) {
+        *constructed = 0;
+        (*prepared)->function.walk([&](Operation* operation) {
+            if (operation->getDialect() && operation->getDialect()->getNamespace() == "arith") { ++*constructed; }
+        });
+    }
+    if (lineageFixture) {
+        fs::InvocationPrefixCollection plain(function, input);
+        if (failed(state->collectPrefix(plain, diagnostic))) { return false; }
+        plain.recipe().privateScalarControl = spec.privateScalarControl;
+        plain.recipe().planId = spec.planId;
+        plain.recipe().sourceBounds = spec.sourceBounds;
+        if (plain.recipe().slots.size() != spec.slots.size() || plain.recipe().actions.size() != spec.actions.size()) {
+            return false;
+        }
+        const auto report = plain.recipe().expressionProfile->report();
+        for (const auto& entry : *report.getArray("largest_recipes")) {
+            if (entry.getAsObject()->getArray("sequence_lineage_samples")) { return false; }
+        }
+        auto unprofiled = fs::materializeInvocationPrefix(function, plain.recipe(), error);
+        if (failed(unprofiled) || render((*unprofiled)->function) != render((*prepared)->function)) { return false; }
+    }
     if (partitions > 1) {
         if (!spec.expressionProfile) { return false; }
         const auto first = spec.expressionProfile->report();
@@ -596,12 +709,29 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
             if (outside) { roles.push_back(1); }
             auto expected = native(roles);
             const auto selectedVisit = chooseFirst ? 0U : phased ? 2U : 1U;
-            if (!inactive && selectedVisit < trips) { edge(expected, 2 * selectedVisit + 1, 2 * trips); }
-            if (nested && !resetContexts && chooseFirst) {
+            const bool requested = !restriction || (restriction == 1 ? bool(chooseFirst) :
+                restriction == 2 ? !chooseFirst : false);
+            if (!inactive && requested && selectedVisit < trips) {
+                edge(expected, 2 * selectedVisit + 1, 2 * trips);
+            }
+            if (nested && !resetContexts && chooseFirst && requested) {
                 edge(expected, 2 * (trips + 1) + 1, 2 * (trips + 2));
             }
             if (outside && selectedVisit < trips) { edge(expected, 2 * selectedVisit + 1, 2 * (trips + 2)); }
             close(expected);
+            if (restriction && !nested) {
+                // Independent exact-rank oracle: source publications count all
+                // executed visits, even when their capture was omitted.
+                unsigned acquired = 0;
+                for (const auto& event : actual.events) {
+                    if (event.kind == 0 && event.role == 2) { break; }
+                    if (event.kind == 2 && event.source == P && event.target == Q) {
+                        acquired = std::max(acquired, static_cast<unsigned>(event.ordinal));
+                    }
+                }
+                const auto wanted = requested && selectedVisit < trips ? selectedVisit + 1 : 0;
+                if (acquired != wanted) { return false; }
+            }
             if (!actual.valid || !verifyTrace(actual.events, roles, &expected,
                     outside ? std::optional<unsigned>(2 * trips) :
                     inactive == 3 ? std::optional<unsigned>(0) : std::nullopt)) {
@@ -612,6 +742,53 @@ bool lateSourceChoice(MLIRContext& context, bool nested, bool phased = false, un
         }
     }
     return before == render(module->getOperation());
+}
+bool restrictedOccurrenceDAG(MLIRContext& context)
+{
+    fs::RegionExpressions arena;
+    Block inputs;
+    const auto loc = UnknownLoc::get(&context);
+    auto flag = arena.input(inputs.addArgument(IntegerType::get(&context, 1), loc));
+    auto opaque = arena.input(inputs.addArgument(IntegerType::get(&context, 1), loc));
+    auto leaf = std::make_shared<fs::PrefixOccurrence>();
+    leaf->match = arena.boolean(true);
+    auto unused = std::make_shared<fs::PrefixOccurrence>();
+    unused->match = opaque; // Deliberately unavailable unless its arm is selected.
+    auto unknown = std::make_shared<fs::PrefixOccurrence>();
+    unknown->choose = opaque; unknown->yes = leaf; unknown->no = unused;
+    auto root = std::make_shared<fs::PrefixOccurrence>();
+    root->choose = flag; root->yes = leaf; root->no = unknown;
+    const auto no = arena.boolean(false), yes = arena.boolean(true);
+    const auto before = arena.size();
+    fs::PrefixOccurrenceRestrictionWork work;
+    auto restricted = fs::restrictPrefixOccurrence(arena, root, flag, work);
+    if (restricted != leaf || work.pruned != 1 || work.choices != 1 || arena.size() != before ||
+        !arena.constructionError().empty()) { return false; }
+    fs::PrefixOccurrenceRestrictionWork residual;
+    if (fs::restrictPrefixOccurrence(arena, root, yes, residual) != root || residual.residual != 2 ||
+        residual.pruned || arena.size() != before) { return false; }
+    auto shared = std::make_shared<fs::PrefixOccurrence>();
+    shared->choose = flag; shared->yes = unknown; shared->no = unknown;
+    fs::PrefixOccurrenceRestrictionWork sharing;
+    if (fs::restrictPrefixOccurrence(arena, shared, yes, sharing) != shared || sharing.choices != 2 ||
+        sharing.residual != 2 || arena.size() != before) { return false; }
+    fs::PrefixOccurrenceRestrictionWork inactive;
+    if (fs::restrictPrefixOccurrence(arena, root, no, inactive) || inactive.choices || arena.size() != before) {
+        return false;
+    }
+    // Independently select leaves with lazy branch evaluation. Under activity
+    // flag=true the opaque unselected branch is never queried, even if absent.
+    for (std::optional<bool> other : {std::optional<bool>{}, std::optional<bool>{false}, std::optional<bool>{true}}) {
+        std::function<const fs::PrefixOccurrence*(const fs::PrefixOccurrencePtr&)> select =
+            [&](const auto& node) -> const fs::PrefixOccurrence* {
+            if (!node || !node->choose) { return node.get(); }
+            auto condition = *node->choose == flag ? std::optional<bool>{true} : other;
+            if (!condition) { return nullptr; }
+            return select(*condition ? node->yes : node->no);
+        };
+        if (select(root) != select(restricted)) { return false; }
+    }
+    return true;
 }
 bool historicalExpression(MLIRContext& context, unsigned mode)
 {
@@ -765,6 +942,7 @@ bool historicalExpression(MLIRContext& context, unsigned mode)
 }
 #include "RelationalPrefixChecks.h"
 #include "PrefixLifetimeChecks.h"
+#include "ConditionalPrefixRankChecks.h"
 } // namespace
 bool runInvocationPrefixChecks() {
     MLIRContext context; context.disableMultithreading();
@@ -777,8 +955,28 @@ bool runInvocationPrefixChecks() {
     if (!relationalPrefixCases(context) || !flatPrefixBatches(context) || !productionRelationalPrefix(context)) {
         return false;
     }
-    if (!prefixLifetimeChecks(context)) {
+    if (!prefixLifetimeChecks(context) || !restrictedOccurrenceDAG(context) || !conditionalPrefixRanks(context)) {
         return false;
+    }
+    for (unsigned restriction : {1U, 2U}) {
+        uint64_t restricted = 0, residual = 0;
+        if (!lateSourceChoice(context, false, false, 0, false, 1, false, restriction, false, &restricted) ||
+            !lateSourceChoice(context, false, false, 0, false, 1, false, restriction, true, &residual) ||
+            restricted >= residual) {
+            llvm::errs() << "incoming capture materialization did not shrink\n";
+            return false;
+        }
+    }
+    for (unsigned restriction = 1; restriction <= 3; ++restriction) {
+        for (bool nested : {false, true}) {
+            for (bool exported : {false, true}) {
+                if (!lateSourceChoice(context, nested, false, 0, exported, 1, false, restriction) ||
+                    !lateSourceChoice(context, nested, true, 0, exported, 1, false, restriction)) {
+                    llvm::errs() << "restricted incoming capture failed mode=" << restriction << "\n";
+                    return false;
+                }
+            }
+        }
     }
     unsigned cases = 0;
     const bool invalid332 = !runCases(context, false, cases) || !runCases(context, true, cases) ||

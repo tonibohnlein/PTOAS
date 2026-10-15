@@ -46,6 +46,16 @@ FailureOr<RegionalRelationData> composeBalancedRegionalRelations(
 FailureOr<std::unique_ptr<RegionalRelationRequest>> requestCallbackRegionalRelations(
     const RegionalAnalysis& region, func::FuncOp function, const SyncInput& input, const PhaseIndex& index,
     std::string& error);
+struct RegionalRelationPreparation {
+    virtual ~RegionalRelationPreparation() = default;
+    virtual FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(
+        ArrayRef<RegionalAnalysis> children, ArrayRef<scf::ForOp> enclosing) const = 0;
+};
+// Preserve the original composed semantics and rebind only owned, unchanged-
+// coordinate child preparation. Initial mathematical export failures have no
+// service and remain precise export obligations.
+FailureOr<RegionalAnalysis> rebindRegionalRelationPreparation(
+    const RegionalAnalysis& retained, ArrayRef<RegionalAnalysis> children);
 FailureOr<RegionalAnalysis> exportRegionalRelationData(
     std::shared_ptr<RegionalRelations> relation, std::shared_ptr<RegionExpressions> expressions, std::string& error);
 } // namespace mlir::pto::frontiersynch

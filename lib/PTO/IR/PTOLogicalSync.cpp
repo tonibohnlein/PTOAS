@@ -10,6 +10,8 @@
 // and matching across SET/WAIT sites require the family certificate, not a local
 // operation verifier.
 #include "PTO/IR/PTO.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include <set>
 
 namespace mlir::pto {
 namespace {
@@ -58,5 +60,28 @@ LogicalResult LogicalWaitOp::verify()
 {
     return verifyLogicalSync(getOperation(), getSrcPipe().getPipe(), getDstPipe().getPipe(),
                              getPlanIdAttr().getInt(), getRecordIdAttr().getInt());
+}
+LogicalResult LogicalFamilyOp::verify()
+{
+    auto ids = getAxisIdsAttr();
+    if (getPlanIdAttr().getInt() < 0 || getCutIdAttr().getInt() < 0 ||
+        static_cast<std::size_t>(ids.size()) != getAxes().size() || getPieces().empty()) {
+        return emitOpError("requires nonnegative plan/cut identities, one ID per axis and nonempty pieces");
+    }
+    std::set<int64_t> seen;
+    for (auto [id, axis] : llvm::zip(ids.asArrayRef(), getAxes())) {
+        auto argument = dyn_cast<BlockArgument>(axis);
+        auto loop = argument ? dyn_cast_or_null<scf::ForOp>(argument.getOwner()->getParentOp()) : scf::ForOp{};
+        auto binding = loop ? loop->getAttrOfType<IntegerAttr>("pto.deferred_family_loop") : IntegerAttr{};
+        if (id < 0 || !seen.insert(id).second || !loop || loop.getInductionVar() != axis ||
+            !loop->isProperAncestor(getOperation()) || !binding || !binding.getType().isInteger(64) ||
+            binding.getInt() != id) {
+            return emitOpError("requires unique original loop induction axes with matching deferred loop IDs");
+        }
+    }
+    for (auto piece : getPieces()) {
+        if (!isa<DictionaryAttr>(piece)) { return emitOpError("requires dictionary endpoint pieces"); }
+    }
+    return success();
 }
 } // namespace mlir::pto

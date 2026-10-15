@@ -8,6 +8,7 @@
 // Preserve exact finite domains as boxes and member maps as verified arithmetic
 // or shared decision expressions. No generated guard is inspected or parsed.
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h"
+#include "ScalarConstruction.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/APInt.h"
@@ -226,62 +227,62 @@ bool fitModular(const Domain& domain, uint64_t modulus, Tuple& coefficients, int
 }
 class Emitter {
 public:
-    Emitter(OpBuilder& builder, Location location, ArrayRef<Axis> axes)
-        : builder(builder), location(location), axes(axes), indices(axes.size()) {}
-    Value number(int64_t value)
+    Emitter(detail::ScalarConstruction& construction, ArrayRef<Axis> axes)
+        : construction(construction), axes(axes), indices(axes.size()) {}
+    detail::ScalarToken number(int64_t value)
     {
         auto found = numbers.find(value);
         if (found != numbers.end()) {
             return found->second;
         }
-        return numbers.emplace(value, builder.create<arith::ConstantIndexOp>(location, value)).first->second;
+        return numbers.emplace(value, construction.number(value)).first->second;
     }
-    Value boolean(bool value) { return builder.create<arith::ConstantIntOp>(location, value, 1); }
-    Value coordinate(std::size_t index)
+    detail::ScalarToken boolean(bool value) { return construction.boolean(value); }
+    detail::ScalarToken coordinate(std::size_t index)
     {
         if (indices[index]) { return indices[index]; }
         const auto& axis = axes[index];
-        Value induction = axis.induction;
-        if (!induction.getType().isIndex()) {
-            induction = builder.create<arith::IndexCastOp>(location, builder.getIndexType(), induction);
+        detail::ScalarToken induction = construction.input(axis.induction);
+        if (!axis.induction.getType().isIndex()) {
+            induction = construction.indexCast(induction);
         }
         if (axis.normalized) {
-            Value value = builder.create<arith::SubIOp>(location, induction, number(axis.lower));
-            induction = builder.create<arith::DivUIOp>(location, value, number(axis.step));
+            detail::ScalarToken value = construction.binary<arith::SubIOp>(induction, number(axis.lower));
+            induction = construction.binary<arith::DivUIOp>(value, number(axis.step));
         }
         indices[index] = induction;
         return induction;
     }
-    Value test(std::size_t axis, arith::CmpIPredicate predicate, int64_t bound)
+    detail::ScalarToken test(std::size_t axis, arith::CmpIPredicate predicate, int64_t bound)
     {
         auto key = std::make_tuple(axis, predicate, bound);
         auto found = comparisons.find(key);
         if (found != comparisons.end()) {
             return found->second;
         }
-        Value result = builder.create<arith::CmpIOp>(location, predicate, coordinate(axis), number(bound));
+        detail::ScalarToken result = construction.compare(predicate, coordinate(axis), number(bound));
         comparisons.emplace(key, result);
         return result;
     }
-    Value guard(const Box& box)
+    detail::ScalarToken guard(const Box& box)
     {
         auto key = std::make_pair(box.low, box.high);
         auto found = guards.find(key);
         if (found != guards.end()) {
             return found->second;
         }
-        Value result;
+        detail::ScalarToken result;
         for (std::size_t axis = 0; axis < indices.size(); ++axis) {
-            Value condition;
+            detail::ScalarToken condition;
             if (box.low[axis] == box.high[axis]) {
                 condition = test(axis, arith::CmpIPredicate::eq, box.low[axis]);
             } else {
                 auto low = test(axis, arith::CmpIPredicate::sge, box.low[axis]);
                 auto high = test(axis, arith::CmpIPredicate::sle, box.high[axis]);
-                condition = builder.create<arith::AndIOp>(location, low, high);
+                condition = construction.binary<arith::AndIOp>(low, high);
             }
             if (result) {
-                result = builder.create<arith::AndIOp>(location, result, condition);
+                result = construction.binary<arith::AndIOp>(result, condition);
             } else {
                 result = condition;
             }
@@ -290,60 +291,59 @@ public:
         guards.emplace(std::move(key), result);
         return result;
     }
-    Value affine(ArrayRef<int64_t> coefficients, int64_t intercept)
+    detail::ScalarToken affine(ArrayRef<int64_t> coefficients, int64_t intercept)
     {
-        Value result = number(intercept);
+        detail::ScalarToken result = number(intercept);
         for (std::size_t axis = 0; axis < indices.size(); ++axis) {
             if (coefficients[axis]) {
-                Value term = builder.create<arith::MulIOp>(location, coordinate(axis), number(coefficients[axis]));
-                result = builder.create<arith::AddIOp>(location, result, term);
+                auto term = construction.binary<arith::MulIOp>(coordinate(axis), number(coefficients[axis]));
+                result = construction.binary<arith::AddIOp>(result, term);
             }
         }
         return result;
     }
-    Value modular(ArrayRef<int64_t> coefficients, int64_t intercept, uint64_t modulus)
+    detail::ScalarToken modular(ArrayRef<int64_t> coefficients, int64_t intercept, uint64_t modulus)
     {
-        Value divisor;
-        Value result = number(intercept);
+        detail::ScalarToken divisor;
+        detail::ScalarToken result = number(intercept);
         for (std::size_t axis = 0; axis < indices.size(); ++axis) {
             if (!coefficients[axis]) {
                 continue;
             }
             if (!divisor) { divisor = number(static_cast<int64_t>(modulus)); }
-            Value reduced;
+            detail::ScalarToken reduced;
             if (axes[axis].normalized) {
-                reduced = builder.create<arith::RemUIOp>(location, coordinate(axis), divisor);
+                reduced = construction.binary<arith::RemUIOp>(coordinate(axis), divisor);
             } else {
-                Value remainder = builder.create<arith::RemSIOp>(location, coordinate(axis), divisor);
-                Value negative = builder.create<arith::CmpIOp>(location,
-                    arith::CmpIPredicate::slt, remainder, number(0));
-                Value positive = builder.create<arith::AddIOp>(location, remainder, divisor);
-                reduced = builder.create<arith::SelectOp>(location, negative, positive, remainder);
+                detail::ScalarToken remainder = construction.binary<arith::RemSIOp>(coordinate(axis), divisor);
+                detail::ScalarToken negative = construction.compare(arith::CmpIPredicate::slt, remainder, number(0));
+                detail::ScalarToken positive = construction.binary<arith::AddIOp>(remainder, divisor);
+                reduced = construction.select(negative, positive, remainder);
             }
             // Reduce coordinates before multiplying. With modulus at most six,
             // every product and partial sum is bounded independently of indices.
-            Value term = builder.create<arith::MulIOp>(location, reduced, number(coefficients[axis]));
-            Value sum = builder.create<arith::AddIOp>(location, result, term);
-            result = builder.create<arith::RemUIOp>(location, sum, divisor);
+            detail::ScalarToken term = construction.binary<arith::MulIOp>(reduced, number(coefficients[axis]));
+            detail::ScalarToken sum = construction.binary<arith::AddIOp>(result, term);
+            result = construction.binary<arith::RemUIOp>(sum, divisor);
         }
         return result;
     }
-    Value decision(int64_t fallback, const std::map<int64_t, SmallVector<Box>>& alternatives)
+    detail::ScalarToken decision(int64_t fallback, const std::map<int64_t, SmallVector<Box>>& alternatives)
     {
-        Value result = number(fallback);
+        detail::ScalarToken result = number(fallback);
         for (const auto& alternative : alternatives) {
-            result = builder.create<arith::SelectOp>(location, presence(alternative.second),
+            result = construction.select(presence(alternative.second),
                 number(alternative.first), result);
         }
         return result;
     }
-    Value presence(ArrayRef<Box> boxes)
+    detail::ScalarToken presence(ArrayRef<Box> boxes)
     {
-        Value result;
+        detail::ScalarToken result;
         for (const auto& box : boxes) {
-            Value condition = guard(box);
+            detail::ScalarToken condition = guard(box);
             if (result) {
-                result = builder.create<arith::OrIOp>(location, result, condition);
+                result = construction.binary<arith::OrIOp>(result, condition);
             } else {
                 result = condition;
             }
@@ -351,13 +351,12 @@ public:
         return result ? result : boolean(false);
     }
 private:
-    OpBuilder& builder;
-    Location location;
+    detail::ScalarConstruction& construction;
     ArrayRef<Axis> axes;
-    SmallVector<Value> indices;
-    std::map<int64_t, Value> numbers;
-    std::map<std::pair<Tuple, Tuple>, Value> guards;
-    std::map<std::tuple<std::size_t, arith::CmpIPredicate, int64_t>, Value> comparisons;
+    SmallVector<detail::ScalarToken> indices;
+    std::map<int64_t, detail::ScalarToken> numbers;
+    std::map<std::pair<Tuple, Tuple>, detail::ScalarToken> guards;
+    std::map<std::tuple<std::size_t, arith::CmpIPredicate, int64_t>, detail::ScalarToken> comparisons;
 };
 } // namespace
 class FamilyExpressionRecipe {
@@ -545,23 +544,34 @@ std::optional<FamilyExpressionEstimate> estimateFamilyExpressions(const FamilyEx
     result.cheap &= result.operations <= 8;
     return valid ? std::optional(result) : std::nullopt;
 }
-Value emitFamilyPresence(OpBuilder& builder, Location location, const FamilyExpressionRecipe& recipe)
+detail::FamilyScalarTokens detail::constructFamilyExpressions(ScalarConstruction& construction,
+    const FamilyExpressionRecipe& recipe)
 {
-    if (!recipe.includePresence) {
-        return {};
-    }
-    Emitter emitter(builder, location, recipe.axes);
-    return emitter.presence(recipe.regions);
-}
-FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location, const FamilyExpressionRecipe& recipe)
-{
-    Emitter emitter(builder, location, recipe.axes);
-    Value present = recipe.includePresence ? emitter.presence(recipe.regions) : Value{};
-    Value member = recipe.affine ?
+    Emitter emitter(construction, recipe.axes);
+    auto present = recipe.includePresence ? emitter.presence(recipe.regions) : ScalarToken{};
+    auto member = recipe.affine ?
         (recipe.modulus ? emitter.modular(recipe.coefficients, recipe.intercept, recipe.modulus) :
                          emitter.affine(recipe.coefficients, recipe.intercept)) :
         emitter.decision(recipe.fallback, recipe.alternatives);
-    return {{}, present, member};
+    return {present, member};
+}
+detail::ScalarToken detail::constructFamilyPresence(ScalarConstruction& construction,
+    const FamilyExpressionRecipe& recipe)
+{
+    if (!recipe.includePresence) { return {}; }
+    Emitter emitter(construction, recipe.axes);
+    return emitter.presence(recipe.regions);
+}
+Value emitFamilyPresence(OpBuilder& builder, Location location, const FamilyExpressionRecipe& recipe)
+{
+    detail::ScalarConstruction construction(builder, location);
+    return detail::constructFamilyPresence(construction, recipe).value;
+}
+FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location, const FamilyExpressionRecipe& recipe)
+{
+    detail::ScalarConstruction construction(builder, location);
+    auto result = detail::constructFamilyExpressions(construction, recipe);
+    return {{}, result.present.value, result.member.value};
 }
 FamilyExpressions emitFamilyExpressions(OpBuilder& builder, Location location,
     ArrayRef<SmallVector<TemplateCoordinate>> members, ArrayRef<int64_t> labels, uint64_t modulus,

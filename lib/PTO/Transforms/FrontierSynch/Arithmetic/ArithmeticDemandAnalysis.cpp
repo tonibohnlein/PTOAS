@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisProfile.h"
 #include "llvm/ADT/DenseSet.h"
 #include "IntegerImplicationCache.h"
 #include "IntegerProjectionCache.h"
@@ -145,9 +146,11 @@ class Analysis {
     using Piece = ImportedPiece<System>;
     using TaggedIdentities = std::map<ArithmeticRelationKey, std::set<std::size_t>>;
 public:
-    explicit Analysis(const ArithmeticProgram& program, const StructuredProtection* facts)
-        : program(program), protection(facts)
+    explicit Analysis(const ArithmeticProgram& program, const StructuredProtection* facts,
+        ArithmeticDemandProfile profile = {})
+        : program(program), protection(facts), profile(std::move(profile))
     {
+        if (this->profile.ledger && !this->profile.ledger->profiling) { this->profile.ledger.reset(); }
         result.period = program.primitives.period;
         result.parameterCount = program.primitives.parameters.size();
         result.pipeCount = program.primitives.pipeCount;
@@ -160,7 +163,11 @@ public:
             !Policy::accepts(program.recognition.arithmeticClass) || !result.period) {
             fail("exact supported arithmetic primitives are required"); return;
         }
-        if (!import() || !buildRelations() || !buildConflicts()) { return; }
+        {
+            AnalysisProfileScope scope(profile.ledger, "arithmetic-demand-generators", profile.region);
+            scope.constructed();
+            if (!import() || !buildRelations() || !buildConflicts()) { return; }
+        }
         if (!generatorsOnly) { complete(); }
     }
     std::vector<TypedArithmeticOccurrenceDomain<System>> occurrenceDomains() const
@@ -176,6 +183,8 @@ public:
     }
     void completeNative()
     {
+        AnalysisProfileScope scope(profile.ledger, "arithmetic-demand-native-closure", profile.region);
+        scope.constructed();
         if (!result.error.empty()) { return; }
         Relation nativeCompletions;
         for (const auto& [key, pieces] : result.nativeOrder) {
@@ -195,8 +204,17 @@ public:
     }
     void complete()
     {
+        AnalysisProfileScope reduction(profile.ledger, "arithmetic-demand-reduction", profile.region);
+        reduction.constructed();
+        auto timed = [&](StringRef stage, auto&& build) {
+            AnalysisProfileScope scope(profile.ledger, stage, profile.region);
+            scope.constructed();
+            return build();
+        };
         struct ClearScratch {
             Analysis& analysis;
+            AnalysisProfileScope& reduction;
+            IntegerDifferenceCost before;
             ~ClearScratch() {
                 if (analysis.implications) {
                     const auto& counts = analysis.implications->cost();
@@ -219,6 +237,18 @@ public:
                 accumulateCost(analysis.result.cost.unionDifferenceAttempts, differences.attempts);
                 accumulateCost(analysis.result.cost.unionDifferenceCacheHits, differences.hits);
                 accumulateCost(analysis.result.cost.unionDifferenceBuilds, differences.builds);
+                if (analysis.profile.ledger && analysis.profile.ledger->profiling) {
+                    const auto& difference = analysis.result.cost.integerDifference;
+                    reduction.recordWork({{"difference-requests", difference.requests - before.requests},
+                        {"arrangement-seeds", difference.seeds - before.seeds},
+                        {"arrangement-axes", difference.axes - before.axes},
+                        {"skipped-axes", difference.skippedAxes - before.skippedAxes},
+                        {"constructed-slices", difference.slices - before.slices},
+                        {"slice-feasibility-calls", difference.sliceFeasibility.calls - before.sliceFeasibility.calls},
+                        {"slice-feasibility-candidates", difference.sliceFeasibility.candidateSubstitutions -
+                            before.sliceFeasibility.candidateSubstitutions},
+                        {"arrangement-output-pieces", difference.outputPieces - before.outputPieces}});
+                }
                 analysis.unionDifferences.clear();
                 analysis.unionMerges.clear();
                 analysis.implications.reset();
@@ -226,73 +256,89 @@ public:
                 analysis.compositions.clear(); analysis.uniqueSystems.clear(); analysis.systemBuckets.clear();
                 analysis.unionCompositions.clear(); analysis.uniqueUnions.clear(); analysis.unionIdentities.clear();
             }
-        } scratch{*this};
+        } scratch{*this, reduction, result.cost.integerDifference};
         completeNative();
         if (!result.error.empty()) { return; }
-        auto step = compose(result.generators, result.nativeOrder);
-        auto reach = result.nativeOrder;
-        Relation frontier;
-        TaggedIdentities history;
-        if constexpr (std::is_same_v<System, IntegerSystem>) {
-            frontier = reach;
-            for (const auto& [key, pieces] : reach) {
-                for (const auto& piece : pieces) { history[key].insert(systemIdentity(piece)); }
+        Relation reach;
+        {
+            AnalysisProfileScope scope(profile.ledger, "arithmetic-demand-required-closure", profile.region);
+            scope.constructed();
+            auto step = compose(result.generators, result.nativeOrder);
+            reach = result.nativeOrder;
+            Relation frontier;
+            TaggedIdentities history;
+            if constexpr (std::is_same_v<System, IntegerSystem>) {
+                frontier = reach;
+                for (const auto& [key, pieces] : reach) {
+                    for (const auto& piece : pieces) { history[key].insert(systemIdentity(piece)); }
+                }
+            }
+            for (unsigned round = 0; round < result.pipeCount && result.error.empty(); ++round) {
+                // A numerical piece already composed under these endpoint tags
+                // contributes no new paths on a later round. The round bound stays
+                // unchanged; composition distributes over the accumulated union.
+                auto next = [&] {
+                    if constexpr (std::is_same_v<System, IntegerSystem>) {
+                        return compose(frontier, step, nullptr, &history);
+                    } else { return compose(reach, step); }
+                }();
+                unite(reach, next);
+                if constexpr (std::is_same_v<System, IntegerSystem>) { frontier = std::move(next); }
             }
         }
-        for (unsigned round = 0; round < result.pipeCount && result.error.empty(); ++round) {
-            // A numerical piece already composed under these endpoint tags
-            // contributes no new paths on a later round. The round bound stays
-            // unchanged; composition distributes over the accumulated union.
-            auto next = [&] {
-                if constexpr (std::is_same_v<System, IntegerSystem>) {
-                    return compose(frontier, step, nullptr, &history);
-                } else { return compose(reach, step); }
-            }();
-            unite(reach, next);
-            if constexpr (std::is_same_v<System, IntegerSystem>) { frontier = std::move(next); }
-        }
         if (!result.error.empty()) { return; }
-        result.requiredOrder = subtract(reach, identity);
+        result.requiredOrder = timed("arithmetic-demand-required-difference", [&] {
+            return subtract(reach, identity);
+        });
         // Only generator endpoint keys can contribute to this subtraction.
         // Required-order exports remain complete for later regional queries.
-        auto covered = compose(result.requiredOrder, result.requiredOrder, &result.generators);
-        unite(covered, result.nativeOrder);
-        result.minimumDemands = subtract(result.generators, covered);
+        auto covered = timed("arithmetic-demand-cover-composition", [&] {
+            auto closure = compose(result.requiredOrder, result.requiredOrder, &result.generators);
+            unite(closure, result.nativeOrder);
+            return closure;
+        });
+        result.minimumDemands = timed("arithmetic-demand-cover-difference", [&] {
+            return subtract(result.generators, covered);
+        });
         if (!result.error.empty()) { return; }
         // Adjacency is a boolean query over retained demand endpoints. Avoid
         // constructing unrelated intervals or a minimized bad-local relation.
-        result.adjacentLocalDemands = true;
-        if (!result.minimumDemands.empty()) {
-            Relation queriedEndpoints;
-            for (const auto& [key, pieces] : result.minimumDemands) {
-                (void)pieces;
-                auto starts = key;
-                starts.source.event = ArithmeticEvent::Start;
-                starts.target.event = ArithmeticEvent::Start;
-                queriedEndpoints.emplace(std::move(starts), std::vector<System>{});
-            }
-            // A same-pipe demand is adjacent precisely when no strictly
-            // intermediate payload on that pipe exists. Reflexive input native
-            // relations remain supported by subtracting identities explicitly.
-            auto strictPipeOrder = subtract(samePipeOrder, identity);
-            auto nonadjacent = compose(strictPipeOrder, strictPipeOrder, &queriedEndpoints);
-            if (!result.error.empty()) { return; }
-            for (const auto& [key, intervals] : nonadjacent) {
-                auto endpoints = key;
-                endpoints.source.event = ArithmeticEvent::Completion;
-                endpoints.target.event = ArithmeticEvent::Start;
-                auto found = result.minimumDemands.find(endpoints);
-                if (found == result.minimumDemands.end()) { continue; }
-                for (const auto& demand : found->second) {
-                    for (const auto& interval : intervals) {
-                        auto overlap = demand.intersect(interval);
-                        ++result.cost.pieceJoins;
-                        if (failed(overlap)) { fail("arithmetic relation intersection failed"); return; }
-                        if (!overlap->isEmpty()) { result.adjacentLocalDemands = false; break; }
+        {
+            AnalysisProfileScope scope(profile.ledger, "arithmetic-demand-adjacency", profile.region);
+            scope.constructed();
+            result.adjacentLocalDemands = true;
+            if (!result.minimumDemands.empty()) {
+                Relation queriedEndpoints;
+                for (const auto& [key, pieces] : result.minimumDemands) {
+                    (void)pieces;
+                    auto starts = key;
+                    starts.source.event = ArithmeticEvent::Start;
+                    starts.target.event = ArithmeticEvent::Start;
+                    queriedEndpoints.emplace(std::move(starts), std::vector<System>{});
+                }
+                // A same-pipe demand is adjacent precisely when no strictly
+                // intermediate payload on that pipe exists. Reflexive input native
+                // relations remain supported by subtracting identities explicitly.
+                auto strictPipeOrder = subtract(samePipeOrder, identity);
+                auto nonadjacent = compose(strictPipeOrder, strictPipeOrder, &queriedEndpoints);
+                if (!result.error.empty()) { return; }
+                for (const auto& [key, intervals] : nonadjacent) {
+                    auto endpoints = key;
+                    endpoints.source.event = ArithmeticEvent::Completion;
+                    endpoints.target.event = ArithmeticEvent::Start;
+                    auto found = result.minimumDemands.find(endpoints);
+                    if (found == result.minimumDemands.end()) { continue; }
+                    for (const auto& demand : found->second) {
+                        for (const auto& interval : intervals) {
+                            auto overlap = demand.intersect(interval);
+                            ++result.cost.pieceJoins;
+                            if (failed(overlap)) { fail("arithmetic relation intersection failed"); return; }
+                            if (!overlap->isEmpty()) { result.adjacentLocalDemands = false; break; }
+                        }
+                        if (!result.adjacentLocalDemands) { break; }
                     }
                     if (!result.adjacentLocalDemands) { break; }
                 }
-                if (!result.adjacentLocalDemands) { break; }
             }
         }
         result.exactMinimum = true;
@@ -304,6 +350,7 @@ public:
 private:
     const ArithmeticProgram& program;
     const StructuredProtection* protection;
+    ArithmeticDemandProfile profile;
     std::vector<Piece> pieces;
     Relation identity, order, samePipeOrder;
     void fail(const char* message) { if (result.error.empty()) { result.error = message; } }
@@ -759,7 +806,7 @@ private:
                 if (!result.error.empty()) { return false; }
                 if (protectedRegion) {
                     const std::vector<System> protectedPieces{std::move(*protectedRegion)};
-                    projected = Policy::subtract(outputDimensions, *projected, protectedPieces);
+                    projected = difference(outputDimensions, *projected, protectedPieces);
                     ++result.cost.differences;
                     if (failed(projected)) { fail("hardware protection subtraction failed"); return false; }
                 }
@@ -934,6 +981,8 @@ private:
     Relation compose(const Relation& a, const Relation& b, const Relation* outputKeys = nullptr,
         TaggedIdentities* history = nullptr)
     {
+        AnalysisProfileScope scope(profile.ledger, "arithmetic-demand-composition", profile.region);
+        scope.constructed();
         ++result.cost.relationCompositions;
         Relation output;
         std::map<ArithmeticRelationKey, std::size_t> retainedUnions;
@@ -993,6 +1042,12 @@ private:
         }
         return output;
     }
+    FailureOr<std::vector<System>> difference(unsigned dimensions, ArrayRef<System> lhs, ArrayRef<System> rhs)
+    {
+        if constexpr (std::is_same_v<System, IntegerSystem>) {
+            return subtractIntegerUnions(dimensions, lhs, rhs, &result.cost.integerDifference);
+        } else { return Policy::subtract(dimensions, lhs, rhs); }
+    }
     FailureOr<std::size_t> subtractUnions(std::size_t left, std::size_t right, unsigned dimensions)
     {
         return unionDifferences.getOrBuild(left, right, dimensions, [&]() -> FailureOr<std::size_t> {
@@ -1000,7 +1055,7 @@ private:
             std::vector<System> lhs, rhs;
             for (auto id : uniqueUnions[left]) { lhs.push_back(uniqueSystems[id]); }
             for (auto id : uniqueUnions[right]) { rhs.push_back(uniqueSystems[id]); }
-            auto difference = Policy::subtract(dimensions, lhs, rhs);
+            auto difference = this->difference(dimensions, lhs, rhs);
             if (failed(difference)) { return failure(); }
             std::vector<System> retained;
             std::vector<std::size_t> ids;
@@ -1013,6 +1068,8 @@ private:
     }
     Relation subtract(const Relation& a, const Relation& b)
     {
+        AnalysisProfileScope scope(profile.ledger, "arithmetic-demand-difference", profile.region);
+        scope.constructed();
         ++result.cost.differences;
         Relation output;
         for (const auto& [key, pieces] : a) {
@@ -1040,9 +1097,10 @@ private:
     }
 };
 template<class Policy>
-auto analyze(const ArithmeticProgram& program, const StructuredProtection* protection = nullptr)
+auto analyze(const ArithmeticProgram& program, const StructuredProtection* protection = nullptr,
+    ArithmeticDemandProfile profile = {})
 {
-    Analysis<Policy> analysis(program, protection);
+    Analysis<Policy> analysis(program, protection, std::move(profile));
     analysis.run();
     if (!analysis.result.error.empty()) {
         analysis.result.generators.clear();
@@ -1252,9 +1310,9 @@ FailureOr<GeneralArithmeticRelation> completeGeneralArithmeticNativeOrder(
     return std::move(engine.result.nativeOrder);
 }
 GeneralArithmeticDemandAnalysis analyzeGeneralArithmeticDemandsWithProtection(const ArithmeticProgram& program,
-                                                                             const StructuredProtection& protection)
+    const StructuredProtection& protection, ArithmeticDemandProfile profile)
 {
-    return analyze<IntegerPolicy>(program, &protection);
+    return analyze<IntegerPolicy>(program, &protection, std::move(profile));
 }
 ArithmeticDemandAnalysis analyzeArithmeticDemands(const ArithmeticProgram& program)
 {

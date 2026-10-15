@@ -19,6 +19,7 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticHandoffAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/STLExtras.h"
@@ -29,9 +30,49 @@
 #include <algorithm>
 #include <map>
 namespace mlir::pto::frontiersynch {
+// No detached SSA or allocation callback is retained. The session cache owns
+// its exact mathematical source; exporter-local templates live in their State.
+struct ArithmeticRegionalPreparation {
+    std::shared_ptr<const ArithmeticRegionalRelations> source;
+    std::shared_ptr<RegionExpressions> expressions;
+    std::shared_ptr<const SyncInput> input;
+    std::vector<scf::ForOp> enclosing;
+    ArithmeticRegionalAllocationPolicy policy = ArithmeticRegionalAllocationPolicy::SingleId;
+    int64_t planId = 0;
+    bool completeInvocation = false, nestedIdentities = false, independentPieces = false, groupedFamilies = false;
+    std::shared_ptr<const FamilyEndpointRecipe> recipe;
+    std::vector<EndpointFamily> families;
+};
 namespace {
+std::shared_ptr<ArithmeticRegionalPreparation> captureArithmeticFamily(const PreparedLogicalPlan& plan)
+{
+    if (!plan.endpoints.empty() || !plan.preparation.empty() || plan.privateState || plan.completionOwner ||
+        plan.physicalOutput || plan.executedOutput || plan.familyProtocol || plan.allocationCertificate ||
+        plan.allocationPreparation || plan.regionalAllocation ||
+        llvm::any_of(plan.families, [](const auto& family) {
+            return bool(family.sourceChoices) || bool(family.targetChoices);
+        })) { return {}; }
+    auto result = std::make_shared<ArithmeticRegionalPreparation>();
+    result->planId = plan.planId; result->completeInvocation = plan.completeInvocation;
+    result->nestedIdentities = plan.nestedIdentities; result->independentPieces = plan.independentPieces;
+    result->groupedFamilies = plan.groupedFamilies; result->recipe = plan.familyRecipe;
+    result->families = plan.families;
+    return result;
+}
+std::unique_ptr<PreparedLogicalPlan> instantiateArithmeticFamily(const ArithmeticRegionalPreparation& source)
+{
+    auto result = std::make_unique<PreparedLogicalPlan>(source.planId);
+    result->completeInvocation = source.completeInvocation; result->nestedIdentities = source.nestedIdentities;
+    result->independentPieces = source.independentPieces; result->groupedFamilies = source.groupedFamilies;
+    result->familyRecipe = source.recipe; result->families = source.families;
+    return result;
+}
 using Id = RegionExpressions::Id;
 struct State : ArithmeticRegionalRelations {
+    explicit State(ArithmeticRegionalAllocationPolicy policy = ArithmeticRegionalAllocationPolicy::SingleId)
+        : allocationPolicy(policy) {}
+    const ArithmeticRegionalAllocationPolicy allocationPolicy;
+    std::shared_ptr<const ArithmeticRegionalPreparation> endpointTemplate;
     std::optional<ArithmeticCoordinateHandoffAllocation> handoffAllocation;
     // Imports borrow schema identities from this state's unchanged program.
     std::optional<ImportedArithmeticPrimitives> importedPrimitives;
@@ -271,7 +312,7 @@ struct State : ArithmeticRegionalRelations {
     {
         return selected(boundary.selector, byte);
     }
-    std::shared_ptr<RegionalAllocationSummary> allocation(const PreparedLogicalPlan& plan)
+    std::shared_ptr<RegionalAllocationSummary> allocation(PreparedLogicalPlan& plan)
     {
         RegionExpressions::Transaction transaction(*arena);
         const auto previousError = error;
@@ -290,9 +331,33 @@ struct State : ArithmeticRegionalRelations {
             }
         }
         if (!handoffAllocation) {
-            handoffAllocation = buildArithmeticCoordinateHandoffAllocation(analysis, pipes, 6, plan.allocationProfile);
+            if (allocationPolicy == ArithmeticRegionalAllocationPolicy::CoordinateCandidate) {
+                handoffAllocation = buildArithmeticCoordinateHandoffAllocation(analysis, pipes, 6,
+                                                                                plan.allocationProfile);
+            } else {
+                auto single = buildArithmeticHandoffAllocation(analysis, pipes, 1);
+                handoffAllocation.emplace();
+                handoffAllocation->cost = single.cost;
+                handoffAllocation->error = std::move(single.error);
+                for (auto& family : single.families) {
+                    handoffAllocation->families.push_back({std::move(family), std::nullopt});
+                }
+            }
         }
         if (!handoffAllocation->error.empty()) { return {}; }
+        // Coordinate placement consumes exact matching-source tuple evidence.
+        // Qualify only after the final invocation contract is established; an
+        // identity parent may still set completeInvocation during preparation.
+        std::optional<std::map<uint32_t, FamilyMatchingShape>> matchingShapes;
+        if (llvm::any_of(handoffAllocation->families, [](const auto& candidate) {
+                return candidate.sourceCoordinate.has_value();
+            })) {
+            if (plan.familyRecipe && plan.endpoints.empty()) {
+                auto shapes = familyMatchingShapes(*plan.familyRecipe);
+                if (failed(shapes)) { return {}; }
+                matchingShapes.emplace(std::move(*shapes));
+            } else if (failed(materializeLogicalFamilies(plan))) { return {}; }
+        }
         AllocationProfile::Scope exportTiming(plan.allocationProfile, AllocationProfile::ArithmeticSelectorExport);
         auto result = std::make_shared<RegionalAllocationSummary>();
         for (const auto& candidate : handoffAllocation->families) {
@@ -314,15 +379,21 @@ struct State : ArithmeticRegionalRelations {
                 // memberCoordinates: identity zero, then ORIGINAL source IV,
                 // including at WAIT's selected partner.
                 if (*candidate.sourceCoordinate != 0 || member.tupleRule->coordinateCount != 2) { return {}; }
-                unsigned sides = 0;
-                for (const auto& endpoint : plan.endpoints) {
-                    if (!llvm::is_contained(endpoint.records, member.record)) { continue; }
-                    if (endpoint.kind == LogicalCommandKind::Barrier || endpoint.memberCoordinates.size() != 2) {
-                        return {};
+                if (matchingShapes) {
+                    auto shape = matchingShapes->find(member.record);
+                    if (shape == matchingShapes->end() || shape->second.coordinateCount != 2 ||
+                        !shape->second.hasSet || !shape->second.hasWait || shape->second.hasLocal) { return {}; }
+                } else {
+                    unsigned sides = 0;
+                    for (const auto& endpoint : plan.endpoints) {
+                        if (!llvm::is_contained(endpoint.records, member.record)) { continue; }
+                        if (endpoint.kind == LogicalCommandKind::Barrier || endpoint.memberCoordinates.size() != 2) {
+                            return {};
+                        }
+                        sides |= endpoint.kind == LogicalCommandKind::Set ? 1 : 2;
                     }
-                    sides |= endpoint.kind == LogicalCommandKind::Set ? 1 : 2;
+                    if (sides != 3) { return {}; }
                 }
-                if (sides != 3) { return {}; }
                 member.tupleRule->terms.push_back({1, 1, 0, family.width, 1});
             }
             last.front().event.kind = PeriodicEventKind::Completion;
@@ -357,6 +428,14 @@ struct State : ArithmeticRegionalRelations {
         return result;
     }
 };
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareStateFamily(State& state)
+{
+    if (state.endpointTemplate) { return instantiateArithmeticFamily(*state.endpointTemplate); }
+    auto plan = prepareGeneralArithmeticRegionalInsertion(state.program.context.function, state.program,
+        state.analysis, state.emissionError);
+    if (succeeded(plan)) { state.endpointTemplate = captureArithmeticFamily(**plan); }
+    return plan;
+}
 bool sameSelectors(const std::vector<RegionalSelector>& a, const std::vector<RegionalSelector>& b)
 {
     if (a.size() != b.size()) { return false; }
@@ -695,8 +774,7 @@ FailureOr<RegionalAnalysis> exportState(const std::shared_ptr<State>& state,
             state->emissionError = "arithmetic regional endpoint requires its original enclosing visit context";
             return failure();
         }
-        auto plan = prepareGeneralArithmeticRegionalInsertion(state->program.context.function, state->program,
-                                                       state->analysis, state->emissionError);
+        auto plan = prepareStateFamily(*state);
         if (succeeded(plan)) {
             (*plan)->completeInvocation = false;
             (*plan)->allocationPreparation = [state](PreparedLogicalPlan& prepared) {
@@ -722,7 +800,8 @@ FailureOr<RegionalAnalysis> initializeExports(const std::shared_ptr<State>& stat
     const std::function<bool()>& reduce = {})
 {
     if (!state->initialize(parameterBinding)) { error = state->error; return failure(); }
-    auto imported = importOwnedArithmeticIntegerPieces(state->program, !selectors);
+    auto imported = importOwnedArithmeticIntegerPieces(state->program, selectors ?
+        ArithmeticPrimitiveRequest::Storage : ArithmeticPrimitiveRequest::Occurrences);
     if (failed(imported)) { error = "regional arithmetic primitive import failed"; return failure(); }
     state->importedPrimitives.emplace(std::move(*imported));
     state->primitives = state->importedPrimitives->pieces();
@@ -768,13 +847,15 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext 
     std::string& error, std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding,
     StorageExportRequest request, std::shared_ptr<const ArithmeticRegionalRelations>* retained = nullptr,
     const ArithmeticProgram* certified = nullptr, ArrayRef<ArithmeticLimits> profiles = {},
-    ArithmeticEntryConstant suppliedConstants = {})
+    ArithmeticEntryConstant suppliedConstants = {},
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId,
+    ArithmeticDemandProfile demandProfile = {})
 {
     if (!context.function || !context.root || !expressions || !expressions->constructionError().empty()) {
         error = "arithmetic region requires a valid original root and expression arena";
         return failure();
     }
-    auto state = std::make_shared<State>(); state->arena = std::move(expressions);
+    auto state = std::make_shared<State>(allocationPolicy); state->arena = std::move(expressions);
     state->input = &input;
     // Specialize certified entry constants before constructing relations. A
     // large bank stride times a known phase becomes a physical constant, not
@@ -844,7 +925,7 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext 
     // adapters can fail independently of the mathematical reduction.
     auto reduce = [&]() {
         const auto protection = structuredProtection(input.accesses());
-        state->analysis = analyzeGeneralArithmeticDemandsWithProtection(state->program, protection);
+        state->analysis = analyzeGeneralArithmeticDemandsWithProtection(state->program, protection, demandProfile);
         if (!state->analysis.error.empty()) { error = state->analysis.error; return false; }
         if (!state->analysis.exactMinimum) { error = "regional exact reduction is unavailable"; return false; }
         if (retained) { *retained = state; }
@@ -861,11 +942,12 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext 
 } // namespace
 std::shared_ptr<const ArithmeticRegionalRelations> analyzeArithmeticRegionDemands(
     ArithmeticRegionContext context, const PhaseIndex& index, const SyncInput& input,
-    const ArithmeticProgram* certified, std::string& error)
+    const ArithmeticProgram* certified, std::string& error, ArithmeticDemandProfile profile)
 {
     std::shared_ptr<const ArithmeticRegionalRelations> demands;
     (void)analyzeArithmeticRegionImpl(context, index, input, std::make_shared<RegionExpressions>(),
-        error, {}, StorageExportRequest::Demands, &demands, certified);
+        error, {}, StorageExportRequest::Demands, &demands, certified, {}, {},
+        ArithmeticRegionalAllocationPolicy::SingleId, std::move(profile));
     return demands ? std::make_shared<const ArithmeticRegionalRelations>(*demands) : nullptr;
 }
 std::shared_ptr<const ArithmeticRegionalRelations> analyzeSpecializedArithmeticDemands(
@@ -885,7 +967,8 @@ std::shared_ptr<const ArithmeticRegionalRelations> analyzeSpecializedArithmeticD
 FailureOr<RegionalAnalysis> exportSpecializedArithmeticRegion(
     const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
     bool selectors, std::string& error,
-    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding)
+    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding,
+    ArithmeticRegionalAllocationPolicy allocationPolicy)
 {
     const bool valid = demands.input && expressions && expressions->constructionError().empty() &&
         demands.program.specializedEntry && demands.analysis.exactMinimum && demands.analysis.error.empty();
@@ -899,7 +982,7 @@ FailureOr<RegionalAnalysis> exportSpecializedArithmeticRegion(
             error = "specialized arithmetic export contradicts its certified entry constants"; return failure();
         }
     }
-    auto state = std::make_shared<State>();
+    auto state = std::make_shared<State>(allocationPolicy);
     state->input = demands.input; state->inputOwner = demands.inputOwner; state->indexOwner = demands.indexOwner;
     state->entryConstants = demands.entryConstants;
     state->program = demands.program; state->analysis = demands.analysis; state->arena = expressions;
@@ -921,7 +1004,7 @@ bool hasFiniteArithmeticStorage(const ArithmeticProgram& program, const SyncInpu
     auto state = std::make_shared<State>();
     state->program = program; state->input = &input; state->arena = expressions;
     if (!state->initialize()) { error = state->error; return false; }
-    auto imported = importOwnedArithmeticIntegerPieces(state->program);
+    auto imported = importOwnedArithmeticIntegerPieces(state->program, ArithmeticPrimitiveRequest::Storage);
     if (failed(imported)) { error = "finite storage primitive import failed"; return false; }
     state->importedPrimitives.emplace(std::move(*imported));
     state->primitives = state->importedPrimitives->pieces();
@@ -934,7 +1017,8 @@ bool hasFiniteArithmeticStorage(const ArithmeticProgram& program, const SyncInpu
 }
 FailureOr<RegionalAnalysis> exportArithmeticRegion(
     const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
-    bool selectors, std::string& error, std::shared_ptr<const SyncInput> inputOwner)
+    bool selectors, std::string& error, std::shared_ptr<const SyncInput> inputOwner,
+    ArithmeticRegionalAllocationPolicy allocationPolicy)
 {
     const bool valid = demands.input && !demands.program.specializedEntry && expressions &&
         expressions->constructionError().empty() && demands.analysis.exactMinimum && demands.analysis.error.empty() &&
@@ -945,7 +1029,7 @@ FailureOr<RegionalAnalysis> exportArithmeticRegion(
     // Session requests are synchronous. No previously published callback runs
     // inside this transaction, and no rejected state or appended ID escapes.
     RegionExpressions::Transaction transaction(*expressions);
-    auto state = std::make_shared<State>();
+    auto state = std::make_shared<State>(allocationPolicy);
     state->input = demands.input;
     state->inputOwner = inputOwner ? std::move(inputOwner) : demands.inputOwner;
     state->indexOwner = demands.indexOwner;
@@ -957,16 +1041,20 @@ FailureOr<RegionalAnalysis> exportArithmeticRegion(
     transaction.commit();
     return exported;
 }
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegion(
+namespace {
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegionImpl(
     const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
-    ArrayRef<scf::ForOp> enclosing, std::string& error, std::shared_ptr<const SyncInput> inputOwner)
+    ArrayRef<scf::ForOp> enclosing, std::string& error, std::shared_ptr<const SyncInput> inputOwner,
+    ArithmeticRegionalAllocationPolicy allocationPolicy,
+    const ArithmeticRegionalPreparation* retained,
+    std::shared_ptr<ArithmeticRegionalPreparation>* created)
 {
     const bool valid = demands.input && !demands.program.specializedEntry && expressions &&
         expressions->constructionError().empty() && demands.analysis.exactMinimum &&
         (!inputOwner || inputOwner.get() == demands.input);
     if (!valid) { error = "arithmetic preparation requires its retained original context"; return failure(); }
     RegionExpressions::Transaction transaction(*expressions);
-    auto state = std::make_shared<State>();
+    auto state = std::make_shared<State>(allocationPolicy);
     state->input = demands.input;
     state->inputOwner = inputOwner ? std::move(inputOwner) : demands.inputOwner;
     state->indexOwner = demands.indexOwner;
@@ -980,31 +1068,77 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegion(
     for (const auto& site : state->program.sites) {
         state->pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue));
     }
-    auto plan = prepareGeneralArithmeticRegionalInsertion(state->program.context.function,
-        state->program, state->analysis, error);
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> plan = retained ?
+        FailureOr<std::unique_ptr<PreparedLogicalPlan>>(instantiateArithmeticFamily(*retained)) :
+        prepareGeneralArithmeticRegionalInsertion(
+            state->program.context.function, state->program, state->analysis, error);
     if (failed(plan)) { return failure(); }
     (*plan)->completeInvocation = false;
+    if (created) {
+        *created = captureArithmeticFamily(**plan);
+        if (!*created) {
+            error = "arithmetic preparation did not produce an immutable family recipe"; return failure();
+        }
+    }
     (*plan)->allocationPreparation = [state](PreparedLogicalPlan& prepared) {
         prepared.regionalAllocation = state->allocation(prepared);
     };
     transaction.commit();
     return plan;
 }
+} // namespace
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegion(
+    const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
+    ArrayRef<scf::ForOp> enclosing, std::string& error, std::shared_ptr<const SyncInput> inputOwner,
+    ArithmeticRegionalAllocationPolicy allocationPolicy)
+{
+    return prepareArithmeticRegionImpl(demands, std::move(expressions), enclosing, error,
+        std::move(inputOwner), allocationPolicy, nullptr, nullptr);
+}
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareRetainedArithmeticRegion(
+    std::shared_ptr<const ArithmeticRegionalRelations> demands, std::shared_ptr<RegionExpressions> expressions,
+    ArrayRef<scf::ForOp> enclosing, std::string& error,
+    std::shared_ptr<const ArithmeticRegionalPreparation>& preparation,
+    std::shared_ptr<const SyncInput> inputOwner, ArithmeticRegionalAllocationPolicy allocationPolicy)
+{
+    if (!demands) { error = "arithmetic preparation requires retained mathematical ownership"; return failure(); }
+    auto input = inputOwner ? inputOwner : demands->inputOwner;
+    if (preparation && (preparation->source != demands || preparation->expressions != expressions ||
+        preparation->input != input || preparation->policy != allocationPolicy ||
+        ArrayRef<scf::ForOp>(preparation->enclosing) != enclosing)) {
+        error = "retained arithmetic endpoint recipe belongs to another original request context";
+        return failure();
+    }
+    std::shared_ptr<ArithmeticRegionalPreparation> created;
+    auto result = prepareArithmeticRegionImpl(*demands, expressions, enclosing, error, input, allocationPolicy,
+        preparation.get(), preparation ? nullptr : &created);
+    if (succeeded(result) && created) {
+        created->source = std::move(demands); created->expressions = std::move(expressions);
+        created->input = std::move(input); created->policy = allocationPolicy;
+        created->enclosing.assign(enclosing.begin(), enclosing.end());
+        preparation = std::move(created);
+    }
+    return result;
+}
 FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
-    std::string& error, std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding)
+    std::string& error, std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding,
+    ArithmeticRegionalAllocationPolicy allocationPolicy)
 {
     return analyzeArithmeticRegionImpl(context, index, input, std::move(expressions), error,
-                                      std::move(parameterBinding), StorageExportRequest::SymbolicAllowed);
+                                      std::move(parameterBinding), StorageExportRequest::SymbolicAllowed,
+                                      nullptr, nullptr, {}, {}, allocationPolicy);
 }
 FailureOr<RegionalAnalysis> analyzeArithmeticRegionWithProfiles(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::string& error, ArrayRef<ArithmeticLimits> profiles,
-    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding)
+    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding,
+    ArithmeticRegionalAllocationPolicy allocationPolicy)
 {
     if (profiles.empty()) { error = "regional arithmetic has no declared profiles"; return failure(); }
     return analyzeArithmeticRegionImpl(context, index, input, std::move(expressions), error,
-        std::move(parameterBinding), StorageExportRequest::SymbolicAllowed, nullptr, nullptr, profiles);
+        std::move(parameterBinding), StorageExportRequest::SymbolicAllowed,
+        nullptr, nullptr, profiles, {}, allocationPolicy);
 }
 FailureOr<RegionalAnalysis> analyzeArithmeticRegionRetained(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
@@ -1023,19 +1157,104 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionRetained(ArithmeticRegionCont
 }
 FailureOr<RegionalAnalysis> analyzeFiniteArithmeticRegion(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
-    std::string& error)
+    std::string& error, ArithmeticRegionalAllocationPolicy allocationPolicy)
 {
     return analyzeArithmeticRegionImpl(context, index, input, std::move(expressions), error, {},
-                                      StorageExportRequest::Finite);
+                                      StorageExportRequest::Finite, nullptr, nullptr, {}, {}, allocationPolicy);
 }
 FailureOr<RegionalAnalysis> analyzeFiniteArithmeticRegionWithProfiles(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
-    std::string& error, ArrayRef<ArithmeticLimits> profiles)
+    std::string& error, ArrayRef<ArithmeticLimits> profiles,
+    ArithmeticRegionalAllocationPolicy allocationPolicy)
 {
     if (profiles.empty()) { error = "regional arithmetic has no declared profiles"; return failure(); }
     return analyzeArithmeticRegionImpl(context, index, input, std::move(expressions), error, {},
-        StorageExportRequest::Finite, nullptr, nullptr, profiles);
+        StorageExportRequest::Finite, nullptr, nullptr, profiles, {}, allocationPolicy);
 }
+namespace {
+struct RelationPreparation final : RegionalRelationPreparation {
+    std::shared_ptr<State> state, crossingState;
+    RegionalAnalysis parent;
+    func::FuncOp function;
+    std::vector<scf::ForOp> frames;
+    std::function<RegionalEvent(RegionalEvent)> original;
+    bool hasCrossings = false;
+
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(
+        ArrayRef<RegionalAnalysis> children, ArrayRef<scf::ForOp> enclosing) const override
+    {
+        if (enclosing != ArrayRef<scf::ForOp>(frames)) { return failure(); }
+        // Use the existing detached sequence import for record identities,
+        // original preparation blocks and allocation provenance. Its crossing
+        // list is empty: relation lowering supplies only the new crossings.
+        auto merge = std::make_shared<SequenceAnalysisState>(function, state->arena);
+        merge->completeInvocation = false; merge->requiredOuterLoops.assign(enclosing.begin(), enclosing.end());
+        std::vector<uint32_t> typeBases;
+        uint32_t nextType = 0;
+        for (const auto& child : children) {
+            if (child.anchors.size() > UINT32_MAX - nextType) { return failure(); }
+            typeBases.push_back(nextType); nextType += child.anchors.size();
+            Child imported; imported.regional = child; imported.anchors = child.anchors;
+            merge->children.push_back(std::move(imported));
+        }
+        if (hasCrossings) {
+            Child crossing;
+            crossing.regional = parent; crossing.regional.relations.reset();
+            crossing.regional.invocationPrefix.reset();
+            crossing.regional.endpointSiteGuard.reset(); crossing.regional.endpointInvocationGuard.reset();
+            crossing.regional.endpointEventGuard = {};
+            crossing.anchors = parent.anchors;
+            crossing.regional.prepareWithVisits =
+                [crossingState = crossingState, original = original](ArrayRef<scf::ForOp> frames)
+                -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
+                if (frames != ArrayRef<scf::ForOp>(crossingState->enclosing)) { return failure(); }
+                auto prepared = prepareStateFamily(*crossingState);
+                if (succeeded(prepared)) {
+                    (*prepared)->allocationPreparation = [crossingState, original](PreparedLogicalPlan& plan) {
+                        plan.regionalAllocation = crossingState->allocation(plan);
+                        if (!plan.regionalAllocation) { return; }
+                        for (auto& group : plan.regionalAllocation->groups) {
+                            for (auto& member : group.members) {
+                                member.firstSource = original(member.firstSource);
+                                member.lastTarget = original(member.lastTarget);
+                            }
+                            for (auto& lane : group.lanes) {
+                                for (auto* choices : {&lane.firstSources, &lane.lastTargets}) {
+                                    for (auto& choice : *choices) { choice.event = original(choice.event); }
+                                }
+                            }
+                        }
+                    };
+                }
+                return prepared;
+            };
+            crossing.regional.prepare = [prepare = crossing.regional.prepareWithVisits]() { return prepare({}); };
+            merge->children.push_back(std::move(crossing));
+            typeBases.push_back(0); // Crossings already name the parent's original site table.
+        }
+        crossingState->emissionError.clear();
+        std::string diagnostic;
+        auto prepared = merge->prepareWithTypeBases(diagnostic, enclosing, typeBases);
+        if (failed(prepared)) {
+            if (!crossingState->emissionError.empty()) { diagnostic += ": " + crossingState->emissionError; }
+            crossingState->emissionError = std::move(diagnostic);
+        } else { crossingState->emissionError.clear(); }
+        return prepared;
+    }
+};
+void bindRelationPreparation(RegionalAnalysis& result, ArrayRef<RegionalAnalysis> children)
+{
+    auto owners = std::make_shared<const std::vector<RegionalAnalysis>>(children.begin(), children.end());
+    auto service = result.relations->preparation;
+    result.prepareWithVisits = [service, owners](ArrayRef<scf::ForOp> enclosing) {
+        return service->prepare(*owners, enclosing);
+    };
+    result.prepare = [prepare = result.prepareWithVisits]() { return prepare({}); };
+    result.capabilities.endpointRecipes = llvm::all_of(children, [](const auto& child) {
+        return child.capabilities.endpointRecipes && (child.prepare || child.prepareWithVisits);
+    });
+}
+} // namespace
 FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalRelations> relation,
     std::shared_ptr<RegionExpressions> expressions, std::string& error)
 {
@@ -1055,7 +1274,7 @@ FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalR
         }
         return out;
     };
-    auto state = std::make_shared<State>();
+    auto state = std::make_shared<State>(relation->allocationPolicy);
     state->input = data.input; state->program.context = data.context; state->program.sites = data.sites;
     state->program.parameters = data.parameterValues; state->parameters = data.parameters;
     state->program.incomingPrerequisites = data.incomingPrerequisites;
@@ -1141,7 +1360,7 @@ FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalR
     if (state->importedPrimitives || !state->primitives.empty()) {
         error = "composed crossing state unexpectedly owns primitive imports"; return failure();
     }
-    auto crossingState = std::make_shared<State>();
+    auto crossingState = std::make_shared<State>(state->allocationPolicy);
     static_cast<ArithmeticRegionalRelations&>(*crossingState) = *state;
     crossingState->arena = state->arena;
     crossingState->geometry = state->geometry;
@@ -1152,71 +1371,19 @@ FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalR
     crossingState->analysis.exactMinimum = true;
     crossingState->analysis.generators = relation->newCrossings;
     crossingState->handoffAllocation.reset();
-    result->prepareWithVisits =
-        [relation, state, crossingState, original, parent = *result](ArrayRef<scf::ForOp> enclosing)
-        -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
-        if (enclosing != ArrayRef<scf::ForOp>(relation->data.enclosing)) { return failure(); }
-        // Use the existing detached sequence import for record identities,
-        // original preparation blocks and allocation provenance. Its crossing
-        // list is empty: relation lowering supplies only the new crossings.
-        auto merge = std::make_shared<SequenceAnalysisState>(relation->data.context.function, state->arena);
-        merge->completeInvocation = false; merge->requiredOuterLoops.assign(enclosing.begin(), enclosing.end());
-        std::vector<uint32_t> typeBases;
-        uint32_t nextType = 0;
-        for (const auto& child : relation->children) {
-            if (child.anchors.size() > UINT32_MAX - nextType) { return failure(); }
-            typeBases.push_back(nextType); nextType += child.anchors.size();
-            Child imported; imported.regional = child; imported.anchors = child.anchors;
-            merge->children.push_back(std::move(imported));
-        }
-        if (!relation->newCrossings.empty()) {
-            Child crossing;
-            crossing.regional = parent; crossing.regional.relations.reset();
-            crossing.regional.invocationPrefix.reset();
-            crossing.regional.endpointSiteGuard.reset(); crossing.regional.endpointInvocationGuard.reset();
-            crossing.regional.endpointEventGuard = {};
-            crossing.anchors = parent.anchors;
-            crossing.regional.prepareWithVisits = [crossingState, original](ArrayRef<scf::ForOp> frames)
-                -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
-                if (frames != ArrayRef<scf::ForOp>(crossingState->enclosing)) { return failure(); }
-                auto prepared = prepareGeneralArithmeticRegionalInsertion(crossingState->program.context.function,
-                    crossingState->program, crossingState->analysis, crossingState->emissionError);
-                if (succeeded(prepared)) {
-                    (*prepared)->allocationPreparation = [crossingState, original](PreparedLogicalPlan& plan) {
-                        plan.regionalAllocation = crossingState->allocation(plan);
-                        if (!plan.regionalAllocation) { return; }
-                        for (auto& group : plan.regionalAllocation->groups) {
-                            for (auto& member : group.members) {
-                                member.firstSource = original(member.firstSource);
-                                member.lastTarget = original(member.lastTarget);
-                            }
-                            for (auto& lane : group.lanes) {
-                                for (auto* choices : {&lane.firstSources, &lane.lastTargets}) {
-                                    for (auto& choice : *choices) { choice.event = original(choice.event); }
-                                }
-                            }
-                        }
-                    };
-                }
-                return prepared;
-            };
-            crossing.regional.prepare = [prepare = crossing.regional.prepareWithVisits]() { return prepare({}); };
-            merge->children.push_back(std::move(crossing));
-            typeBases.push_back(0); // Crossings already name the parent's original site table.
-        }
-        crossingState->emissionError.clear();
-        std::string diagnostic;
-        auto prepared = merge->prepareWithTypeBases(diagnostic, enclosing, typeBases);
-        if (failed(prepared)) {
-            if (!crossingState->emissionError.empty()) { diagnostic += ": " + crossingState->emissionError; }
-            crossingState->emissionError = std::move(diagnostic);
-        } else { crossingState->emissionError.clear(); }
-        return prepared;
-    };
-    result->prepare = [prepare = result->prepareWithVisits]() { return prepare({}); };
-    result->capabilities.endpointRecipes = llvm::all_of(relation->children, [](const auto& child) {
-        return child.capabilities.endpointRecipes && (child.prepare || child.prepareWithVisits);
-    });
+    auto preparation = std::make_shared<RelationPreparation>();
+    preparation->state = state; preparation->crossingState = crossingState;
+    preparation->parent = *result;
+    // The service must not own its containing relation through the parent view.
+    preparation->parent.relations.reset();
+    preparation->parent.prepare = {}; preparation->parent.prepareWithVisits = {};
+    preparation->parent.prepareFiltered = {};
+    preparation->function = data.context.function;
+    preparation->frames = data.enclosing;
+    preparation->original = std::move(original);
+    preparation->hasCrossings = !relation->newCrossings.empty();
+    relation->preparation = std::move(preparation);
+    bindRelationPreparation(*result, relation->children);
     result->cost = {};
     for (auto member : {&RegionalCost::repeatedRegions, &RegionalCost::phaseDescriptions,
         &RegionalCost::cells, &RegionalCost::ports, &RegionalCost::crossings, &RegionalCost::physicalFragments,
@@ -1230,6 +1397,19 @@ FailureOr<RegionalAnalysis> exportRegionalRelationData(std::shared_ptr<RegionalR
         }
     }
     result->cost.children = relation->children.size(); result->cost.expressionNodes = state->arena->size();
+    return result;
+}
+FailureOr<RegionalAnalysis> rebindRegionalRelationPreparation(
+    const RegionalAnalysis& retained, ArrayRef<RegionalAnalysis> children)
+{
+    if (!retained.relations || !retained.relations->preparation ||
+        children.size() != retained.relations->children.size()) { return failure(); }
+    for (auto [oldChild, child] : llvm::zip(retained.relations->children, children)) {
+        if (!sameOriginalCoordinates(oldChild, child) || !child.capabilities.endpointRecipes ||
+            (!child.prepare && !child.prepareWithVisits)) { return failure(); }
+    }
+    auto result = retained;
+    bindRelationPreparation(result, children);
     return result;
 }
 } // namespace mlir::pto::frontiersynch

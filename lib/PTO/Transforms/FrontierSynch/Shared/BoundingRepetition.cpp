@@ -48,6 +48,7 @@ std::optional<RegionalAnalysis> phaseExport(const BoundingSequenceChild& phase, 
     result.endpointEventGuard = canonical.endpointEventGuard;
     result.reachability = canonical.reachability; result.numerical = canonical.numerical;
     result.capabilities.exactQueries = true;
+    result.capabilities.substitutionStableQueries = false;
     return result;
 }
 BoundingRepetitionSign baseSign(func::FuncOp function, scf::ForOp loop,

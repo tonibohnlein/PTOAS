@@ -1,0 +1,4103 @@
+{
+  "scope": "Fixed one-token Delta prefix protocol only; other realizations, kernel compilation and device execution are separate.",
+  "input": "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto",
+  "input_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+  "bindings": {
+    "block_idx": 0,
+    "subblock_idx": 0,
+    "sequence_start": 0,
+    "sequence_end": 1,
+    "state_index": -1,
+    "softplus_gt_20": false
+  },
+  "feasibility": "block=0, subblock=0, cu_seqlens[0:2]=[0,1], state_indices[0]=-1; a[0]=dt_bias[0]=0 gives ordered 0>20 false; other payload data finite",
+  "alias_policy": "may-not-alias",
+  "expected": {
+    "payloads": 72,
+    "commands": 358,
+    "witness_direction": [
+      1,
+      5
+    ],
+    "minimum_ids": 46,
+    "batch_lower_bound": 45
+  },
+  "report": {
+    "accepted": true,
+    "trace": {
+      "arithmetic_visits": 413935,
+      "error": "",
+      "events": [
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 0
+        },
+        {
+          "gap": 1,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 1,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 1
+        },
+        {
+          "gap": 2,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 2,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 2
+        },
+        {
+          "gap": 3,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 3,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 3
+        },
+        {
+          "gap": 4,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 1,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 4,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 1,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 4,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 1,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 6
+        },
+        {
+          "gap": 5,
+          "kind": "set",
+          "pipe": 4,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 1,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 5,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 1,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 7
+        },
+        {
+          "gap": 6,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 2,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 6,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 2,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 6,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 2,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 6,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 8
+        },
+        {
+          "gap": 7,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 3,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 7,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 3,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 7,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 3,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 7,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 1,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 7,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 2,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 7,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 3,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 9
+        },
+        {
+          "gap": 8,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 4,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 8,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 1,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 8,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 2,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 10
+        },
+        {
+          "gap": 9,
+          "kind": "set",
+          "pipe": 4,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 2,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 9,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "gap": 9,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 2,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 11
+        },
+        {
+          "gap": 10,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 4,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 10,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 4,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 10,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 4,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 10,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 4,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 12
+        },
+        {
+          "gap": 11,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 5,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 13
+        },
+        {
+          "gap": 12,
+          "kind": "set",
+          "pipe": 4,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 3,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 14
+        },
+        {
+          "gap": 13,
+          "kind": "set",
+          "pipe": 4,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 4,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 15
+        },
+        {
+          "gap": 14,
+          "kind": "set",
+          "pipe": 4,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 5,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 14,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 3,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 14,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 4,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 16
+        },
+        {
+          "gap": 15,
+          "kind": "set",
+          "pipe": 4,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 6,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 17
+        },
+        {
+          "gap": 16,
+          "kind": "set",
+          "pipe": 4,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 7,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 16,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 1,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 16,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 2,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 16,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 3,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 16,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 4,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 16,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 5,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 16,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 3,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 16,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 4,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 16,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 5,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 16,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 6,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 18
+        },
+        {
+          "gap": 17,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 5,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 17,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 5,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 17,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 5,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 17,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 0,
+          "source_ordinal": 7,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 19
+        },
+        {
+          "gap": 18,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 6,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 18,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 6,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 18,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 6,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 18,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 5,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 20
+        },
+        {
+          "gap": 19,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 6,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 19,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 6,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 21
+        },
+        {
+          "gap": 20,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 7,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 23
+        },
+        {
+          "gap": 21,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 8,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 21,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 6,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 21,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 7,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 21,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 8,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 24
+        },
+        {
+          "gap": 22,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 7,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 22,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 7,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 22,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 7,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 22,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 25
+        },
+        {
+          "gap": 23,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 8,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 23,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 8,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 23,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 8,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 23,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 26
+        },
+        {
+          "gap": 24,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 9,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 24,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 9,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 24,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 9,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 24,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 7,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 24,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 8,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 24,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 9,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 27
+        },
+        {
+          "gap": 25,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 9,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 28
+        },
+        {
+          "gap": 26,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 10,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 29
+        },
+        {
+          "gap": 27,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 11,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 30
+        },
+        {
+          "gap": 28,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 12,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 28,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 9,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 28,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 10,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 28,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 11,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 28,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 12,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 31
+        },
+        {
+          "gap": 29,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 10,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 29,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 10,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 29,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 10,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 29,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 10,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 32
+        },
+        {
+          "gap": 30,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 13,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 30,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 13,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 33
+        },
+        {
+          "gap": 31,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 11,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 31,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 11,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 31,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 11,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 31,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 34
+        },
+        {
+          "gap": 32,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 12,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 32,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 12,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 32,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 12,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 32,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 35
+        },
+        {
+          "gap": 33,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 13,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 33,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 13,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 33,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 13,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 33,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 36
+        },
+        {
+          "gap": 34,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 14,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 34,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 14,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 34,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 14,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 34,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 11,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 34,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 12,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 34,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 13,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 34,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 14,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 37
+        },
+        {
+          "gap": 35,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 14,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 38
+        },
+        {
+          "gap": 36,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 15,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 36,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 15,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 36,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 15,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 39
+        },
+        {
+          "gap": 37,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 16,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 37,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 16,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 37,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 16,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 40
+        },
+        {
+          "gap": 38,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 17,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 38,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 17,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 38,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 17,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 38,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 44
+        },
+        {
+          "gap": 39,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 18,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 39,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 18,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 39,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 18,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 39,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 45
+        },
+        {
+          "gap": 40,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 19,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 40,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 19,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 40,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 19,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 40,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 46
+        },
+        {
+          "gap": 41,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 20,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 41,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 20,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 41,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 20,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 41,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 47
+        },
+        {
+          "gap": 42,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 21,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 42,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 21,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 42,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 21,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 42,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 15,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 42,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 16,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 42,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 17,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 42,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 18,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 42,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 19,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 42,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 20,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 42,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 21,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 48
+        },
+        {
+          "gap": 43,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 15,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 49
+        },
+        {
+          "gap": 44,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 22,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 44,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 22,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 44,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 22,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 50
+        },
+        {
+          "gap": 45,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 23,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 45,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 23,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 45,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 23,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 45,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 51
+        },
+        {
+          "gap": 46,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 24,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 46,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 24,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 46,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 24,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 46,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 52
+        },
+        {
+          "gap": 47,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 25,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 47,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 25,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 47,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 25,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 47,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 53
+        },
+        {
+          "gap": 48,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 26,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 48,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 26,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 48,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 26,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 48,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 22,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 48,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 23,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 48,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 24,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 48,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 25,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 48,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 26,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 54
+        },
+        {
+          "gap": 49,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 16,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 55
+        },
+        {
+          "gap": 50,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 27,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 50,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 27,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 50,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 27,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 56
+        },
+        {
+          "gap": 51,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 28,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 51,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 28,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 51,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 28,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 57
+        },
+        {
+          "gap": 52,
+          "kind": "set",
+          "pipe": 0,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 17,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 58
+        },
+        {
+          "gap": 53,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 29,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 53,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 29,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 53,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 29,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 53,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 59
+        },
+        {
+          "gap": 54,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 30,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 54,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 30,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 54,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 30,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 54,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 60
+        },
+        {
+          "gap": 55,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 31,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 55,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 31,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 55,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 31,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 55,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 61
+        },
+        {
+          "gap": 56,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 32,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 56,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 32,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 56,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 32,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 56,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 62
+        },
+        {
+          "gap": 57,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 33,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 57,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 33,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 57,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 33,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 57,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 63
+        },
+        {
+          "gap": 58,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 34,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 58,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 34,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 58,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 34,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 58,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 64
+        },
+        {
+          "gap": 59,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 35,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 59,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 35,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 59,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 35,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 59,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 65
+        },
+        {
+          "gap": 60,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 36,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 60,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 36,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 60,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 36,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 60,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 66
+        },
+        {
+          "gap": 61,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 37,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 61,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 37,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 61,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 37,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 61,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 67
+        },
+        {
+          "gap": 62,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 38,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 62,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 38,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 62,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 38,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 62,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 68
+        },
+        {
+          "gap": 63,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 39,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 63,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 39,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 63,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 39,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 63,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 69
+        },
+        {
+          "gap": 64,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 40,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 64,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 40,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 64,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 40,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 70
+        },
+        {
+          "gap": 65,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 41,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 65,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 41,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 65,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 41,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 65,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 71
+        },
+        {
+          "gap": 66,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 42,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 66,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 42,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 66,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 42,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 66,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 72
+        },
+        {
+          "gap": 67,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 43,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 67,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 43,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 67,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 43,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 67,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 73
+        },
+        {
+          "gap": 68,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 44,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 68,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 44,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 68,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 44,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 68,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 74
+        },
+        {
+          "gap": 69,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 45,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 69,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 45,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 69,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 45,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 1,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 2,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 3,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 4,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 5,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 6,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 7,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 8,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 9,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 10,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 11,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 12,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 13,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 14,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 15,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 16,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 17,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 18,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 19,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 20,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 21,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 22,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 23,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 24,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 25,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 26,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 27,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 28,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 29,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 30,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 31,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 32,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 33,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 34,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 35,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 36,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 37,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 38,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 39,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 40,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 41,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 42,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 43,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 44,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 69,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 45,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0,
+            0
+          ],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 75
+        },
+        {
+          "gap": 70,
+          "kind": "set",
+          "pipe": 5,
+          "plan": 0,
+          "record": 5,
+          "source_ordinal": 1,
+          "source_pipe": 5,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 76
+        },
+        {
+          "gap": 71,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 46,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 71,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 46,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 71,
+          "kind": "set",
+          "pipe": 1,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 46,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "gap": 71,
+          "kind": "wait",
+          "pipe": 5,
+          "plan": 0,
+          "record": 4,
+          "source_ordinal": 46,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 77
+        },
+        {
+          "gap": 72,
+          "kind": "set",
+          "pipe": 5,
+          "plan": 0,
+          "record": 5,
+          "source_ordinal": 2,
+          "source_pipe": 5,
+          "target_pipe": 1
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 14,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 15,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 16,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 3,
+          "source_ordinal": 17,
+          "source_pipe": 0,
+          "target_pipe": 1
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 27,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 28,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 29,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 30,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 31,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 32,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 33,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 34,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 35,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 36,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 37,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 38,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 39,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 40,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 41,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 42,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 43,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 44,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 45,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 0,
+          "plan": 0,
+          "record": 1,
+          "source_ordinal": 46,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 5,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 6,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 7,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 8,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 9,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 10,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 11,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 12,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 13,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 14,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 15,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 16,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 17,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 18,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 19,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 20,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 21,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 22,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 23,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 24,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 25,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 26,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 27,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 28,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 29,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 30,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 31,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 32,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 33,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 34,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 35,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 36,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 37,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 38,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 39,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 40,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 41,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 42,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 43,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 44,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 45,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 4,
+          "plan": 0,
+          "record": 2,
+          "source_ordinal": 46,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 5,
+          "source_ordinal": 1,
+          "source_pipe": 5,
+          "target_pipe": 1
+        },
+        {
+          "gap": 72,
+          "kind": "wait",
+          "pipe": 1,
+          "plan": 0,
+          "record": 5,
+          "source_ordinal": 2,
+          "source_pipe": 5,
+          "target_pipe": 1
+        },
+        {
+          "gap": 72,
+          "kind": "barrier",
+          "pipe": 6
+        }
+      ],
+      "function": "fused_gating_delta",
+      "guard_visits": 76,
+      "outer_trips": 0,
+      "payloads": 72,
+      "select_visits": 122827,
+      "visit_limit": 2000000,
+      "visits": 414742
+    }
+  }
+}

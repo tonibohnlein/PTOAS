@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt --mlir-disable-threading \
+// RUN:   --pto-frontier-analysis="deferred-output=true allocation-ids=3" %s -o %t.saved
+// RUN: FileCheck %s --check-prefix=SAVED < %t.saved
+// RUN: pto-test-opt --mlir-disable-threading --pto-frontier-allocate="eligible-ids=3" %t.saved \
+// RUN:   | FileCheck %s --check-prefix=PHYSICAL
+// SAVED: pto.deferred_family =
+// SAVED-SAME: cleanup_choices =
+// SAVED-SAME: version = 3 : i64
+// SAVED: pto.logical_family
+// PHYSICAL-NOT: pto.logical_family
+// PHYSICAL: pto.set_flag
+// PHYSICAL: pto.wait_flag
+// PHYSICAL: pto.wait_flag
+// PHYSICAL-NOT: pto.logical_family
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a3"} {
+  func.func @saved_cleanup(%g: i1, %h: i1) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %mat = pto.alloc_tile addr = %base : !mat
+    %left = pto.alloc_tile addr = %base : !left
+    %right = pto.alloc_tile addr = %base : !right
+    %acc = pto.alloc_tile addr = %base : !acc
+    pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%left : !left)
+    %choice = scf.if %g -> i1 { scf.yield %h : i1 } else { scf.yield %g : i1 }
+    scf.if %choice {
+      pto.tmatmul ins(%left, %right : !left, !right) outs(%acc : !acc)
+    }
+    return
+  }
+}

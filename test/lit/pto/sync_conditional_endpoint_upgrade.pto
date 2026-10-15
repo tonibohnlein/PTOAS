@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
+// RUN: pto-sync-input-test --gm-alias=may-alias --certify-regions %s | FileCheck %s
+// CHECK: conditional-endpoint-upgrade: guarded-closure-reused both-preparation-routes cold-equivalent residual
+!tile = !pto.tile_buf<vec, 1x16xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @conditional_upgrade(%condition: i1) attributes {test.conditional_endpoint_upgrade} {
+    %address = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %address : !tile
+    scf.if %condition {
+      pto.tadds ins(%tile, %value : !tile, f32) outs(%tile : !tile)
+      %then = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+    } else {
+      pto.tadds ins(%tile, %value : !tile, f32) outs(%tile : !tile)
+      %else = pto.tgetval ins(%tile, %one : !tile, index) outs : f32
+    }
+    return
+  }
+}

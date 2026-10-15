@@ -251,6 +251,34 @@ struct ExpressionRecipe {
         return *value;
     }
 };
+llvm::json::Object coordinateReport(const PrefixExpressionProfile::Coordinate& coordinate)
+{
+    llvm::json::Object result{{"expression", coordinate.expression}, {"nodes", coordinate.nodes},
+        {"input_count", coordinate.inputCount}};
+    if (coordinate.constant) { result["constant_u64"] = *coordinate.constant; }
+    llvm::json::Array inputs;
+    for (const auto& input : coordinate.inputs) {
+        llvm::json::Object item{{"expression", input.expression}, {"original", input.original}};
+        if (input.evaluationOrdinal) {
+            item["evaluation_ordinal"] = *input.evaluationOrdinal;
+            item["evaluation_loop"] = input.evaluationLoop;
+        }
+        inputs.push_back(std::move(item));
+    }
+    result["inputs"] = std::move(inputs);
+    return result;
+}
+llvm::json::Object queryEventReport(const PrefixExpressionProfile::QueryEvent& event)
+{
+    llvm::json::Object result{{"type", event.type}, {"kind", event.kind}, {"anchor", event.anchor},
+        {"occurrence_loop", event.occurrenceLoop}, {"ordinal", coordinateReport(event.ordinal)},
+        {"visit_count", event.visitCount}, {"outer_loop_count", event.outerLoopCount}};
+    llvm::json::Array visits, loops;
+    for (const auto& visit : event.visits) { visits.push_back(coordinateReport(visit)); }
+    for (const auto& loop : event.outerLoops) { loops.push_back(loop); }
+    result["visits"] = std::move(visits); result["outer_loops"] = std::move(loops);
+    return result;
+}
 } // namespace
 PrefixExpressionProfile::Entry& PrefixExpressionProfile::request(
     const void* arena, uint32_t root, Operation* cut, const std::string& producer, uint64_t distance)
@@ -266,6 +294,23 @@ PrefixExpressionProfile::Entry& PrefixExpressionProfile::request(
     }
     accumulateCost(entry.requests, 1);
     return entry;
+}
+void PrefixExpressionProfile::annotateSequence(
+    const void* arena, uint32_t root, Operation* cut, SequenceLineage lineage)
+{
+    auto found = entries.find({arena, root, cut, "sequence-incoming", 0});
+    if (found == entries.end()) { return; }
+    auto& entry = found->second;
+    accumulateCost(entry.lineageRequests, 1);
+    if (entry.sequenceLineage.size() < 4) { entry.sequenceLineage.push_back(std::move(lineage)); }
+}
+void PrefixExpressionProfile::recordOccurrenceRestriction(const PrefixOccurrenceRestrictionWork& work)
+{
+    accumulateCost(incomingRequests, work.requests);
+    accumulateCost(incomingChoices, work.choices);
+    accumulateCost(incomingPruned, work.pruned);
+    accumulateCost(incomingResidual, work.residual);
+    accumulateCost(incomingProofVisits, work.proofVisits);
 }
 void PrefixExpressionProfile::resetEmission()
 {
@@ -340,6 +385,9 @@ llvm::json::Object PrefixExpressionProfile::report() const
             {"retained_operations", entry.retained}};
     };
     auto result = counts(totals);
+    result["incoming_capture_restriction"] = llvm::json::Object{
+        {"requests", incomingRequests}, {"choice_nodes", incomingChoices}, {"pruned_choices", incomingPruned},
+        {"residual_choices", incomingResidual}, {"proof_visits", incomingProofVisits}};
     result["unique_recipes"] = entries.size();
     result["scope"] = "latest-materialization-attempt";
     llvm::json::Array top;
@@ -349,6 +397,38 @@ llvm::json::Object PrefixExpressionProfile::report() const
         item["producer"] = entry->producer; item["distance"] = entry->distance;
         item["cut"] = entry->cut; item["location"] = entry->location;
         item["maximum_retained_operations"] = entry->maximumRetained;
+        if (entry->lineageRequests) {
+            item["sequence_lineage_requests"] = entry->lineageRequests;
+            llvm::json::Array lineage;
+            for (const auto& source : entry->sequenceLineage) {
+                llvm::json::Object record{{"origin", source.origin}, {"anchor", source.anchor},
+                    {"source_cut", source.source}, {"source_dag_nodes", source.sourceNodes},
+                    {"cached_queries", source.cachedQueries}, {"reachable_cached_query_pairs", source.reachableQueries},
+                    {"query_group_count", source.queryGroups}, {"omitted_query_pairs", source.omittedQueryPairs},
+                    {"composition_entries", source.entries}, {"composition_prefix_queries", source.prefixQueries},
+                    {"composition_suffix_queries", source.suffixQueries}};
+                if (source.region) { record["region"] = *source.region; }
+                llvm::json::Array frame;
+                for (const auto& loop : source.frame) { frame.push_back(loop); }
+                record["enclosing_loops"] = std::move(frame);
+                llvm::json::Array groups;
+                for (const auto& group : source.groups) {
+                    groups.push_back(llvm::json::Object{{"child", group.child}, {"producer", group.producer},
+                        {"event_kinds", group.kinds}, {"reachable_cached_query_pairs", group.outputs}});
+                }
+                record["query_groups"] = std::move(groups);
+                record["omitted_query_details"] = source.omittedQueryDetails;
+                llvm::json::Array queries;
+                for (const auto& query : source.queries) {
+                    queries.push_back(llvm::json::Object{{"child", query.child}, {"output", query.output},
+                        {"producer", query.producer}, {"source", queryEventReport(query.source)},
+                        {"target", queryEventReport(query.target)}});
+                }
+                record["query_pairs"] = std::move(queries);
+                lineage.push_back(std::move(record));
+            }
+            item["sequence_lineage_samples"] = std::move(lineage);
+        }
         top.push_back(std::move(item));
     }
     result["largest_recipes"] = std::move(top);

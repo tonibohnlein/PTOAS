@@ -298,7 +298,8 @@ LogicalResult insertModuleSynchronization(
             return failure();
         }
         auto events = function.walk([](Operation* op) {
-            return isa<LogicalSetOp, LogicalWaitOp>(op) ? WalkResult::interrupt() : WalkResult::advance();
+            return isa<LogicalFamilyOp, LogicalSetOp, LogicalWaitOp>(op) ?
+                WalkResult::interrupt() : WalkResult::advance();
         });
         if (events.wasInterrupted()) { newEvents.insert(function); }
     }

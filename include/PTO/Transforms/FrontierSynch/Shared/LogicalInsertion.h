@@ -27,6 +27,7 @@ class FamilyEndpointRecipe;
 class AllocationProfile;
 class PhysicalEndpointMap;
 struct PhysicalFamilyOutput;
+struct ExecutedFamilyOutput;
 enum class LogicalCommandKind { Set, Barrier, Wait };
 // A necessary execution domain, retained by the producer that binds an
 // occurrence. Every active endpoint satisfies every constraint in one box.
@@ -63,6 +64,14 @@ struct FamilyMaterializationWork {
     uint64_t normalizationInputs = 0, normalizedSites = 0, materializations = 0;
     uint64_t sharedPublished = 0, sharedRequests = 0, sharedImports = 0, sharedCandidates = 0;
     uint64_t localEntries = 0, contexts = 0;
+    // Actual pre-CSE construction, accumulated at insertion. Deduplication and
+    // liveness do not refund earlier work; these are not final live-op counts.
+    uint64_t preparationScalars = 0, compactionScalars = 0, mappingScalars = 0, barrierScalars = 0;
+};
+struct PhysicalMappingComparisonWork {
+    uint64_t candidates = 0, exactFootprints = 0, inputDominance = 0;
+    uint64_t completeFootprints = 0, unavailablePreparation = 0;
+    uint64_t unknownInputs = 0, unknownCoalescing = 0, selected = 0;
 };
 struct PreparedLogicalPlan {
     explicit PreparedLogicalPlan(int64_t planId);
@@ -72,8 +81,10 @@ struct PreparedLogicalPlan {
     Block& addPreparation(Operation* before);
     int64_t planId;
     FamilyMaterializationWork familyWork; // Successful staged lowering only; not serialized.
+    PhysicalMappingComparisonWork mappingWork; // Bounded structural diagnostics; not allocation evidence.
     bool profileControl = false; // Diagnostic snapshots only; never serialized into the plan.
     bool completeInvocation = false; // Drain whole-function work before return.
+    bool deferredOutput = false; // Explicit saved numerical recipe artifact.
     bool nestedIdentities = false; // Version-four matching tuples; physical allocation is separate.
     bool independentPieces = false; // Match records across independently grouped endpoint sides.
     bool groupedFamilies = false; // One endpoint per family side; member operand selects its record.
@@ -83,6 +94,7 @@ struct PreparedLogicalPlan {
     // Owned capability on this unchanged graph; supports a cheap request and
     // parent-requested sharing without rebuilding retained mathematics.
     AllocationPreparation allocationPreparation;
+    std::shared_ptr<AllocationProofArchive> allocationProofs;
     // Borrowed only during the synchronous allocation export; never captured,
     // copied into views, or serialized. Recursive exports pass it explicitly.
     AllocationProfile* allocationProfile = nullptr;
@@ -106,6 +118,7 @@ struct PreparedLogicalPlan {
     std::shared_ptr<const FamilyEndpointRecipe> familyProtocol;
     // Explicit physical-output request; a certificate alone never selects it.
     std::shared_ptr<const PhysicalFamilyOutput> physicalOutput;
+    std::shared_ptr<const ExecutedFamilyOutput> executedOutput;
     std::vector<LogicalPreparation> preparation;
     std::vector<PreparedLogicalEndpoint> endpoints;
     std::vector<EndpointFamily> families; // Exact source/target coordinate provenance.

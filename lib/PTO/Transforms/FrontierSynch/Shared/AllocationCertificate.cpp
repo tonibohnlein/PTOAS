@@ -188,7 +188,8 @@ FailureOr<PhysicalAllocationPlan> decodePhysicalAllocation(func::FuncOp function
     if (!certificate) {
         bool notifications = false;
         function.walk([&](Operation* op) {
-            notifications |= belongsToActiveContext(function, op) && isa<LogicalSetOp, LogicalWaitOp>(op);
+            notifications |= belongsToActiveContext(function, op) &&
+                isa<LogicalFamilyOp, LogicalSetOp, LogicalWaitOp>(op);
         });
         if (notifications || function->hasAttr(FiniteAllocationAttr) || !function->hasAttr("pto.endpoint_families")) {
             return function.emitError("physical allocation requires a supported finite or uniform allocation export; "

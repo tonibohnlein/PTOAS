@@ -119,6 +119,7 @@ struct RegionCertification {
 struct AnalysisConstructionCounts {
     uint64_t structuralIndices = 0;
     uint64_t mathematicalAttempts = 0;
+    uint64_t requestWalks = 0, exhaustedWalkHits = 0;
     uint64_t explicitReductions = 0;
     uint64_t rotatingReductions = 0, guardedRotatingReductions = 0;
     uint64_t varyingBoundaryReductions = 0;

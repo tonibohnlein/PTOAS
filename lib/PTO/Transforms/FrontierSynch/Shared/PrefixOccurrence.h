@@ -22,6 +22,14 @@ struct PrefixOccurrence {
     std::optional<RegionExpressions::Id> choose;
     PrefixOccurrencePtr yes, no;
 };
+// Only the selected source capture is restricted; original publication sites
+// and primitive matching predicates remain unchanged. Proof-created IDs never
+// escape the lexical arena transaction.
+struct PrefixOccurrenceRestrictionWork {
+    uint64_t requests = 0, choices = 0, pruned = 0, residual = 0, proofVisits = 0;
+};
+PrefixOccurrencePtr restrictPrefixOccurrence(RegionExpressions& expressions,
+    const PrefixOccurrencePtr& root, RegionExpressions::Id activity, PrefixOccurrenceRestrictionWork& work);
 // Shared immutable export-frame identity, including retained mathematical owners.
 bool samePrefixOccurrenceFrame(const RegionalAnalysis& a, const RegionalAnalysis& b);
 using PrefixOccurrenceCache = std::map<uint32_t, PrefixOccurrencePtr>;

@@ -23,18 +23,18 @@ namespace mlir::pto::frontiersynch {
 // Detached whole-function producer shared by module coordination and tests.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFunctionSynchronization(
     func::FuncOp function, GMAliasPolicy policy, bool completeInvocation = false);
-struct ArithmeticPeriodicExports {
-    bool endpointsAvailable = false, allocationAvailable = false;
-    std::string endpointError, allocationError;
-};
 struct FiniteVisitAnalysis;
-struct BoundedLifetimeDemandResult;
 struct AnalysisSessionState;
 struct BackendAttempt;
 struct NumericTemplatePlan;
 class FrontierAnalysis {
 public:
-    explicit FrontierAnalysis(Operation* operation) : function(dyn_cast<func::FuncOp>(operation)) {}
+    // Allocation policy is immutable for this owner and all of its cached requests.
+    // invalidate() discards answers without changing the policy.
+    explicit FrontierAnalysis(Operation* operation,
+        ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId)
+        : function(dyn_cast<func::FuncOp>(operation)), regionalAllocationPolicy(allocationPolicy) {}
+    ArithmeticRegionalAllocationPolicy arithmeticAllocationPolicy() const { return regionalAllocationPolicy; }
     // Callers needing structural diagnostics retain the default. The logical
     // pass may defer recognition when the whole-function native proof succeeds.
     LogicalResult initialize(GMAliasPolicy policy = GMAliasPolicy::MayNotAlias, bool requireStructure = true);
@@ -110,28 +110,26 @@ public:
     // Audit every original region, including children of a compact match.
     // Results own their exact mathematics; no endpoint or allocation is built.
     std::vector<RegionCertification> certifyRegions();
-    // Demand reduction, endpoint recipes and allocation are backend work.
-    // Cache both successful and failed numeric attempts without changing recognition.
-    LogicalResult analyzeNumericCandidates();
-    LogicalResult prepareNumericCandidateExports();
-    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareRotatingFunction(bool guarded);
+    // Exhaustive diagnostic/test workloads, separate from production request
+    // selection. Populate the legacy recognition snapshots inspected by audits.
+    LogicalResult auditNumericCandidates();
+    LogicalResult auditNumericCandidateExports();
     bool hasOnlyNativeScalarRequirements() const { return nativeScalarOnly; }
+    // Named backend requests; these never select a different exact reducer.
     LogicalResult analyzeExplicitFunction();
-    SequenceAnalysis* analyzeSequenceFunction();
-    // Demand-only regional libraries; their success never implies a whole-loop
-    // query, executable type-selection recipe or physical allocation export.
-    LogicalResult analyzeFiniteVisitCandidates();
-    const std::map<std::size_t, std::shared_ptr<const FiniteVisitAnalysis>>& finiteVisitDemands() const {
+    // Concrete composition oracle, including where production can use an
+    // identity wrapper instead. Ordinary callers use analyze/minimumDemands.
+    SequenceAnalysis* auditSequenceFunction();
+    // Exhaustive diagnostic/test workload and its retained demand inventory.
+    // Success implies no whole-loop query, endpoint or allocation export.
+    LogicalResult auditFiniteVisitCandidates();
+    const std::map<std::size_t, std::shared_ptr<const FiniteVisitAnalysis>>& auditedFiniteVisitDemands() const {
         return finiteVisitAnalyses;
     }
-    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeFunction(std::string& error);
-    const BoundedLifetimeDemandResult* boundedLifetimeDemands() const { return boundedAnalysis.get(); }
     LogicalResult analyzeArithmeticFunction();
     // Pause at exact generators before attempting the distance-interval adapter.
     // Failed conversion/endpoint export can resume this stage without rebuilding.
     LogicalResult analyzeArithmeticPeriodicFunction();
-    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticPeriodicFunction();
-    const ArithmeticPeriodicExports& arithmeticPeriodicExports() const { return periodicExports; }
     const ArithmeticPeriodicProgram* arithmeticPeriodicDemands() const {
         return arithmeticPeriodicAnalysis ? &*arithmeticPeriodicAnalysis : nullptr;
     }
@@ -155,6 +153,11 @@ public:
         return program ? &*program : nullptr;
     }
 private:
+    LogicalResult produceExplicitFunction();
+    SequenceAnalysis* produceSequenceFunction();
+    LogicalResult produceArithmeticFunction();
+    LogicalResult produceArithmeticPeriodicFunction();
+    AnalysisOutcome requestWholeFunctionBackend(AnalysisBackend backend);
     LogicalResult recognizeStructure();
     void recognizeForm(std::size_t region, ProgramForm form);
     std::shared_ptr<const NormalizedControlDescription> normalizedRegion(std::size_t region);
@@ -177,18 +180,20 @@ private:
         bool sameNodeContinuation = false);
     std::vector<AnalysisBackend> exactAttemptFamilies(
         const AnalysisRequest& request, AnalysisForm form, bool alternative);
-    bool visitExactFamily(const AnalysisRequest& request, AnalysisBackend family,
-        const std::function<bool(AnalysisBackend)>& attempt);
+    std::vector<AnalysisBackend> rankExactCandidates(const AnalysisRequest& request,
+        const std::vector<AnalysisBackend>& candidates);
     std::pair<AnalysisOutcome, AnalysisBackend> selectIdentityChild(
         const AnalysisRequest& request, bool continueSameRegion);
+    std::pair<AnalysisOutcome, AnalysisBackend> continueIdentityChild(const AnalysisRequest& request);
     std::shared_ptr<const MathematicalResult> produceIdentitySequence(
-        std::size_t region, bool endpoints, std::string& error);
+        const AnalysisRequest& request, bool endpoints, std::string& error);
     AnalysisOutcome requestIdentity(const AnalysisRequest& request, BackendAttempt& attempt);
     DictionaryAttr allocateIdentity(const MathematicalResult& demands, PreparedLogicalPlan& plan,
         class AllocationProfile* profile = nullptr);
-    std::shared_ptr<const MathematicalResult> produceBackend(AnalysisBackend backend, std::string& error);
+    std::shared_ptr<const MathematicalResult> produceBackend(
+        AnalysisBackend backend, const AnalysisRequest& request, std::string& error);
     std::shared_ptr<const MathematicalResult> produceRegionBackend(
-        AnalysisBackend backend, std::size_t region, std::string& error);
+        AnalysisBackend backend, const AnalysisRequest& request, std::string& error);
     std::shared_ptr<const MathematicalResult> produceArithmeticRegion(std::size_t region, std::string& error);
     std::shared_ptr<const MathematicalResult> produceLoopBackend(
         AnalysisBackend backend, std::string& error, std::size_t region = 0);
@@ -199,6 +204,7 @@ private:
         std::shared_ptr<const MathematicalResult> demands, std::string& error);
     std::shared_ptr<AnalysisSessionState> sessionState;
     func::FuncOp function;
+    const ArithmeticRegionalAllocationPolicy regionalAllocationPolicy;
     SmallVector<ArithmeticLimits> wholeArithmeticProfiles{{8, 8, 1, 8}, {8, 8, 2, 8}};
     SmallVector<ArithmeticLimits> regionalArithmeticProfiles{{8, 8, 1, 4096}, {8, 8, 2, 4096}};
     std::map<std::size_t, std::shared_ptr<const ArithmeticProgram>> arithmeticForms;
@@ -211,13 +217,10 @@ private:
     std::shared_ptr<PhaseIndex> structuralIndex;
     std::shared_ptr<ExplicitAnalysis> explicitAnalysis;
     AnalysisConstructionCounts construction;
-    std::shared_ptr<BoundedLifetimeDemandResult> boundedAnalysis;
     std::shared_ptr<SequenceAnalysis> sequenceAnalysis;
     std::shared_ptr<ArithmeticDemandAnalysis> arithmeticAnalysis;
     std::shared_ptr<GeneralArithmeticDemandAnalysis> generalArithmeticAnalysis;
-    std::optional<GeneralArithmeticGeneratorStage> arithmeticGeneratorStage;
     std::shared_ptr<ArithmeticPeriodicProgram> arithmeticPeriodicAnalysis;
-    ArithmeticPeriodicExports periodicExports;
     std::map<std::size_t, std::shared_ptr<const FiniteVisitAnalysis>> finiteVisitAnalyses;
 };
 } // namespace mlir::pto::frontiersynch

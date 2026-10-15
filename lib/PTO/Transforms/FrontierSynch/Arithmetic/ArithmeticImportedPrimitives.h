@@ -14,6 +14,9 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticStorageSelectors.h"
 #include <utility>
 namespace mlir::pto::frontiersynch {
+// Storage extrema consume reference order, occurrences and reads/writes. Native
+// and prerequisite relations belong to mathematical reduction, not this export.
+enum class ArithmeticPrimitiveRequest { All, Occurrences, Storage };
 class ImportedArithmeticPrimitives {
 public:
     ImportedArithmeticPrimitives(const ImportedArithmeticPrimitives&) = delete;
@@ -33,24 +36,24 @@ public:
     }
     llvm::ArrayRef<ArithmeticIntegerPiece> pieces() const { return values; }
     const ArithmeticStorageSelectorCost& constructionCost() const { return cost; }
-    bool isCompleteFor(const ArithmeticProgram& program) const { return source == &program && complete; }
+    bool isCompleteForStorage(const ArithmeticProgram& program) const { return source == &program && complete; }
 private:
-    ImportedArithmeticPrimitives(const ArithmeticProgram& program, bool occurrencesOnly,
+    ImportedArithmeticPrimitives(const ArithmeticProgram& program, ArithmeticPrimitiveRequest request,
                                 std::vector<ArithmeticIntegerPiece> pieces,
                                 ArithmeticStorageSelectorCost constructionCost)
-        : source(&program), complete(!occurrencesOnly),
+        : source(&program), complete(request != ArithmeticPrimitiveRequest::Occurrences),
           values(std::move(pieces)), cost(constructionCost) {}
     const ArithmeticProgram* source;
     bool complete;
     std::vector<ArithmeticIntegerPiece> values;
     ArithmeticStorageSelectorCost cost;
     friend FailureOr<ImportedArithmeticPrimitives> importOwnedArithmeticIntegerPieces(
-        const ArithmeticProgram&, bool);
+        const ArithmeticProgram&, ArithmeticPrimitiveRequest);
     friend FailureOr<std::vector<ArithmeticIntegerPiece>> importArithmeticIntegerPieces(
         const ArithmeticProgram&, bool);
 };
 FailureOr<ImportedArithmeticPrimitives> importOwnedArithmeticIntegerPieces(
-    const ArithmeticProgram& program, bool occurrencesOnly = false);
+    const ArithmeticProgram& program, ArithmeticPrimitiveRequest request = ArithmeticPrimitiveRequest::All);
 ArithmeticStorageSelectors buildArithmeticStorageSelectorsFromImported(
     const ArithmeticProgram& program, const ImportedArithmeticPrimitives& imported,
     llvm::ArrayRef<uint32_t> sitePipes);

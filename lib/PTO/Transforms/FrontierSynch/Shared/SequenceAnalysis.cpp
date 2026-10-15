@@ -6,12 +6,44 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "PrefixOccurrence.h"
+#include "RegionalRelationsInternal.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
 namespace mlir::pto::frontiersynch {
+bool sameOriginalCoordinates(const RegionalAnalysis& a, const RegionalAnalysis& b)
+{
+    const bool sameDomain = a.expressions == b.expressions && a.anchors.size() == b.anchors.size() &&
+        a.occurrenceLoops == b.occurrenceLoops && a.accessModel == b.accessModel &&
+        a.gmAliasPolicy == b.gmAliasPolicy;
+    if (!sameDomain) { return false; }
+    // Specialized phase views need their own explicit coordinate adapter.
+    if (a.firstOrdinal != b.firstOrdinal || a.endpointSiteGuard != b.endpointSiteGuard ||
+        a.endpointInvocationGuard != b.endpointInvocationGuard) { return false; }
+    for (std::size_t i = 0; i < a.anchors.size(); ++i) {
+        const auto& x = a.anchors[i];
+        const auto& y = b.anchors[i];
+        if (x.phase != y.phase || x.before.block != y.before.block || x.before.before != y.before.before ||
+            x.after.block != y.after.block || x.after.before != y.after.before ||
+            x.coordinates.size() != y.coordinates.size()) { return false; }
+        for (std::size_t j = 0; j < x.coordinates.size(); ++j) {
+            if (x.coordinates[j].loop != y.coordinates[j].loop ||
+                x.coordinates[j].induction != y.coordinates[j].induction) { return false; }
+        }
+        const auto ax = a.outerLoops.empty() ? ArrayRef<scf::ForOp>() : ArrayRef<scf::ForOp>(a.outerLoops[i]);
+        const auto bx = b.outerLoops.empty() ? ArrayRef<scf::ForOp>() : ArrayRef<scf::ForOp>(b.outerLoops[i]);
+        if (ax != bx) { return false; }
+        for (std::size_t j = 0; j < ax.size(); ++j) {
+            const auto ad = a.outerDivisors.empty() ? 1 : a.outerDivisors[i][j];
+            const auto bd = b.outerDivisors.empty() ? 1 : b.outerDivisors[i][j];
+            if (ad != bd) { return false; }
+        }
+    }
+    return true;
+}
 namespace {
 SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
 {
@@ -50,8 +82,9 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
                 }
                 composer.indexReady = true;
             }
+            ++composer.relationalCompositions;
             auto composed = composeSymbolicRegionalSequence(children, composer.function, *input,
-                                                             composer.index, diagnostic);
+                composer.index, diagnostic, composer.allocationPolicy);
             if (succeeded(composed) && (!composed->capabilities.endpointRecipes ||
                 (!composed->prepare && !composed->prepareWithVisits))) {
                 result.insertionError = composed->relations && !composed->relations->exportObligation.empty() ?
@@ -248,8 +281,12 @@ SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const 
         !expressions->constructionError().empty()) {
         result.error = "sequence route requires a single structured function body"; return result;
     }
-    auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions), std::move(sharedIndex));
+    auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions),
+        std::move(sharedIndex), program.allocationPolicy);
     state->input = &input;
+    state->constructionOrigin = "requested-region";
+    state->diagnosticRegion = node;
+    state->originalRegionId = node;
     state->program = &program;
     state->resolveOriginal = std::move(resolver);
     state->completeInvocation = node == 0;
@@ -257,7 +294,10 @@ SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const 
     // requests endpoint-capable children before reducing complete crossings,
     // including at the root, without replacing the earlier exact mathematics.
     state->requireEndpoints = requireEndpoints;
-    if (node < program.nodes.size()) { state->requiredOuterLoops = program.nodes[node].loops; }
+    if (node < program.nodes.size()) {
+        state->requiredOuterLoops = program.nodes[node].loops;
+        state->constructionAnchor = program.nodes[node].anchor;
+    }
     if (!state->collect(node) || !state->partition()) { result.error = state->error; return result; }
     // Construction callbacks borrow the session; retained results must not.
     state->resolveOriginal = {};
@@ -265,25 +305,145 @@ SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const 
     state->bindAdapters();
     return finishSequence(std::move(state));
 }
+std::optional<SequenceAnalysis> upgradeSequenceEndpoints(const SequenceAnalysis& retained,
+    std::size_t node, SequenceRegionResolver resolver)
+{
+    const auto& source = retained.state;
+    if (!source || !retained.error.empty() || !source->program || !source->input || !resolver ||
+        source->originalRegionId != node || node >= source->program->nodes.size()) {
+        return std::nullopt;
+    }
+    if (source->relationalResult && (!source->relationalResult->relations ||
+        !source->relationalResult->relations->preparation)) { return std::nullopt; }
+    const bool conditional = source->program->nodes[node].kind == StructureKind::Conditional;
+    if ((!conditional && source->program->nodes[node].kind != StructureKind::Sequence) ||
+        llvm::any_of(source->children, [&](const Child& child) {
+            return (child.originalArmGuard && !conditional) || (!child.originalNode &&
+                (!child.regional.capabilities.endpointRecipes ||
+                 (!child.regional.prepare && !child.regional.prepareWithVisits)));
+        })) { return std::nullopt; }
+    SequenceAnalysis result;
+    auto children = source->children;
+    bool changed = false;
+    for (auto& child : children) {
+        if (!child.originalNode) { ++result.upgradeWork.retainedChildren; continue; }
+        Region* arm = nullptr;
+        if (conditional) {
+            if (!child.originalArmGuard || *child.originalNode >= source->program->nodes.size()) {
+                return std::nullopt;
+            }
+            arm = source->program->nodes[*child.originalNode].region;
+            auto branch = dyn_cast_or_null<scf::IfOp>(source->constructionAnchor);
+            if (!arm || !branch || (arm != &branch.getThenRegion() && arm != &branch.getElseRegion())) {
+                return std::nullopt;
+            }
+            const auto condition = source->expressions.input(branch.getCondition());
+            const auto expected = arm == &branch.getThenRegion() ? condition : source->expressions.lnot(condition);
+            if (*child.originalArmGuard != expected) { return std::nullopt; }
+        }
+        std::string error;
+        auto upgraded = resolver(*child.originalNode, true, error);
+        if (failed(upgraded)) { result.error = "sequence endpoint child upgrade: " + error; return result; }
+        if (!upgraded->capabilities.endpointRecipes ||
+            (!upgraded->prepare && !upgraded->prepareWithVisits)) {
+            result.error = "sequence endpoint child upgrade lacks an owned preparation recipe"; return result;
+        }
+        if (arm) {
+            if (upgraded->expressions != source->arena) { return std::nullopt; }
+            // Retain the old guarded mathematics. Only the new preparation
+            // callbacks need the original arm mask: the default path invokes
+            // these wrappers once; resolver-based preparation masks its fresh
+            // raw arm plan once instead of invoking the stored callbacks.
+            *upgraded = guardOriginalArm(std::move(*upgraded), *child.originalArmGuard, *arm);
+        }
+        if (sameOriginalCoordinates(child.regional, *upgraded)) {
+            // Only preparation is an upgrade. The original semantic callbacks,
+            // selected occurrences and all crossing expressions stay unchanged.
+            child.regional.prepare = upgraded->prepare;
+            child.regional.prepareWithVisits = upgraded->prepareWithVisits;
+            child.regional.prepareFiltered = upgraded->prepareFiltered;
+            child.regional.capabilities.endpointRecipes = true;
+            ++result.upgradeWork.retainedChildren;
+        } else {
+            // A changed guarded representation needs the existing conditional
+            // producer to re-establish its arm-specific composition contract.
+            if (conditional || source->relationalResult) { return std::nullopt; }
+            Child replacement;
+            replacement.originalNode = child.originalNode;
+            replacement.prefixMathematics = upgraded->retainedMathematics.lock();
+            replacement.anchors = upgraded->anchors;
+            replacement.regional = std::move(*upgraded);
+            child = std::move(replacement);
+            ++result.upgradeWork.replacedChildren;
+            changed = true;
+        }
+    }
+    auto work = result.upgradeWork;
+    if (!changed) {
+        auto state = std::make_shared<SequenceAnalysisState>(*source);
+        state->upgradeSource = source;
+        state->children = std::move(children);
+        state->relationalCompositions = 0;
+        if (source->relationalResult) {
+            std::vector<RegionalAnalysis> preparationChildren;
+            for (const auto& child : state->children) { preparationChildren.push_back(child.regional); }
+            auto rebound = rebindRegionalRelationPreparation(*source->relationalResult, preparationChildren);
+            if (failed(rebound)) { return std::nullopt; }
+            state->relationalResult = std::move(*rebound);
+            work.reusedRelationalResults = 1;
+        }
+        state->requireEndpoints = true;
+        state->resolveOriginal = {};
+        state->childPreparationOperations = state->crossingPreparationOperations = 0;
+        state->constructionOrigin = "sequence-endpoint-upgrade";
+        state->crossingPresence.reset();
+        if (source->hasCertifiedCrossingPresence()) { state->sealCrossingPresence(); }
+        result = retained;
+        result.insertionError.clear();
+        result.state = std::move(state);
+        work.reusedCrossings = source->crossings.size();
+    } else {
+        // Changed coordinates invalidate the global partition and transitive
+        // closure, even between unchanged endpoints. Child mathematics does
+        // not depend on that parent construction and remains owned/reused.
+        auto state = std::make_shared<SequenceAnalysisState>(source->function, source->arena,
+            source->indexOwner, source->allocationPolicy);
+        state->upgradeSource = source;
+        state->input = source->input; state->program = source->program;
+        state->completeInvocation = source->completeInvocation;
+        state->reconstructPrerequisites = source->reconstructPrerequisites;
+        state->requiredOuterLoops = source->requiredOuterLoops;
+        state->constructionOrigin = "sequence-endpoint-recomposition";
+        state->diagnosticRegion = source->diagnosticRegion;
+        state->originalRegionId = source->originalRegionId;
+        state->constructionAnchor = source->constructionAnchor;
+        state->children = std::move(children);
+        result = finishSequence(std::move(state));
+        if (result.state) { work.recomposedCrossings = result.state->crossings.size(); }
+    }
+    result.upgradeWork = work;
+    return result;
+}
 SequenceAnalysis composeRegionalSequence(func::FuncOp function,
     std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
     bool reconstructPrerequisites, bool requireEndpoints,
-    std::shared_ptr<const PhaseSourceFacts> sourceFacts)
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts, ArithmeticRegionalAllocationPolicy allocationPolicy)
 {
     return composeRegionalSequenceWithin(function, std::move(expressions), std::move(children),
-                                        reconstructPrerequisites, requireEndpoints, {}, std::move(sourceFacts));
+        reconstructPrerequisites, requireEndpoints, {}, std::move(sourceFacts), allocationPolicy);
 }
 SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
     std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
     bool reconstructPrerequisites, bool requireEndpoints, ArrayRef<scf::ForOp> enclosing,
-    std::shared_ptr<const PhaseSourceFacts> sourceFacts)
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts, ArithmeticRegionalAllocationPolicy allocationPolicy)
 {
     SequenceAnalysis result;
     if (!function || function.isDeclaration() || !function.getBody().hasOneBlock() || !expressions ||
         !expressions->constructionError().empty()) {
         result.error = "sequence requires a valid common regional expression arena"; return result;
     }
-    auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions));
+    auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions),
+        std::shared_ptr<PhaseIndex>{}, allocationPolicy);
     state->requiredOuterLoops.assign(enclosing.begin(), enclosing.end());
     state->reconstructPrerequisites = reconstructPrerequisites;
     state->requireEndpoints = requireEndpoints;

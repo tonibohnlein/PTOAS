@@ -136,6 +136,45 @@ std::optional<Expr> prefixOccurrenceMatch(RegionExpressions& e, const PrefixOccu
     };
     return visit(root);
 }
+PrefixOccurrencePtr restrictPrefixOccurrence(RegionExpressions& e,
+    const PrefixOccurrencePtr& root, Expr activity, PrefixOccurrenceRestrictionWork& work)
+{
+    accumulateCost(work.requests, 1);
+    if (!root || activity >= e.size() || !e.isBoolean(activity)) { return root; }
+    RegionExpressions::Transaction scratch(e);
+    if (e.constantValue(activity) == 0) { return {}; }
+    // One immutable activity premise per request keeps shared occurrence DAGs
+    // shared. Do not enumerate path-dependent premises through a choice DAG.
+    std::map<const PrefixOccurrence*, PrefixOccurrencePtr> retained;
+    std::map<Expr, std::optional<uint64_t>> answers;
+    std::function<PrefixOccurrencePtr(const PrefixOccurrencePtr&)> visit =
+        [&](const auto& node) -> PrefixOccurrencePtr {
+        if (!node || !node->choose) { return node; }
+        if (auto found = retained.find(node.get()); found != retained.end()) { return found->second; }
+        accumulateCost(work.choices, 1);
+        auto [answer, fresh] = answers.try_emplace(*node->choose);
+        if (fresh) { answer->second = e.constantUnder(activity, *node->choose, &work.proofVisits); }
+        PrefixOccurrencePtr result;
+        if (answer->second && e.constructionError().empty()) {
+            accumulateCost(work.pruned, 1);
+            result = visit(*answer->second ? node->yes : node->no);
+        } else {
+            accumulateCost(work.residual, 1);
+            auto yes = visit(node->yes), no = visit(node->no);
+            if (yes == node->yes && no == node->no) { result = node; }
+            else {
+                auto copy = std::make_shared<PrefixOccurrence>(*node);
+                copy->yes = std::move(yes); copy->no = std::move(no);
+                result = std::move(copy);
+            }
+        }
+        retained.emplace(node.get(), result);
+        return result;
+    };
+    // Returned nodes refer exclusively to original selector/match IDs; proof
+    // temporaries and diagnostics are discarded before capture preparation.
+    return visit(root);
+}
 void attachSequenceOccurrenceRecipes(const RegionalAnalysis& region,
     const std::shared_ptr<SequenceAnalysisState>& state, RegionalPrefixContribution& result)
 {

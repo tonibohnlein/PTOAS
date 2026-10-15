@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "SequenceIncomingQuery.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "WriterPairIndex.h"
 namespace mlir::pto::frontiersynch {
@@ -465,7 +466,26 @@ std::optional<Expr> SequenceAnalysisState::eventReachability(SequenceEvent sourc
     // its presence. Expand the alias before any child query. Memoization is by
     // endpoint pair, so shared selection DAGs do not enumerate choice paths.
     const auto* sourceChoice = portChoice(*this, source);
-    const auto* targetChoice = sourceChoice ? nullptr : portChoice(*this, target);
+    const auto* targetChoice = portChoice(*this, target);
+    if (sourceChoice && targetChoice && sourceChoice->choose == targetChoice->choose) {
+        // The same original selector cannot choose opposite arms. This is the
+        // existing nested-select identity, applied before asking the children
+        // to construct unreachable pairs. Keep both unrestricted diagonal
+        // queries and the outer select, including its undefined-arm masking.
+        const auto a = *sourceChoice, b = *targetChoice;
+        auto original = [&](uint32_t port, PeriodicEventKind kind) {
+            auto value = event(2 * static_cast<std::size_t>(port));
+            value.kind = kind;
+            return value;
+        };
+        accumulateCost(crossingQueryWork.correlatedChoices, 1);
+        auto yes = eventReachability(original(a.yes, source.kind), original(b.yes, target.kind));
+        auto no = eventReachability(original(a.no, source.kind), original(b.no, target.kind));
+        if (!yes || !no) { return std::nullopt; }
+        auto answer = expressions.select(a.choose, *yes, *no);
+        reachabilityCache.emplace(std::move(pair), answer);
+        return answer;
+    }
     if (sourceChoice || targetChoice) {
         const auto selected = sourceChoice ? *sourceChoice : *targetChoice;
         const auto kind = sourceChoice ? source.kind : target.kind;
@@ -527,6 +547,98 @@ std::optional<Expr> SequenceAnalysisState::eventReachability(SequenceEvent sourc
     }
     reachabilityCache.emplace(std::move(pair), answer);
     return answer;
+}
+std::optional<uint64_t> SequenceIncomingQuery::fact(Expr activity, Expr condition)
+{
+    const auto key = std::make_pair(activity, condition);
+    if (auto found = facts.find(key); found != facts.end()) { return found->second; }
+    std::optional<uint64_t> value;
+    {
+        RegionExpressions::Transaction proof(state.expressions);
+        value = state.expressions.constantUnder(activity, condition, &state.crossingQueryWork.incomingProofVisits);
+    }
+    if (value) { accumulateCost(state.crossingQueryWork.incomingFacts, 1); }
+    facts.emplace(key, value);
+    return value;
+}
+Expr SequenceIncomingQuery::coordinate(Expr activity, Expr root)
+{
+    const auto key = std::make_pair(activity, root);
+    if (auto found = coordinates.find(key); found != coordinates.end()) { return found->second; }
+    auto& e = state.expressions;
+    SmallVector<Expr> conditions;
+    e.visitReferenced({root}, [&](Expr id) {
+        if (e.isBoolean(id) && !e.constantValue(id)) { conditions.push_back(id); }
+    });
+    SmallVector<std::pair<Expr, Expr>> bindings;
+    for (auto condition : conditions) {
+        if (auto value = fact(activity, condition)) { bindings.emplace_back(condition, e.boolean(*value != 0)); }
+    }
+    Expr answer = root;
+    if (!bindings.empty()) {
+        RegionExpressions::Transaction specialization(e);
+        RegionExpressions::Substitution substitution(bindings);
+        const auto selected = e.substitute(root, substitution);
+        if (selected != RegionExpressions::invalid && e.constructionError().empty()) {
+            answer = selected;
+            specialization.commit();
+        }
+        // An unsupported rebuild retains the original exact query. No child
+        // callback has run, and no partially rebuilt expression may escape.
+    }
+    if (answer != root) { accumulateCost(state.crossingQueryWork.incomingCoordinates, 1); }
+    coordinates.emplace(key, answer);
+    return answer;
+}
+SequenceEvent SequenceIncomingQuery::occurrence(Expr activity, SequenceEvent value)
+{
+    while (const auto* choice = portChoice(state, value)) {
+        const auto selected = fact(activity, choice->choose);
+        // An unresolved alias retains its complete original choice/frame query.
+        // Do not turn its folded coordinates into an invented primitive event.
+        if (!selected) { return value; }
+        const auto kind = value.kind;
+        value = state.event(2 * static_cast<std::size_t>(*selected ? choice->yes : choice->no));
+        value.kind = kind;
+        accumulateCost(state.crossingQueryWork.incomingArms, 1);
+    }
+    // Optional exact callbacks need not accept a different representation of
+    // the same coordinate. Never speculate then recover from a stateful refusal.
+    if (!state.children[value.child].regional.capabilities.substitutionStableQueries) { return value; }
+    value.ordinal = coordinate(activity, value.ordinal);
+    for (auto& visit : value.visits) { visit = coordinate(activity, visit); }
+    return value;
+}
+std::optional<Expr> SequenceIncomingQuery::query(std::size_t source, std::size_t target, Expr activity)
+{
+    if (source / 2 >= state.ports.size() || target / 2 >= state.ports.size()) { return std::nullopt; }
+    return query(state.event(source), state.event(target), activity);
+}
+std::optional<Expr> SequenceIncomingQuery::query(SequenceEvent source, SequenceEvent target, Expr activity)
+{
+    auto& e = state.expressions;
+    auto valid = [&](const SequenceEvent& event) {
+        auto coordinate = [&](Expr id) { return id < e.size() && !e.isBoolean(id); };
+        return event.child < state.children.size() && event.type < state.children[event.child].anchors.size() &&
+            coordinate(event.ordinal) && llvm::all_of(event.visits, coordinate);
+    };
+    if (activity >= e.size() || !e.isBoolean(activity) || !valid(source) || !valid(target)) { return std::nullopt; }
+    accumulateCost(state.crossingQueryWork.incomingRequests, 1);
+    if (e.constantValue(activity) == 0) { return e.boolean(false); }
+    const Key key{activity, eventKey(source), eventKey(target)};
+    if (auto found = answers.find(key); found != answers.end()) { return found->second; }
+    const auto a = occurrence(activity, source), b = occurrence(activity, target);
+    if (eventKey(a) == eventKey(source) && eventKey(b) == eventKey(target)) {
+        accumulateCost(state.crossingQueryWork.incomingResidual, 1);
+    }
+    // These are ordinary exact queries of the qualified coordinates. Only the
+    // caller's activity restricts their use; captured executed ranks and original
+    // occurrence recipes are untouched. Missing residual queries still refuse.
+    auto answer = state.eventReachability(a, b);
+    if (!answer) { return std::nullopt; }
+    const auto masked = e.select(activity, *answer, e.boolean(false));
+    answers.emplace(key, masked);
+    return masked;
 }
 bool SequenceAnalysisState::valueBridges()
 {
@@ -705,6 +817,7 @@ bool SequenceAnalysisState::symbolicCrossingReduction()
     // those exclusions before constructing child reachability circuits. The
     // cache keys are immutable predicate IDs from the predeletion snapshot;
     // no retained guard is used to justify another candidate's deletion.
+    SequenceIncomingQuery incomingQueries(*this);
     std::map<std::pair<Expr, Expr>, bool> incompatibilities;
     auto incompatible = [&](Expr a, Expr b) {
         const auto av = expressions.constantValue(a), bv = expressions.constantValue(b);
@@ -741,12 +854,16 @@ bool SequenceAnalysisState::symbolicCrossingReduction()
             // queries can record errors, even when a zero prefix would skip
             // them, so speculative suffix callbacks are not interchangeable.
             if (entry.target == 2 * edge.target + 1) { ++crossingQueryWork.zeroTails; continue; }
+            // Only this exact activity consumes either path query. Qualify
+            // selected coordinates before constructing an unrestricted child DAG.
+            const auto activity = expressions.select(candidateGuard,
+                expressions.select(entry.guard, distinct, no()), no());
             ++crossingQueryWork.prefixQueries;
-            auto prefix = eventReachability(2*edge.source+1, entry.source);
+            auto prefix = incomingQueries.query(2*edge.source+1, entry.source, activity);
             if (!prefix) { return fail("child all-event query unavailable"); }
             if (expressions.constantValue(*prefix) == 0) { continue; }
             ++crossingQueryWork.suffixQueries;
-            auto suffix = eventReachability(entry.target, 2*edge.target);
+            auto suffix = incomingQueries.query(entry.target, 2*edge.target, activity);
             if (!suffix) { return fail("child all-event query unavailable"); }
             auto tail = expressions.select(entry.guard, both(distinct, *suffix), no());
             if (expressions.constantValue(tail) == 0) { continue; }

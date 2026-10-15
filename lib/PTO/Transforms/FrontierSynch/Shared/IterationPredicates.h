@@ -249,6 +249,7 @@ public:
             }
         }
     }
+    bool hasOpaqueEvaluations() const { return !recipes.empty(); }
     std::string error;
 
 private:

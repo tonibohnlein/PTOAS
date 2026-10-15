@@ -16,13 +16,14 @@
 #include "PhysicalRefreshLimits.h"
 #include "BoundedLifetimeAllocationInternal.h"
 #include "BoundedLifetimeAllocationContext.h"
+#include "BoundedMandatoryTransport.h"
 #include "llvm/ADT/BitVector.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
 struct Use { unsigned payload; bool read, write; };
-using TransportGraph = std::vector<std::vector<unsigned>>;
+using TransportGraph = detail::BoundedMandatoryTransport::Graph;
 void addLifetimes(TransportGraph& graph, std::vector<std::vector<Use>>& cells,
     const BoundedLifetimeDemandResult& demands, const GuardedRecognition& skeleton, unsigned m)
 {
@@ -94,7 +95,7 @@ bool certifyTransport(const TransportGraph& graph, const std::map<uint32_t, uint
 // it into writer-chain paths, and omitted same-pipe protected hazards are
 // carried by native start/completion order. No guessed synchronization edges.
 bool mixing(const BoundedLifetimeDemandResult& demands, const BoundedLifetimeRecognition& recognized,
-    uint64_t span, std::string& error)
+    uint64_t span, std::vector<TransportGraph>& retained, std::string& error)
 {
     if (!recognized.physical) { error = "global queries need an absolute physical refresh map"; return false; }
     const auto& physical = *recognized.physical;
@@ -160,12 +161,14 @@ bool mixing(const BoundedLifetimeDemandResult& demands, const BoundedLifetimeRec
         }
         addLifetimes(graph, cells, demands, skeleton, m);
         if (!certifyTransport(graph, anchors, m, span, residue, error)) { return false; }
+        retained.push_back(std::move(graph));
     }
     return true;
 }
 struct Queries {
     std::shared_ptr<BoundedLifetimeDemandResult> window;
     std::shared_ptr<const SyncInput> inputOwner;
+    std::unique_ptr<detail::BoundedMandatoryTransport> mandatory;
     Id trips;
     std::vector<std::vector<std::pair<Value, bool>>> guards;
     using Key = std::tuple<uint32_t, Id, PeriodicEventKind, uint32_t, Id, PeriodicEventKind>;
@@ -227,7 +230,18 @@ struct Queries {
         const auto fixedDistance = e.constantValue(distance);
         const uint64_t first = fixedDistance.value_or(0);
         const uint64_t last = fixedDistance.value_or(window->window.span);
+        const uint64_t from = uint64_t{2} * source.type + unsigned(source.kind == PeriodicEventKind::Completion);
         for (uint64_t d = first; d <= last && d <= window->window.span; ++d) {
+            const auto to = 2 * (d * m + target.type) + unsigned(target.kind == PeriodicEventKind::Completion);
+            // A path in every physical residue is valid for any source ordinal.
+            // Keep endpoint presence and forward distance below. The final
+            // extended visit, and every uncertified pair, use the exact window.
+            if (mandatory && from <= std::numeric_limits<unsigned>::max() &&
+                to <= std::numeric_limits<unsigned>::max() &&
+                mandatory->alwaysReaches(static_cast<unsigned>(from), static_cast<unsigned>(to))) {
+                answer = e.lor(answer, e.eq(distance, e.constant(d)));
+                continue;
+            }
             auto local = window->analysis.window.query(e, {source.type, source.kind},
                 {static_cast<uint32_t>(d * m + target.type), target.kind});
             if (!local) { return std::nullopt; }
@@ -293,12 +307,14 @@ FailureOr<RegionalAnalysis> boundedLifetimeRegionalQueries(
             recognized.skeleton.guards.size(), recognized.physical->accesses.size())) {
         error = "global-query window exceeds the supported numerical representation"; return failure();
     }
-    if (!mixing(*demands, recognized, mixingSpan, error)) { return failure(); }
+    std::vector<TransportGraph> mandatory;
+    if (!mixing(*demands, recognized, mixingSpan, mandatory, error)) { return failure(); }
     RegionExpressions::Transaction transaction(*arena);
     auto extended = analyzeBoundedLifetimeRegion(demands->function, demands->loop, index,
         *demands->input, recognized, error, arena, mixingSpan + 1);
     if (failed(extended)) { return failure(); }
     auto queries = std::make_shared<Queries>(); queries->window = *extended;
+    queries->mandatory = std::make_unique<detail::BoundedMandatoryTransport>(std::move(mandatory));
     queries->inputOwner = std::move(inputOwner);
     queries->trips = CountedLoop::get(demands->loop)->trips(*arena);
     for (const auto& site : recognized.skeleton.phases) {
@@ -315,6 +331,11 @@ FailureOr<RegionalAnalysis> boundedLifetimeRegionalQueries(
     out.accessModel = &demands->input->accesses();
     out.gmAliasPolicy = demands->input->memory().gmPolicy();
     out.capabilities.exactQueries = true; out.capabilities.contextualGuards = true;
+    // Every guard was normalized at the symbolic window base plus each visit.
+    // Without opaque evaluations, coordinate substitution uses the same total
+    // scalar expressions and cannot introduce new historical input identities.
+    // Fixed distances request a subset of the ordinary window's local queries.
+    out.capabilities.substitutionStableQueries = !queries->window->predicates->hasOpaqueEvaluations();
     out.presence = [queries](RegionalEvent event) { return queries->presence(event); };
     out.reachability = [queries](RegionalEvent source, RegionalEvent target) { return queries->query(source, target); };
     SmallVector<scf::ForOp> enclosing;

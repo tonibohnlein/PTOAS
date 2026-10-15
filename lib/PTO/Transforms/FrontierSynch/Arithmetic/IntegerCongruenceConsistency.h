@@ -10,6 +10,8 @@
 #ifndef PTO_FRONTIER_INTEGERCONGRUENCECONSISTENCY_H
 #define PTO_FRONTIER_INTEGERCONGRUENCECONSISTENCY_H
 #include "PTO/Transforms/FrontierSynch/Arithmetic/IntegerRelations.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
+#include "llvm/ADT/STLExtras.h"
 #include "mlir/Analysis/Presburger/Matrix.h"
 #include <limits>
 #include <optional>
@@ -21,23 +23,34 @@ inline std::optional<mlir::presburger::IntMatrix> congruenceMatrix(
     unsigned dimensions, llvm::ArrayRef<IntegerCongruence> congruences)
 {
     const auto maximum = std::numeric_limits<unsigned>::max();
-    if (congruences.empty() || congruences.size() > maximum - dimensions) { return std::nullopt; }
+    if (congruences.empty() || congruences.size() > maximum) { return std::nullopt; }
+    for (const auto& atom : congruences) {
+        if (atom.coefficients.size() != dimensions || atom.modulus <= 0) { return std::nullopt; }
+    }
+    // Identically zero A columns contribute nothing to the column lattice of
+    // [A,diag(m)]. Keep all modulus columns and every used original coordinate.
+    // Inequality-only coordinates remain in the enclosing IntegerSystem.
+    std::vector<unsigned> active;
+    for (unsigned column = 0; column < dimensions; ++column) {
+        if (llvm::any_of(congruences, [&](const auto& atom) { return atom.coefficients[column] != 0; })) {
+            active.push_back(column);
+        }
+    }
+    if (congruences.size() > maximum - active.size()) { return std::nullopt; }
     const auto rows = static_cast<unsigned>(congruences.size());
-    const auto columns = dimensions + rows;
+    const auto variables = static_cast<unsigned>(active.size());
+    const auto columns = variables + rows;
     // Matrix uses unsigned products, and HNF also constructs an N-by-N U.
     if (columns > maximum / columns ||
         static_cast<uint64_t>(columns) * columns > llvm::SmallVector<BoundInteger, 16>().max_size()) {
         return std::nullopt;
     }
-    for (const auto& atom : congruences) {
-        if (atom.coefficients.size() != dimensions || atom.modulus <= 0) { return std::nullopt; }
-    }
     mlir::presburger::IntMatrix matrix(rows, columns);
     for (unsigned row = 0; row < rows; ++row) {
-        for (unsigned column = 0; column < dimensions; ++column) {
-            matrix(row, column) = congruences[row].coefficients[column];
+        for (unsigned column = 0; column < variables; ++column) {
+            matrix(row, column) = congruences[row].coefficients[active[column]];
         }
-        matrix(row, dimensions + row) = congruences[row].modulus;
+        matrix(row, variables + row) = congruences[row].modulus;
     }
     return matrix;
 }
@@ -65,11 +78,15 @@ inline CongruenceConsistency solveCongruenceBasis(
     return CongruenceConsistency::Consistent;
 }
 inline CongruenceConsistency congruenceConsistency(
-    unsigned dimensions, llvm::ArrayRef<IntegerCongruence> congruences)
+    unsigned dimensions, llvm::ArrayRef<IntegerCongruence> congruences, IntegerFeasibilityCost* cost = nullptr)
 {
     if (congruences.size() < 2) { return CongruenceConsistency::Consistent; }
     auto matrix = congruenceMatrix(dimensions, congruences);
     if (!matrix) { return CongruenceConsistency::Unknown; }
+    if (cost) {
+        accumulateCost(cost->congruenceChecks, 1);
+        accumulateCost(cost->congruenceMatrixColumns, matrix->getNumColumns());
+    }
     // M=[A,diag(m)] has full row rank. H=M*U has the same column lattice,
     // with a positive lower-triangular basis in its first `rows` columns.
     auto normal = matrix->computeHermiteNormalForm();

@@ -8,6 +8,7 @@
 // Independent finite integer witnesses for projection and Boolean subtraction.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/IntegerRelations.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/STLExtras.h"
 #include <algorithm>
 #include <functional>
 #include <optional>
@@ -292,6 +293,169 @@ bool sharedSystemOwnershipChecks(uint64_t& checked)
         if (contains(*projected, {Integer(x)}) != (x >= -3 && x <= 3)) { return false; }
     }
     return sharedSystemMemoChecks();
+}
+bool equalityFeasibilityChecks(uint64_t& checked)
+{
+    Integer huge(1);
+    for (unsigned bit = 0; bit < 100; ++bit) { huge *= 2; }
+    // Enumerate signed points independently of elimination, including unit and
+    // nonunit definitions, a floor remainder strip and coupled divisibility.
+    for (const auto& factors : std::vector<Point>{{Integer(1), Integer(-3), Integer(2)},
+             {Integer(2), Integer(3), Integer(-5)}, {huge, Integer(1), Integer(-2)}}) {
+        for (int64_t constant : {-2, 0, 1}) {
+            for (int64_t residue : {0, 1, 4}) {
+                std::vector<Constraint> rows{row({1, 0, 0}, 3), row({-1, 0, 0}, 3),
+                    row({0, 1, 0}, 3), row({0, -1, 0}, 3), row({0, 0, 1}, 3), row({0, 0, -1}, 3),
+                    row({0, 2, -1}, 0), row({0, -2, 1}, 1)};
+                rows.push_back({factors, Integer(constant)});
+                auto opposite = factors;
+                for (auto& factor : opposite) { factor = -factor; }
+                rows.push_back({std::move(opposite), Integer(-constant)});
+                const auto modular = congruence({1, 0, 2}, residue, 5);
+                bool exists = false;
+                for (int64_t x = -3; x <= 3; ++x) {
+                    for (int64_t y = -3; y <= 3; ++y) {
+                        for (int64_t z = -3; z <= 3; ++z) {
+                            exists |= evaluate(factors, {Integer(x), Integer(y), Integer(z)}) == constant &&
+                                2 * y <= z && z <= 2 * y + 1 && (x + 2 * z - residue) % 5 == 0 &&
+                                (y + z - residue) % 3 == 0;
+                            ++checked;
+                        }
+                    }
+                }
+                auto source = System::create(3, rows, {modular, congruence({0, 1, 1}, residue, 3)});
+                if (failed(source)) { return false; }
+                std::vector<unsigned> permutation{0, 1, 2};
+                do {
+                    auto reordered = source->remap(3, permutation);
+                    fs::IntegerFeasibilityCost cost;
+                    if (failed(reordered) || reordered->isEmpty(&cost) == exists || !cost.calls) { return false; }
+                } while (std::next_permutation(permutation.begin(), permutation.end()));
+            }
+        }
+    }
+    // The inconsistent defining equality is resolved before any unrelated
+    // coordinate, even with wide bounds. Count actual substitutions/recursion.
+    for (unsigned dimensions : {4U, 16U, 64U}) {
+        std::vector<Constraint> rows;
+        for (unsigned column = 0; column < dimensions; ++column) {
+            Point positive(dimensions, Integer(0));
+            positive[column] = Integer(1);
+            rows.push_back({positive, huge});
+            positive[column] = Integer(-1);
+            rows.push_back({positive, huge});
+        }
+        Point definition(dimensions, Integer(0));
+        definition[dimensions - 2] = Integer(1);
+        definition[dimensions - 1] = Integer(-2);
+        rows.push_back({definition, Integer(0)});
+        for (auto& factor : definition) { factor = -factor; }
+        rows.push_back({definition, Integer(0)});
+        Point parity(dimensions, Integer(0));
+        parity[dimensions - 2] = Integer(1);
+        Point other(dimensions, Integer(0));
+        other[0] = Integer(1);
+        auto source = System::create(dimensions, rows,
+            {{parity, Integer(1), Integer(2)}, {other, Integer(0), Integer(3)}});
+        fs::IntegerFeasibilityCost cost;
+        if (failed(source) || !source->isEmpty(&cost) || cost.candidateSubstitutions != 1 ||
+            cost.equalityEliminations != 1 || cost.calls != 2 || cost.octagonalEliminations ||
+            cost.congruenceChecks || cost.congruenceMatrixColumns) { return false; }
+        const auto hits = cost.cacheHits;
+        if (!source->isEmpty(&cost) || cost.calls != 3 || cost.cacheHits != hits + 1 ||
+            cost.candidateSubstitutions != 1) { return false; }
+    }
+    fs::IntegerFeasibilityCost zeroCost;
+    auto empty = System::create(0, {row({}, -1)});
+    return succeeded(empty) && empty->isEmpty(&zeroCost) && !System{}.isEmpty(&zeroCost) &&
+        zeroCost.calls == 2 && !zeroCost.candidateSubstitutions;
+}
+bool compactCongruenceChecks(uint64_t& checked)
+{
+    // Two active coordinates retain the same residue lattice regardless of
+    // interleaved unused or inequality-only coordinates. Enumerate its period.
+    for (unsigned dimensions : {4U, 16U, 64U}) {
+        const unsigned x = 1, y = dimensions - 2;
+        for (int64_t sum : {0, 1}) {
+            Point a(dimensions, Integer(0)), b = a, c = a, bound = a;
+            a[x] = b[y] = c[x] = c[y] = bound[0] = Integer(1);
+            std::vector<Constraint> rows;
+            if (sum) { rows.push_back({bound, Integer(8)}); }
+            auto source = System::create(dimensions, rows,
+                {{a, Integer(0), Integer(2)}, {b, Integer(0), Integer(2)}, {c, Integer(sum), Integer(2)}});
+            bool exists = false;
+            for (int64_t first = 0; first < 2; ++first) {
+                for (int64_t second = 0; second < 2; ++second) {
+                    exists |= first % 2 == 0 && second % 2 == 0 && (first + second - sum) % 2 == 0;
+                    ++checked;
+                }
+            }
+            fs::IntegerFeasibilityCost cost;
+            if (failed(source) || source->isEmpty(&cost) == exists || cost.congruenceChecks != 1 ||
+                cost.congruenceMatrixColumns != 5) { return false; }
+        }
+    }
+    // A nonoctagonal equality disappears first; the remaining three-way
+    // contradiction needs HNF rather than pairwise residue normalization.
+    auto residual = System::create(4, {row({1, 0, 0, -2}, 0), row({-1, 0, 0, 2}, 0)},
+        {congruence({0, 1, 0, 0}, 0, 2), congruence({0, 0, 1, 0}, 0, 2),
+         congruence({0, 1, 1, 0}, 1, 2)});
+    fs::IntegerFeasibilityCost residualCost;
+    if (failed(residual) || !residual->isEmpty(&residualCost) || residualCost.equalityEliminations != 1 ||
+        residualCost.congruenceChecks != 1 || residualCost.congruenceMatrixColumns != 5) { return false; }
+    // Consistent residues cannot override contradictory residual inequalities.
+    auto inequalities = System::create(4,
+        {row({1, 0, 0, -2}, 0), row({-1, 0, 0, 2}, 0), row({0, 0, 0, -1}, -1), row({1, 0, 0, 0}, 1)},
+        {congruence({0, 1, 0, 0}, 0, 2), congruence({0, 0, 1, 0}, 1, 2)});
+    return succeeded(inequalities) && inequalities->isEmpty();
+}
+bool unaryFeasibilityChecks(uint64_t& checked)
+{
+    // Enumerate signed bounded points independently, including negative
+    // residues and nonunit coefficients. No candidate substitution is
+    // needed, even when normalization alone cannot decide the intersection.
+    for (int64_t lower = -5; lower <= 3; ++lower) {
+        for (int64_t upper = lower; upper <= 5; ++upper) {
+            for (int64_t residue = -3; residue <= 4; ++residue) {
+                auto source = System::create(1, {row({-1}, -lower), row({1}, upper)},
+                    {congruence({-3}, residue, 8), congruence({2}, 2, 6)});
+                bool exists = false;
+                for (int64_t x = lower; x <= upper; ++x) {
+                    exists |= (-3 * x - residue) % 8 == 0 && (2 * x - 2) % 6 == 0;
+                    ++checked;
+                }
+                fs::IntegerFeasibilityCost cost;
+                if (failed(source) || source->isEmpty(&cost) == exists || cost.candidateSubstitutions ||
+                    cost.congruenceChecks || cost.calls != 1) { return false; }
+            }
+        }
+    }
+    for (int64_t upper : {8, 9}) {
+        auto source = System::create(1, {row({-1}, 0), row({1}, upper)},
+            {congruence({1}, 1, 4), congruence({1}, 3, 6)});
+        fs::IntegerFeasibilityCost cost;
+        // The first nonnegative common residue is 9 modulo 12.
+        if (failed(source) || source->isEmpty(&cost) != (upper == 8) || cost.unaryDecisions != 1 ||
+            cost.candidateSubstitutions || cost.congruenceChecks) { return false; }
+    }
+    Integer huge(1);
+    for (unsigned bit = 0; bit < 128; ++bit) { huge *= 2; }
+    for (int64_t shift : {0, 1}) {
+        const auto witness = -huge + 7;
+        std::vector<Constraint> rows{{{Integer(-1)}, -witness}, {{Integer(1)}, witness + shift}};
+        auto source = System::create(1, rows, {{{Integer(1)}, witness + 1, huge}});
+        fs::IntegerFeasibilityCost cost;
+        if (failed(source) || source->isEmpty(&cost) != (shift == 0) || cost.unaryDecisions != 1 ||
+            cost.candidateSubstitutions || cost.congruenceChecks) { return false; }
+    }
+    for (bool lower : {false, true}) {
+        auto source = System::create(1, {{{Integer(lower ? -1 : 1)}, -huge}},
+            {{{Integer(1)}, Integer(7), huge}});
+        fs::IntegerFeasibilityCost cost;
+        if (failed(source) || source->isEmpty(&cost) || cost.unaryDecisions != 1 ||
+            cost.candidateSubstitutions) { return false; }
+    }
+    return true;
 }
 bool feasibilityAndWitnessChecks()
 {
@@ -588,6 +752,70 @@ bool multiSeedDifferenceChecks(uint64_t& checked)
     }
     return true;
 }
+bool irrelevantArrangementAxes(uint64_t& checked)
+{
+    // A rejected conjunction contributes many middle axes; another live
+    // conjunction still needs its final axis. The independent point oracle
+    // must see the exact unsliced seed, including negative coordinates.
+    auto seed = System::create(2, {row({1, 0}, -1), row({-1, 0}, 1),
+        row({0, 1}, 2), row({0, -1}, 2)});
+    auto last = System::create(2, {row({2, 1}, -2)});
+    if (failed(seed) || failed(last)) { return false; }
+    auto compare = [&](llvm::ArrayRef<System> sources, llvm::ArrayRef<System> blockers,
+        const std::vector<System>& answer) {
+        if (llvm::any_of(answer, [](const auto& piece) { return piece.isEmpty(); })) { return false; }
+        for (int64_t x = -3; x <= 3; ++x) {
+            for (int64_t y = -3; y <= 3; ++y) {
+                const Point point{Integer(x), Integer(y)};
+                ++checked;
+                if (contains(answer, point) != (contains(sources, point) && !contains(blockers, point))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    for (unsigned count : {8U, 32U, 128U}) {
+        std::vector<Constraint> rows{row({-1, 0}, 0)};
+        for (unsigned i = 1; i <= count; ++i) { rows.push_back(row({1, static_cast<int64_t>(i)}, 0)); }
+        auto rejected = System::create(2, rows);
+        if (failed(rejected)) { return false; }
+        std::vector<System> blockers{*rejected, *last};
+        for (unsigned order = 0; order < 2; ++order) {
+            fs::IntegerDifferenceCost cost;
+            auto answer = fs::subtractIntegerUnions(2, {*seed}, blockers, &cost);
+            if (failed(answer) || !compare({*seed}, blockers, *answer) || cost.requests != 1 || cost.seeds != 1 ||
+                cost.axes != count + 2 || cost.skippedAxes != count || cost.slices != 4 ||
+                cost.outputPieces != 1 || !cost.sliceFeasibility.calls) { return false; }
+            std::reverse(blockers.begin(), blockers.end());
+        }
+    }
+    // The skipped residue axis may exceed machine width. No residue loop or
+    // machine arithmetic is needed when its only conjunction is already false.
+    Integer huge(1);
+    for (unsigned bit = 0; bit < 130; ++bit) { huge *= 2; }
+    auto rejected = System::create(2, {row({-1, 0}, 0)}, {{{Integer(1), Integer(1)}, Integer(0), huge}});
+    auto modular = System::create(2, {}, {congruence({2, 1}, 1, 3)});
+    if (failed(rejected) || failed(modular)) { return false; }
+    fs::IntegerDifferenceCost cost;
+    auto answer = fs::subtractIntegerUnions(2, {*seed}, {*rejected, *modular}, &cost);
+    if (failed(answer) || !compare({*seed}, {*rejected, *modular}, *answer) || cost.skippedAxes != 1 ||
+        cost.slices != 5 || cost.axes != 3) { return false; }
+    // With both conjunctions live, a shared axis must still be partitioned.
+    // Coupled facets and congruences share variables. Keep every axis needed
+    // by a live clause regardless of the order of the disjunction.
+    auto wide = System::create(2, {row({1, 0}, 2), row({-1, 0}, 2), row({0, 1}, 2), row({0, -1}, 2)});
+    auto mixed = System::create(2, {row({-1, 0}, 0), row({1, 1}, 1)}, {congruence({1, -1}, -1, 3)});
+    auto shared = System::create(2, {row({1, 1}, -1)}, {congruence({2, 1}, 1, 2)});
+    if (failed(wide) || failed(mixed) || failed(shared)) { return false; }
+    std::vector<System> blockers{*mixed, *shared, *last};
+    for (unsigned order = 0; order < 3; ++order) {
+        auto selected = fs::subtractIntegerUnions(2, {*wide, *seed}, blockers);
+        if (failed(selected) || !compare({*wide, *seed}, blockers, *selected)) { return false; }
+        std::rotate(blockers.begin(), blockers.begin() + 1, blockers.end());
+    }
+    return true;
+}
 bool arrangementMembershipChecks(uint64_t& checked)
 {
     auto seed = System::create(2, {row({1, 0}, 5), row({-1, 0}, 5),
@@ -656,9 +884,13 @@ bool remapAndDifferenceChecks(uint64_t& checked)
     return succeeded(projected) && contains(*projected, {});
 }
 } // namespace
+#include "BoundedFeasibilityRankingChecks.h"
 int runIntegerRelationChecks()
 {
     uint64_t checked = 0;
+    if (!boundedFeasibilityRankingChecks(checked)) {
+        llvm::errs() << "integer bounded feasibility ranking failed\n"; return 1;
+    }
     if (!projectionChecks(checked)) { llvm::errs() << "integer projection oracle differs\n"; return 1; }
     if (!projectionDefinitionChecks(checked)) {
         llvm::errs() << "integer projection definition ordering differs\n"; return 1;
@@ -672,7 +904,15 @@ int runIntegerRelationChecks()
     if (!sharedSystemOwnershipChecks(checked)) {
         llvm::errs() << "integer immutable ownership or per-value memo isolation failed\n"; return 1;
     }
-    if (!feasibilityAndWitnessChecks()) { llvm::errs() << "integer feasibility/witness check failed\n"; return 1; }
+    if (!equalityFeasibilityChecks(checked)) {
+        llvm::errs() << "integer equality feasibility ordering failed\n"; return 1;
+    }
+    if (!compactCongruenceChecks(checked)) {
+        llvm::errs() << "integer compact congruence construction failed\n"; return 1;
+    }
+    if (!unaryFeasibilityChecks(checked) || !feasibilityAndWitnessChecks()) {
+        llvm::errs() << "integer feasibility/witness check failed\n"; return 1;
+    }
     if (!narrowStripChecks(checked)) { llvm::errs() << "integer narrow strip check failed\n"; return 1; }
     if (!unaryLatticeChecks(checked)) { llvm::errs() << "integer unary lattice check failed\n"; return 1; }
     if (!feasibilityEndpointChecks(checked) || !wideFeasibilityEndpointChecks()) {
@@ -688,6 +928,7 @@ int runIntegerRelationChecks()
         llvm::errs() << "integer seeded difference failed\n"; return 1;
     }
     if (!multiSeedDifferenceChecks(checked)) { llvm::errs() << "integer multi-seed difference failed\n"; return 1; }
+    if (!irrelevantArrangementAxes(checked)) { llvm::errs() << "irrelevant arrangement axes failed\n"; return 1; }
     if (!arrangementMembershipChecks(checked)) { llvm::errs() << "arrangement membership failed\n"; return 1; }
     if (!remapAndDifferenceChecks(checked)) { llvm::errs() << "integer remap/difference check failed\n"; return 1; }
     llvm::outs() << "integer relation exactness passed " << checked << " bounded points\n";

@@ -8,6 +8,7 @@
 #include "PTO/Transforms/FrontierSynch/Finite/ExplicitAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/Recognition.h"
 #include "../Shared/WriterPairIndex.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -261,7 +262,8 @@ std::optional<bool> explicitEventPrecedes(const ExplicitReduction& reduction,
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
     func::FuncOp function, const ExplicitAnalysis& analysis, bool includeAllocation)
 {
-    if (!analysis.error.empty() || function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
+    if (!analysis.error.empty() || function.isDeclaration() || !llvm::hasSingleElement(function.getBody()) ||
+        analysis.reduction.retained.size() > UINT32_MAX) {
         return failure();
     }
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
@@ -273,11 +275,20 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
         return plan;
     }
     auto* first = &function.getBody().front().front();
-    OpBuilder builder(function.getContext());
-    builder.setInsertionPointToEnd(&plan->addPreparation(first));
-    auto enabled = builder.create<arith::ConstantIntOp>(first->getLoc(), 1, 1);
-    auto identity = builder.create<arith::ConstantIndexOp>(first->getLoc(), 0);
-    int64_t record = 0;
+    auto arena = std::make_shared<RegionExpressions>();
+    const auto enabled = arena->boolean(true), identity = arena->constant(0);
+    std::vector<ContextualEndpointFamily> endpoints;
+    auto append = [&](Operation* cut, EndpointKind kind, uint32_t source, uint32_t target, uint32_t record) {
+        ContextualEndpointFamily endpoint;
+        endpoint.piece.cut = {cut->getBlock(), cut};
+        endpoint.piece.kind = kind;
+        endpoint.piece.namespaceId = record;
+        endpoint.piece.sourcePipe = source; endpoint.piece.targetPipe = target;
+        endpoint.piece.members.push_back({record, {}});
+        endpoint.activity = enabled; endpoint.ordinal = identity;
+        endpoints.push_back(std::move(endpoint));
+    };
+    uint32_t record = 0;
     for (const auto& edge : analysis.reduction.retained) {
         const auto sourcePipe = analysis.occurrences[edge.source].pipe;
         const auto targetPipe = analysis.occurrences[edge.target].pipe;
@@ -297,32 +308,31 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
         family.members.push_back({static_cast<uint32_t>(record), edge.source, edge.target, {}, {}});
         plan->families.push_back(std::move(family));
         if (sourcePipe == targetPipe) {
-            plan->endpoints.push_back({target, LogicalCommandKind::Barrier, sourcePipe, targetPipe,
-                                       record, enabled, {}});
+            append(target, EndpointKind::Barrier, sourcePipe, targetPipe, record);
         } else {
-            plan->endpoints.push_back({source->getNextNode(), LogicalCommandKind::Set, sourcePipe, targetPipe,
-                                       record, enabled, identity});
-            plan->endpoints.push_back({target, LogicalCommandKind::Wait, sourcePipe, targetPipe,
-                                       record, enabled, identity});
+            append(source->getNextNode(), EndpointKind::Set, sourcePipe, targetPipe, record);
+            append(target, EndpointKind::Wait, sourcePipe, targetPipe, record);
         }
         ++record;
     }
     // Match the shared insertion rule: SETs, local barriers, then WAITs.
     llvm::DenseMap<Operation*, std::size_t> orders;
-    for (auto kind : {LogicalCommandKind::Set, LogicalCommandKind::Barrier, LogicalCommandKind::Wait}) {
-        for (const auto& endpoint : plan->endpoints) {
-            if (endpoint.kind != kind) {
-                continue;
-            }
-            auto& family = plan->families[endpoint.record];
-            auto order = orders[endpoint.before]++;
-            if (kind == LogicalCommandKind::Set) {
-                family.sourceOrder = order;
-            } else {
-                family.targetOrder = order;
-            }
+    for (auto kind : {EndpointKind::Set, EndpointKind::Barrier, EndpointKind::Wait}) {
+        for (auto& endpoint : endpoints) {
+            if (endpoint.piece.kind != kind) { continue; }
+            auto& family = plan->families[endpoint.piece.members.front().record];
+            const auto order = orders[endpoint.piece.cut.before]++;
+            endpoint.piece.order = order;
+            if (kind == EndpointKind::Set) { family.sourceOrder = order; }
+            else { family.targetOrder = order; }
         }
     }
+    // Preserve the existing first-cut constant sharing, but retain owned roots
+    // until allocation selects which matching inputs need scalar construction.
+    auto recipe = buildContextualFamilyEndpointRecipe(arena, endpoints, {{enabled, first}, {identity, first}});
+    if (failed(recipe)) { return failure(); }
+    plan->familyRecipe = std::move(*recipe);
+    plan->groupedFamilies = plan->independentPieces = true;
     return plan;
 }
 } // namespace mlir::pto::frontiersynch

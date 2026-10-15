@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exact signed arithmetic adapters for relational regional queries.
 #include "RegionIntegerExpressionsInternal.h"
+#include "ScalarConstruction.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
@@ -511,33 +512,34 @@ RegionExpressions::Id RegionExpressions::integerWitness(const IntegerAffine& num
     }
     return internInteger(std::move(recipe));
 }
-Value RegionExpressions::emitInteger(const Node& node, OpBuilder& builder, Location loc,
-                                     const llvm::DenseMap<Id, Value>& memo) const
+detail::ScalarToken RegionExpressions::constructInteger(const Node& node, detail::ScalarConstruction& construction,
+    MLIRContext* context, llvm::function_ref<detail::ScalarToken(Id)> lookup) const
 {
+    using Scalar = detail::ScalarToken;
     const auto& recipe = *node.integer;
-    Type wide = builder.getIntegerType(128);
-    auto number = [&](const BoundInteger& value) -> Value {
-        return builder.create<arith::ConstantOp>(loc, wide, IntegerAttr::get(wide, wideInteger(value)));
+    Type wide = IntegerType::get(context, 128);
+    auto number = [&](const BoundInteger& value) -> Scalar {
+        return construction.integer(wideInteger(value));
     };
-    auto compare = [&](arith::CmpIPredicate predicate, Value a, Value b) -> Value {
-        return builder.create<arith::CmpIOp>(loc, predicate, a, b);
+    auto compare = [&](arith::CmpIPredicate predicate, Scalar a, Scalar b) -> Scalar {
+        return construction.compare(predicate, a, b);
     };
-    Value period;
+    Scalar period;
     if (recipe.period != 1) { period = number(BoundInteger(static_cast<int64_t>(recipe.period))); }
-    Value guard;
-    auto addGuard = [&](Value predicate) {
-        guard = guard ? Value(builder.create<arith::AndIOp>(loc, guard, predicate)) : predicate;
+    Scalar guard;
+    auto addGuard = [&](Scalar predicate) {
+        guard = guard ? construction.binary<arith::AndIOp>(guard, predicate) : predicate;
     };
-    SmallVector<Value> originals;
+    SmallVector<Scalar> originals;
     for (auto id : recipe.inputs) {
-        Value input = memo.lookup(id);
-        originals.push_back(isBoolean(id) ? Value(builder.create<arith::ExtUIOp>(loc, wide, input)) :
-            Value(builder.create<arith::IndexCastOp>(loc, wide, input)));
+        Scalar input = lookup(id);
+        originals.push_back(isBoolean(id) ? construction.cast<arith::ExtUIOp>(wide, input) :
+            construction.cast<arith::IndexCastOp>(wide, input));
     }
     if (!recipe.coordinates.empty()) {
-        DenseMap<AffineExpr, Value> values;
+        DenseMap<AffineExpr, Scalar> values;
         for (auto expression : recipe.coordinateOrder) {
-            Value value;
+            Scalar value;
             if (auto dim = dyn_cast<AffineDimExpr>(expression)) { value = originals[dim.getPosition()]; }
             else if (auto constant = dyn_cast<AffineConstantExpr>(expression)) {
                 value = number(BoundInteger(constant.getValue()));
@@ -545,14 +547,14 @@ Value RegionExpressions::emitInteger(const Node& node, OpBuilder& builder, Locat
                 auto binary = cast<AffineBinaryOpExpr>(expression);
                 const auto left = values.lookup(binary.getLHS()), right = values.lookup(binary.getRHS());
                 switch (expression.getKind()) {
-                case AffineExprKind::Add: value = builder.create<arith::AddIOp>(loc, left, right); break;
-                case AffineExprKind::Mul: value = builder.create<arith::MulIOp>(loc, left, right); break;
-                case AffineExprKind::FloorDiv: value = builder.create<arith::FloorDivSIOp>(loc, left, right); break;
-                case AffineExprKind::CeilDiv: value = builder.create<arith::CeilDivSIOp>(loc, left, right); break;
+                case AffineExprKind::Add: value = construction.binary<arith::AddIOp>(left, right); break;
+                case AffineExprKind::Mul: value = construction.binary<arith::MulIOp>(left, right); break;
+                case AffineExprKind::FloorDiv: value = construction.binary<arith::FloorDivSIOp>(left, right); break;
+                case AffineExprKind::CeilDiv: value = construction.binary<arith::CeilDivSIOp>(left, right); break;
                 case AffineExprKind::Mod: {
-                    auto quotient = builder.create<arith::FloorDivSIOp>(loc, left, right);
-                    auto multiple = builder.create<arith::MulIOp>(loc, quotient, right);
-                    value = builder.create<arith::SubIOp>(loc, left, multiple); break;
+                    auto quotient = construction.binary<arith::FloorDivSIOp>(left, right);
+                    auto multiple = construction.binary<arith::MulIOp>(quotient, right);
+                    value = construction.binary<arith::SubIOp>(left, multiple); break;
                 }
                 default: llvm_unreachable("validated mapped coordinate kind");
                 }
@@ -562,58 +564,58 @@ Value RegionExpressions::emitInteger(const Node& node, OpBuilder& builder, Locat
         originals.clear();
         for (auto expression : recipe.coordinates) { originals.push_back(values.lookup(expression)); }
     }
-    SmallVector<Value> quotients;
+    SmallVector<Scalar> quotients;
     for (auto [original, residue] : llvm::zip(originals, recipe.residues)) {
-        Value quotient = period ? Value(builder.create<arith::FloorDivSIOp>(loc, original, period)) : original;
+        Scalar quotient = period ? construction.binary<arith::FloorDivSIOp>(original, period) : original;
         quotients.push_back(quotient);
         if (recipe.predicate && period) {
-            Value multiple = builder.create<arith::MulIOp>(loc, quotient, period);
-            Value remainder = builder.create<arith::SubIOp>(loc, original, multiple);
+            Scalar multiple = construction.binary<arith::MulIOp>(quotient, period);
+            Scalar remainder = construction.binary<arith::SubIOp>(original, multiple);
             addGuard(compare(arith::CmpIPredicate::eq, remainder, number(BoundInteger(static_cast<int64_t>(residue)))));
         }
     }
-    auto affine = [&](const IntegerAffine& expression) -> Value {
-        Value sum;
+    auto affine = [&](const IntegerAffine& expression) -> Scalar {
+        Scalar sum;
         if (expression.constant != 0) { sum = number(expression.constant); }
         for (auto [coefficient, input] : llvm::zip(expression.coefficients, quotients)) {
             if (coefficient == 0) { continue; }
             if (coefficient == -1) {
                 if (!sum) { sum = number(BoundInteger(0)); }
-                sum = builder.create<arith::SubIOp>(loc, sum, input);
+                sum = construction.binary<arith::SubIOp>(sum, input);
                 continue;
             }
-            Value term = coefficient == 1 ? input :
-                         Value(builder.create<arith::MulIOp>(loc, input, number(coefficient)));
-            sum = sum ? Value(builder.create<arith::AddIOp>(loc, sum, term)) : term;
+            Scalar term = coefficient == 1 ? input :
+                         construction.binary<arith::MulIOp>(input, number(coefficient));
+            sum = sum ? construction.binary<arith::AddIOp>(sum, term) : term;
         }
         return sum ? sum : number(BoundInteger(0));
     };
     if (!recipe.predicate) {
-        Value output = affine(recipe.numerator);
+        Scalar output = affine(recipe.numerator);
         if (recipe.denominator != 1) {
-            output = builder.create<arith::FloorDivSIOp>(loc, output, number(recipe.denominator));
+            output = construction.binary<arith::FloorDivSIOp>(output, number(recipe.denominator));
         }
-        if (period) { output = builder.create<arith::MulIOp>(loc, output, period); }
+        if (period) { output = construction.binary<arith::MulIOp>(output, period); }
         if (recipe.outputResidue != 0) {
-            output = builder.create<arith::AddIOp>(loc, output,
+            output = construction.binary<arith::AddIOp>(output,
                 number(BoundInteger(static_cast<int64_t>(recipe.outputResidue))));
         }
-        return builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), output);
+        return construction.indexCast(output);
     }
     for (const auto& atom : recipe.system.constraints()) {
-        Value lhs = affine({atom.coefficients, BoundInteger(0)});
-        Value match = compare(arith::CmpIPredicate::sle, lhs, number(atom.bound));
+        Scalar lhs = affine({atom.coefficients, BoundInteger(0)});
+        Scalar match = compare(arith::CmpIPredicate::sle, lhs, number(atom.bound));
         addGuard(match);
     }
     for (const auto& atom : recipe.system.congruences()) {
-        Value lhs = affine({atom.coefficients, BoundInteger(0)});
-        Value modulus = number(atom.modulus);
-        Value quotient = builder.create<arith::FloorDivSIOp>(loc, lhs, modulus);
-        Value multiple = builder.create<arith::MulIOp>(loc, quotient, modulus);
-        Value remainder = builder.create<arith::SubIOp>(loc, lhs, multiple);
-        Value match = compare(arith::CmpIPredicate::eq, remainder, number(atom.residue));
+        Scalar lhs = affine({atom.coefficients, BoundInteger(0)});
+        Scalar modulus = number(atom.modulus);
+        Scalar quotient = construction.binary<arith::FloorDivSIOp>(lhs, modulus);
+        Scalar multiple = construction.binary<arith::MulIOp>(quotient, modulus);
+        Scalar remainder = construction.binary<arith::SubIOp>(lhs, multiple);
+        Scalar match = compare(arith::CmpIPredicate::eq, remainder, number(atom.residue));
         addGuard(match);
     }
-    return guard ? guard : Value(builder.create<arith::ConstantIntOp>(loc, 1, 1));
+    return guard ? guard : construction.boolean(true);
 }
 } // namespace mlir::pto::frontiersynch

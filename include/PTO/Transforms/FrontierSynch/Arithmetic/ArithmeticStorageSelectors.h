@@ -43,6 +43,10 @@ struct ArithmeticStorageSupportPiece {
     IntegerSystem domain; // Byte quotient, shared parameter quotients.
 };
 struct ArithmeticStorageSelectorCost {
+    // Explicit cache feasibility requests only; nested projection/witness work
+    // is charged by their own requests, not claimed in this observation.
+    IntegerFeasibilityCost feasibility;
+    uint64_t blockerRequests = 0, emptyOrderSkips = 0;
     uint64_t identityRequests = 0, ownedIdentityHits = 0, structuralHashes = 0, structuralComparisons = 0;
     uint64_t projectionRequests = 0, projectionHits = 0, projectionBuilds = 0, projectionPieces = 0;
     uint64_t remapRequests = 0, remapHits = 0, remapBuilds = 0;

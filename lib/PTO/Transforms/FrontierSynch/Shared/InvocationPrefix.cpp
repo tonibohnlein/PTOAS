@@ -115,7 +115,7 @@ LogicalResult check(func::FuncOp f, const InvocationPrefixRecipe& recipe, Privat
         }
     }
     bool occupied = f->hasAttr("pto.prefix_protocol") || f->hasAttr("pto.endpoint_families");
-    f.walk([&](Operation* op) { occupied |= isa<LogicalSetOp, LogicalWaitOp>(op); });
+    f.walk([&](Operation* op) { occupied |= isa<LogicalFamilyOp, LogicalSetOp, LogicalWaitOp>(op); });
     const bool extent = recipe.directions.size() <= UINT32_MAX &&
         recipe.sourceBounds.size() <= recipe.slots.max_size() - recipe.slots.size() &&
         recipe.directions.size() <= recipe.slots.max_size() - recipe.slots.size() - recipe.sourceBounds.size();

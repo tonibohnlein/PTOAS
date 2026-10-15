@@ -308,7 +308,8 @@ std::optional<RegionalStorageSelectors> projectOwnedPhaseStorage(
 } // namespace
 RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loop,
     std::vector<RegionalAnalysis> phases, Id trips, ArrayRef<scf::ForOp> enclosing, Id begin,
-    std::optional<uint64_t> maximumLength, std::shared_ptr<const RepeatedStorageTypesResult> storage)
+    std::optional<uint64_t> maximumLength, std::shared_ptr<const RepeatedStorageTypesResult> storage,
+    ArithmeticRegionalAllocationPolicy allocationPolicy)
 {
     RepeatedRegionAnalysis failure;
     if (!function || !loop || loop->getParentOfType<func::FuncOp>() != function || phases.empty() ||
@@ -427,7 +428,8 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
     }
     SmallVector<scf::ForOp> protectionContext(enclosing.begin(), enclosing.end());
     protectionContext.push_back(loop);
-    auto composed = composeRegionalSequenceWithin(function, arena, phases, false, false, protectionContext);
+    auto composed = composeRegionalSequenceWithin(function, arena, phases, false, false,
+        protectionContext, {}, allocationPolicy);
     if (!composed.error.empty()) { failure.error = composed.error; return failure; }
     composed.state->completeInvocation = false;
     composed.state->requiredOuterLoops.assign(enclosing.begin(), enclosing.end());

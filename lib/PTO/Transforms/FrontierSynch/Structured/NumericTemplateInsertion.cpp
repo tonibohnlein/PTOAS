@@ -136,7 +136,7 @@ bool freshScope(func::FuncOp function, scf::ForOp outer, ArrayRef<const Compound
     }
     bool clean = true;
     function.walk([&](Operation* operation) {
-        if (isa<LogicalSetOp, LogicalWaitOp, SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp,
+        if (isa<LogicalFamilyOp, LogicalSetOp, LogicalWaitOp, SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp,
                 RecordEventOp, WaitEventOp>(operation)) {
             clean = false;
         }

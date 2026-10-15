@@ -8,6 +8,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_SEQUENCEANALYSIS_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_SEQUENCEANALYSIS_H
 #include "PTO/Transforms/FrontierSynch/ProgramRecognition.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticAllocationPolicy.h"
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ChainInterface.h"
@@ -39,6 +40,11 @@ struct SequenceOccurrence {
 };
 struct SequenceAnalysisState;
 struct SequenceAnalysis {
+    struct UpgradeWork {
+        uint64_t retainedChildren = 0, replacedChildren = 0;
+        uint64_t reusedCrossings = 0, recomposedCrossings = 0;
+        uint64_t reusedRelationalResults = 0;
+    } upgradeWork;
     std::string error;
     std::string insertionError;
     SequenceCost cost;
@@ -60,12 +66,14 @@ void recordSequenceContractAttempt(ProgramRecognition& program, const SyncInput&
 SequenceAnalysis composeRegionalSequence(func::FuncOp function,
     std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
     bool reconstructPrerequisites = true, bool requireEndpoints = true,
-    std::shared_ptr<const PhaseSourceFacts> sourceFacts = {});
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts = {},
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId);
 // Enclosing loops are fixed during this composition, not repeated by it.
 SequenceAnalysis composeRegionalSequenceWithin(func::FuncOp function,
     std::shared_ptr<RegionExpressions> expressions, std::vector<RegionalAnalysis> children,
     bool reconstructPrerequisites, bool requireEndpoints, ArrayRef<scf::ForOp> enclosing,
-    std::shared_ptr<const PhaseSourceFacts> sourceFacts = {});
+    std::shared_ptr<const PhaseSourceFacts> sourceFacts = {},
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId);
 // Analyze original children of a selected sequence, or one explicit/loop node.
 // The caller supplies a common arena; original cuts and access records remain borrowed.
 SequenceAnalysis analyzeSequenceRegion(func::FuncOp function, const SyncInput& input,
@@ -78,6 +86,7 @@ struct NumericBodyMathematics;
 struct GuardedRotatingSpecialization;
 struct GuardedRotatingMathematics;
 struct SequenceRegionResolver {
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId;
     // Materialize only the form needed by the next adapter. Legacy supplied
     // programs already own their forms. This callback never constructs demands.
     std::function<void(std::size_t, ProgramForm)> form;
@@ -104,6 +113,11 @@ struct SequenceRegionResolver {
 SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const SyncInput& input,
     const ProgramRecognition& program, std::size_t node, std::shared_ptr<RegionExpressions> expressions,
     std::shared_ptr<PhaseIndex> index, bool requireEndpoints, SequenceRegionResolver resolver);
+// Upgrade original sequence children without recollecting their mathematics.
+// Nullopt means the representation needs the ordinary exact construction path;
+// a present result carries success or the precise child/closure obligation.
+std::optional<SequenceAnalysis> upgradeSequenceEndpoints(const SequenceAnalysis& retained,
+    std::size_t node, SequenceRegionResolver resolver);
 RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis);
 // Actual boundary-alternative visits during this result's prefix/suffix summary.
 uint64_t sequenceBoundarySummaryVisits(const SequenceAnalysis& analysis);

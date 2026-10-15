@@ -50,6 +50,7 @@ std::optional<RegionalAnalysis> childExport(const BoundingSequenceChild& child, 
     result.reachability = canonical.reachability;
     result.numerical = canonical.numerical;
     result.capabilities.exactQueries = true;
+    result.capabilities.substitutionStableQueries = false;
     return result;
 }
 bool validCrossing(const BoundingSequenceCrossing& edge, const std::vector<RegionalAnalysis>& children)

@@ -5,7 +5,8 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// RUN: %python %S/Inputs/check_family_recipe_pipeline.py pto-test-opt %s numerical-periodic
+// RUN: %python %S/Inputs/check_deferred_family_output.py pto-test-opt pto-sync-input-test ptoas %s
+// RUN: %python %S/Inputs/check_family_recipe_pipeline.py pto-test-opt %s identity-sequence --project-sections
 // RUN: %python %S/Inputs/check_logical_insertion.py pto-sync-input-test %s
 // A generic reused tile, two pipes, nested counted coordinates and a selected arm.
 // Runtime outer bounds deliberately use a nonzero lower bound and nonunit step.

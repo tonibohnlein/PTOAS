@@ -7,3 +7,5 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: %python %S/Inputs/check_fixed_protocol_capacity.py %S/Inputs/decode_fixed_protocol.json
 // The fixture pins one history-enabled decode command protocol, not a hardware bound.
+// RUN: %python %S/Inputs/check_delta_fixed_protocol.py %S/Inputs/delta_fixed_protocol.json
+// Delta pins one feasible token and the actual prefix publications/acquisitions.

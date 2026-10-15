@@ -664,6 +664,12 @@ struct EmitPTOManualPass
     if (dumpResult.wasInterrupted()) {
       return signalPassFailure();
     }
+    bool deferredFamilies = false;
+    mop.walk([&](pto::LogicalFamilyOp op) {
+      op.emitError("deferred logical families require pto-frontier-allocate before device lowering");
+      deferredFamilies = true;
+    });
+    if (deferredFamilies) { return signalPassFailure(); }
     if (failed(validateAndAnnotate(mop))) {
       return signalPassFailure();
     }

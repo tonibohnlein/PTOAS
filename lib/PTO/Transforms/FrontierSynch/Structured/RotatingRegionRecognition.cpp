@@ -179,7 +179,8 @@ private:
             SmallVector<scf::ForOp> enclosing(child.loops.begin(), child.loops.end());
             if (!llvm::is_contained(enclosing, loop)) { enclosing.push_back(loop); }
             auto composed = composeRegionalSequenceWithin(
-                function, arena, std::move(parts), true, true, enclosing, index.sourceFacts());
+                function, arena, std::move(parts), true, true, enclosing,
+                index.sourceFacts(), program.allocationPolicy);
             if (!composed.error.empty()) { error = composed.error; return failure(); }
             return sequenceRegionalResult(composed);
         }
@@ -212,12 +213,13 @@ private:
                     [&](Value value) -> std::optional<Id> {
                         auto fixed = geometry(value);
                         return fixed ? arena->constant(static_cast<uint64_t>(*fixed)) : arena->input(value);
-                    });
+                    }, program.allocationPolicy);
                 if (failed(leaf)) { return failure(); }
                 parts.push_back(std::move(*leaf));
             }
             auto composed = composeRegionalSequenceWithin(
-                function, arena, std::move(parts), true, true, enclosing, index.sourceFacts());
+                function, arena, std::move(parts), true, true, enclosing,
+                index.sourceFacts(), program.allocationPolicy);
             if (!composed.error.empty()) { error = composed.error; return failure(); }
             return sequenceRegionalResult(composed);
         }
@@ -228,7 +230,7 @@ private:
                     auto fixed = geometry(value);
                     if (fixed) { return arena->constant(static_cast<uint64_t>(*fixed)); }
                     return arena->input(value);
-                });
+                }, program.allocationPolicy);
         }
         error = "rotating canonical child has no regional provider"; return failure();
     }

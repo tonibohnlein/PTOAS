@@ -14,6 +14,9 @@ namespace mlir::pto::frontiersynch {
 // active is exact at the original consumer. sourceRank is the actual captured
 // source identity, needed only across pipes. This helper never reconstructs
 // occurrence coordinates, mathematical guards or synchronization ownership.
+// The producer-owned sourceRank callback reads captured slots and emits pure
+// scalar selection only. It is qualified once during construction, including
+// for a dynamic inactive guard; its emitted code may execute inside that guard.
 LogicalResult appendPrefixIncoming(
     InvocationPrefixCollection& collection, Operation* consumer, PrefixDirection direction,
     PrefixIncomingSelector active, PrefixIncomingSelector sourceRank, std::string& error);

@@ -26,6 +26,16 @@ struct AnalysisStageRecord {
     std::vector<std::pair<std::string, uint64_t>> work;
 };
 struct AnalysisLedger {
+    struct Selection {
+        uint64_t request = 0;
+        std::size_t region = 0;
+        std::string method, reason;
+        std::vector<std::string> reused, missing, refused, retainedUnrequested;
+        EstimatedCount unbuiltWork;
+        bool attempted = false;
+        unsigned failureStage = 0;
+    };
+    std::vector<Selection> selections;
     std::vector<AnalysisCostRecord> estimates;
     std::vector<AnalysisStageRecord> stages;
     // Profiling is opt-in. IDs name entries within this immutable-input session.

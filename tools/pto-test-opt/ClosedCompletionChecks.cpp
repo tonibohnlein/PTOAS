@@ -313,6 +313,21 @@ bool pendingDescendants(MLIRContext& context)
     leaf->removeAttr("pto.closed_completion");
     if (fs::ClosedCompletionChild::import(first, error)) { return failedAt(__LINE__); }
     leaf->setAttr("pto.closed_completion", certificate);
+    // A saved recipe still owns logical notifications. It cannot acquire
+    // resource-closed status merely by appearing in an otherwise qualified child.
+    {
+        OpBuilder builder(pending.front().getTerminator());
+        OperationState state(pending.getLoc(), pto::LogicalFamilyOp::getOperationName());
+        state.addAttribute("plan_id", builder.getI64IntegerAttr(0));
+        state.addAttribute("cut_id", builder.getI64IntegerAttr(0));
+        state.addAttribute("axis_ids", builder.getDenseI64ArrayAttr({}));
+        state.addAttribute("pieces", builder.getArrayAttr({builder.getDictionaryAttr({})}));
+        auto* marker = builder.create(state);
+        const auto original = render(module->getOperation());
+        if (failed(verify(pending)) || fs::ClosedCompletionChild::import(first, error) ||
+            original != render(module->getOperation())) { return failedAt(__LINE__); }
+        marker->erase();
+    }
     // Two pending tails require an internal completion; qualification refuses
     // instead of silently inserting it into the child's implementation.
     auto* payload = pending.front().getTerminator()->getPrevNode();

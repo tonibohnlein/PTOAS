@@ -14,10 +14,10 @@ namespace fs = mlir::pto::frontiersynch;
 int runFiniteVisitInputChecks(func::FuncOp function)
 {
     fs::FrontierAnalysis analysis(function);
-    if (failed(analysis.initialize()) || failed(analysis.analyzeFiniteVisitCandidates())) {
+    if (failed(analysis.initialize()) || failed(analysis.auditFiniteVisitCandidates())) {
         llvm::errs() << "finite visit original-input analysis failed\n"; return 1;
     }
-    const auto& results = analysis.finiteVisitDemands();
+    const auto& results = analysis.auditedFiniteVisitDemands();
     if (function->hasAttr("test.type_expansion_limit")) {
         for (const auto& candidate : analysis.result()->finiteVisitContracts) {
             if (candidate.implementationError == "finite whole-visit type expansion exceeds producer limit" &&
@@ -115,8 +115,8 @@ int runFiniteVisitInputChecks(func::FuncOp function)
         if (boundary.demands.empty()) { llvm::errs() << "missing finite visit boundary demands\n"; return 1; }
     }
     const auto* before = results.begin()->second.get();
-    if (failed(analysis.analyzeFiniteVisitCandidates()) ||
-        analysis.finiteVisitDemands().begin()->second.get() != before) {
+    if (failed(analysis.auditFiniteVisitCandidates()) ||
+        analysis.auditedFiniteVisitDemands().begin()->second.get() != before) {
         llvm::errs() << "finite visit child/pair analysis was not cached\n"; return 1;
     }
     bool audited = false;

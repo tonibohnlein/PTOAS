@@ -12,6 +12,9 @@
 namespace mlir::pto::frontiersynch {
 const StructureNode* wholeInvocationLoop(func::FuncOp function, const SyncInput& input,
     const ProgramRecognition& program, const PhaseIndex& index);
+// Pure retained-owner lookup for the restricted same-node continuation.
+std::optional<std::pair<AnalysisOutcome, AnalysisBackend>> retainedIdentityAnswer(
+    const AnalysisSessionState& session, const AnalysisRequest& request, ArrayRef<AnalysisBackend> eligible);
 struct WholeInvocationIdentity {
     std::shared_ptr<const SyncInput> input;
     std::shared_ptr<const PhaseIndex> index;

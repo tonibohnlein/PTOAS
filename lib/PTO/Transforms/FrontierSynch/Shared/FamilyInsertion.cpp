@@ -7,11 +7,17 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Retain numerical and contextual family recipes through composition; lower at insertion.
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/DeferredFamily.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "FamilyMaterialization.h"
+#include "FamilyEndpointNormalization.h"
+#include "CountedCleanupSelection.h"
+#include "SelectorGuardPlan.h"
+#include "CertifiedAllocationCandidates.h"
 #include "PrivateStatePlan.h"
 #include "PhysicalMapInputs.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PhysicalExecutedCounters.h"
 #include "MixedFamilyInsertion.h"
 #include "MixedEndpointPieces.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h"
@@ -20,6 +26,7 @@
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <set>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
 enum class FamilyContextKind { Invocation, Activity };
@@ -44,6 +51,7 @@ public:
     std::size_t endpointIndex = 0, maximumEndpointIndex = 0, pieceCount = 0;
     struct Binding {
         std::shared_ptr<const CutExpressionRecipe> activity, ordinal, residueCoordinate;
+        SmallVector<std::shared_ptr<const CutExpressionRecipe>> matchingCoordinates;
         uint64_t modulus = 0, residue = 0;
     };
     std::shared_ptr<RegionExpressions> arena;
@@ -83,6 +91,7 @@ struct NormalizedFamilyInventory {
     SmallVector<FamilyContextPath> contexts;
     SmallVector<FamilyPart> leaves;
     SmallVector<FamilyContribution> stream;
+    std::vector<EndpointFamily> families;
     std::vector<std::shared_ptr<const FamilyEndpointRecipe>> owners;
     SmallVector<std::shared_ptr<const EndpointCutChoices>> selectionOwners;
     SmallVector<uint64_t> snapshot, identity;
@@ -101,40 +110,253 @@ struct PhysicalFamilyOutput {
     std::map<std::tuple<Operation*, LogicalCommandKind, uint32_t>, Binding> bindings;
 };
 namespace {
+template<class Scalar> struct ContextualFamilyInputs {
+    Scalar guard, residue, ordinal;
+    SmallVector<Scalar> members;
+};
+// Both emission and counting walk this exact root order. The consumer only
+// supplies the scalar representation and the original-cut storage adapter.
+class ContextualFamilySchedule {
+public:
+    ContextualFamilySchedule(const FamilyEndpointRecipe& recipe,
+        ArrayRef<std::shared_ptr<const PhysicalEndpointMap>> maps, uint64_t invocationDepth, bool executed)
+        : recipe(recipe), maps(maps), invocationDepth(invocationDepth), executed(executed) {}
+    template<class Consumer> LogicalResult run(Consumer& consumer) const
+    {
+        auto live = liveSharedExpressions();
+        if (failed(live)) { return failure(); }
+        const auto* environment = recipe.shared.empty() ? nullptr : &recipe;
+        for (auto [index, shared] : llvm::enumerate(recipe.shared)) {
+            if (!(*live)[index]) { continue; }
+            const auto& sharedRoot = shared;
+            auto* cut = sharedRoot.expression.cut;
+            if (failed(consumer.at(cut, [&]() {
+                    auto value = consumer.emit(*sharedRoot.binding, cut, environment);
+                    if (failed(value)) { return failure(); }
+                    consumer.bind(cut, sharedRoot.expression.expression, *value);
+                    return success();
+                }))) { return failure(); }
+        }
+        if (environment) { consumer.publish(); }
+        for (std::size_t i = 0; i < recipe.pieces.size(); ++i) {
+            const auto& piece = recipe.pieces[i];
+            const auto& binding = recipe.bindings[i];
+            auto* cut = piece.cut.before;
+            if (failed(consumer.at(cut, [&]() {
+                    if (!recipe.selectors.empty() && recipe.selectors[i]) { return consumer.numerical(i); }
+                    ContextualFamilyInputs<typename Consumer::Scalar> inputs;
+                    auto emit = [&](const std::shared_ptr<const CutExpressionRecipe>& root, auto& value) {
+                        auto result = consumer.emit(*root, cut, environment);
+                        if (failed(result)) { return failure(); }
+                        value = *result;
+                        return success();
+                    };
+                    if (failed(emit(binding.activity, inputs.guard))) { return failure(); }
+                    if (binding.residueCoordinate && failed(emit(binding.residueCoordinate, inputs.residue))) {
+                        return failure();
+                    }
+                    if (piece.kind != EndpointKind::Barrier) {
+                        if (!executed && (maps.empty() || physicalMapNeedsCoordinate(*maps[i], 0)) &&
+                            failed(emit(binding.ordinal, inputs.ordinal))) { return failure(); }
+                        inputs.members.push_back(executed ||
+                            (!maps.empty() && !physicalMapRequiresMember(*maps[i])) ? typename Consumer::Scalar{} :
+                            consumer.number(piece.members.front().record, cut));
+                        for (auto [position, coordinate] : llvm::enumerate(binding.matchingCoordinates)) {
+                            typename Consumer::Scalar value;
+                            if (!executed && (maps.empty() ||
+                                physicalMapNeedsCoordinate(*maps[i], invocationDepth + position + 1)) &&
+                                failed(emit(coordinate, value))) { return failure(); }
+                            inputs.members.push_back(value);
+                        }
+                    }
+                    return consumer.endpoint(i, inputs);
+                }))) { return failure(); }
+        }
+        return success();
+    }
+private:
+    const FamilyEndpointRecipe& recipe;
+    ArrayRef<std::shared_ptr<const PhysicalEndpointMap>> maps;
+    uint64_t invocationDepth;
+    bool executed;
+    using SharedRequest = std::pair<const CutExpressionRecipe*, Operation*>;
+    SmallVector<SharedRequest> liveContextualExpressions() const
+    {
+        SmallVector<SharedRequest> result;
+        for (std::size_t i = 0; i < recipe.pieces.size(); ++i) {
+            if (!recipe.selectors.empty() && recipe.selectors[i]) { continue; }
+            const auto& piece = recipe.pieces[i];
+            const auto& binding = recipe.bindings[i];
+            auto add = [&](const std::shared_ptr<const CutExpressionRecipe>& expression) {
+                if (expression) { result.push_back({expression.get(), piece.cut.before}); }
+            };
+            add(binding.activity);
+            add(binding.residueCoordinate);
+            if (piece.kind == EndpointKind::Barrier || executed) { continue; }
+            if (maps.empty() || physicalMapNeedsCoordinate(*maps[i], 0)) { add(binding.ordinal); }
+            for (auto [position, coordinate] : llvm::enumerate(binding.matchingCoordinates)) {
+                if (maps.empty() || physicalMapNeedsCoordinate(*maps[i], invocationDepth + position + 1)) {
+                    add(coordinate);
+                }
+            }
+        }
+        return result;
+    }
+    FailureOr<SmallVector<uint8_t>> liveSharedExpressions() const
+    {
+        SmallVector<uint8_t> live(recipe.shared.size(), 0);
+        if (recipe.shared.empty()) { return live; }
+        std::map<RegionExpressions::Id, SmallVector<std::size_t>> candidates;
+        for (auto [index, shared] : llvm::enumerate(recipe.shared)) {
+            candidates[shared.expression.expression].push_back(index);
+        }
+        DominanceInfo dominance(recipe.cuts.front().cut.before->getParentOfType<func::FuncOp>());
+        auto pending = liveContextualExpressions();
+        while (!pending.empty()) {
+            const auto request = pending.pop_back_val();
+            const auto* expression = request.first;
+            auto* cut = request.second;
+            for (auto id : cutExpressionSharedExpressions(*expression)) {
+                auto found = candidates.find(id);
+                if (found == candidates.end()) { return failure(); }
+                auto selected = llvm::find_if(found->second, [&](std::size_t index) {
+                    auto* source = recipe.shared[index].expression.cut;
+                    return source == cut || dominance.properlyDominates(source, cut);
+                });
+                if (selected == found->second.end()) { return failure(); }
+                if (live[*selected]) { continue; }
+                live[*selected] = 1;
+                const auto& shared = recipe.shared[*selected];
+                pending.push_back({shared.binding.get(), shared.expression.cut});
+            }
+        }
+        return live;
+    }
+};
+// No loop/selector arithmetic is re-estimated: both consumers execute these
+// exact scalar primitives with one local trip/ordinal state per leaf.
+class NumericalFamilyScalars {
+public:
+    using Scalar = detail::ScalarToken;
+    explicit NumericalFamilyScalars(detail::ScalarConstruction& construction) : construction(construction) {}
+    void initializeTrips(scf::ForOp loop)
+    {
+        zero = construction.number(0);
+        one = construction.number(1);
+        const auto upper = construction.input(loop.getUpperBound()), lower = construction.input(loop.getLowerBound());
+        const auto step = construction.input(loop.getStep());
+        auto positive = construction.compare(arith::CmpIPredicate::sgt, upper, lower);
+        auto difference = construction.binary<arith::SubIOp>(upper, lower);
+        auto span = construction.select(positive, difference, zero);
+        auto quotient = construction.binary<arith::DivUIOp>(span, step);
+        auto remainder = construction.binary<arith::RemUIOp>(span, step);
+        auto partial = construction.compare(arith::CmpIPredicate::ne, remainder, zero);
+        auto extra = construction.select(partial, one, zero);
+        trips = construction.binary<arith::AddIOp>(quotient, extra);
+    }
+    void initializeOrdinal(scf::ForOp loop)
+    {
+        auto offset = construction.binary<arith::SubIOp>(construction.input(loop.getInductionVar()),
+            construction.input(loop.getLowerBound()));
+        ordinal = construction.binary<arith::DivUIOp>(offset, construction.input(loop.getStep()));
+    }
+    void zeroOrdinal() { ordinal = construction.number(0); }
+    Scalar boundary(const EndpointPiece& piece)
+    {
+        if (!piece.displacement) { return construction.boolean(true); }
+        auto delay = construction.number(piece.displacement);
+        if (piece.kind != EndpointKind::Set) {
+            return construction.compare(arith::CmpIPredicate::uge, ordinal, delay);
+        }
+        auto remaining = construction.binary<arith::SubIOp>(trips, delay);
+        auto hasTarget = construction.compare(arith::CmpIPredicate::ult, delay, trips);
+        auto beforeEnd = construction.compare(arith::CmpIPredicate::ult, ordinal, remaining);
+        return construction.binary<arith::AndIOp>(hasTarget, beforeEnd);
+    }
+    ContextualFamilyInputs<Scalar> piece(const FamilyEndpointRecipe& recipe, std::size_t index,
+        const PhysicalEndpointMap* mapping, uint32_t recordBase, Scalar partnerPresent)
+    {
+        const auto& piece = recipe.pieces[index];
+        const bool needMember = !mapping || physicalMapRequiresMember(*mapping);
+        auto selector = needMember ? detail::constructFamilyExpressions(construction, *recipe.selectors[index]) :
+            detail::FamilyScalarTokens{detail::constructFamilyPresence(construction, *recipe.selectors[index]), {}};
+        ContextualFamilyInputs<Scalar> result;
+        result.guard = construction.binary<arith::AndIOp>(selector.present, partnerPresent);
+        if (piece.kind != EndpointKind::Barrier) {
+            if (!mapping || physicalMapNeedsCoordinate(*mapping, 0)) {
+                result.ordinal = ordinal;
+                if (piece.kind == EndpointKind::Wait && piece.displacement) {
+                    result.ordinal = construction.binary<arith::SubIOp>(
+                        ordinal, construction.number(piece.displacement));
+                }
+            }
+            auto member = selector.member;
+            if (member && recordBase) {
+                member = construction.binary<arith::AddIOp>(member, construction.number(recordBase));
+            }
+            result.members.push_back(member);
+        }
+        return result;
+    }
+private:
+    detail::ScalarConstruction& construction;
+    Scalar trips, ordinal, zero, one;
+};
+template<class Consumer> LogicalResult runFamilyPreparation(const FamilyEndpointRecipe& recipe,
+    ArrayRef<std::shared_ptr<const PhysicalEndpointMap>> maps, uint64_t invocationDepth, bool executed,
+    Consumer& consumer)
+{
+    bool needsOrdinals = maps.empty();
+    for (auto [index, piece] : llvm::enumerate(recipe.pieces)) {
+        needsOrdinals |= piece.displacement || (piece.kind != EndpointKind::Barrier &&
+            (maps.empty() || physicalMapNeedsCoordinate(*maps[index], 0)));
+    }
+    if (recipe.outer && needsOrdinals) {
+        auto loop = recipe.outer;
+        if (failed(consumer.at(loop, [&]() { consumer.initializeTrips(loop); return success(); })) ||
+            failed(consumer.at(&loop.getBody()->front(), [&]() {
+                consumer.initializeOrdinal(loop); return success();
+            }))) { return failure(); }
+    }
+    if (recipe.arena) { return ContextualFamilySchedule(recipe, maps, invocationDepth, executed).run(consumer); }
+    for (const auto& cut : recipe.cuts) {
+        if (cut.pieces.empty()) { continue; }
+        if (failed(consumer.at(cut.cut.before, [&]() {
+                if (!recipe.outer && llvm::any_of(cut.pieces, [&](auto index) {
+                        return maps.empty() || (maps[index] && physicalMapNeedsCoordinate(*maps[index], 0));
+                    })) { consumer.zeroOrdinal(); }
+                std::map<std::pair<bool, uint64_t>, typename Consumer::Scalar> predicates;
+                for (auto index : cut.pieces) {
+                    const auto& piece = recipe.pieces[index];
+                    auto [entry, added] = predicates.try_emplace(
+                        std::make_pair(piece.kind == EndpointKind::Set, piece.displacement));
+                    if (added) { entry->second = consumer.boundary(piece); }
+                    if (failed(consumer.numericalPiece(index, entry->second))) { return failure(); }
+                }
+                return success();
+            }))) { return failure(); }
+    }
+    return success();
+}
 class FamilyPreparer {
 public:
     FamilyPreparer(
         const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared, uint32_t recordBase,
         const std::map<uint32_t, uint32_t>& namespaces, FamilyMaterialization& materialization,
-        ArrayRef<std::shared_ptr<const PhysicalEndpointMap>> maps = {})
+        ArrayRef<std::shared_ptr<const PhysicalEndpointMap>> maps = {}, uint64_t invocationDepth = 0,
+        bool executed = false)
         : recipe(recipe),
           prepared(prepared),
           recordBase(recordBase),
           namespaces(namespaces),
           materialization(materialization),
           maps(maps),
-          builder(recipe.cuts.front().cut.before->getContext())
+          invocationDepth(invocationDepth),
+          executed(executed),
+          builder(recipe.cuts.front().cut.before->getContext()),
+          scalar(builder, recipe.cuts.front().cut.before->getLoc()), numericalScalars(scalar)
     {}
-    LogicalResult run()
-    {
-        bool needsOrdinals = maps.empty();
-        for (auto [index, piece] : llvm::enumerate(recipe.pieces)) {
-            needsOrdinals |= piece.displacement || (piece.kind != EndpointKind::Barrier &&
-                                                    (maps.empty() || physicalMapNeedsCoordinate(*maps[index], 0)));
-        }
-        if (recipe.outer && needsOrdinals) {
-            initializeOrdinals();
-        }
-        if (recipe.arena) {
-            return prepareContextual();
-        }
-        for (const auto& cut : recipe.cuts) {
-            if (!cut.pieces.empty()) {
-                prepareCut(cut.cut, cut.pieces);
-            }
-        }
-        return success();
-    }
+    LogicalResult run() { return runFamilyPreparation(recipe, maps, invocationDepth, executed, *this); }
 
 private:
     const FamilyEndpointRecipe& recipe;
@@ -143,95 +365,68 @@ private:
     const std::map<uint32_t, uint32_t>& namespaces;
     FamilyMaterialization& materialization;
     ArrayRef<std::shared_ptr<const PhysicalEndpointMap>> maps;
+    uint64_t invocationDepth;
+    bool executed;
     OpBuilder builder;
-    Value trips;
-    Value ordinal;
-    Value zero;
-    Value one;
-    LogicalResult prepareContextual()
+    detail::ScalarConstruction scalar;
+    NumericalFamilyScalars numericalScalars;
+    template<class Consumer> friend LogicalResult runFamilyPreparation(const FamilyEndpointRecipe&,
+        ArrayRef<std::shared_ptr<const PhysicalEndpointMap>>, uint64_t, bool, Consumer&);
+    friend class ContextualFamilySchedule;
+    using Scalar = Value;
+    template<class Action> LogicalResult at(Operation* cut, Action&& action)
     {
-        const auto* environment = recipe.shared.empty() ? nullptr : &recipe;
-        for (const auto& shared : recipe.shared) {
-            auto* cut = shared.expression.cut;
-            Block code;
-            builder.setInsertionPointToEnd(&code);
-            auto value = materialization.emit(*recipe.arena, *shared.binding, builder, cut, environment);
-            if (failed(value)) {
-                return failure();
-            }
-            materialization.bind(*recipe.arena, recipe, cut, shared.expression.expression, *value);
-            adopt(code, cut);
+        Block code;
+        builder.setInsertionPointToEnd(&code);
+        scalar.setLocation(cut->getLoc());
+        if (failed(action())) { return failure(); }
+        adopt(code, cut);
+        return success();
+    }
+    FailureOr<Value> emit(const CutExpressionRecipe& binding, Operation* cut,
+        const FamilyEndpointRecipe* environment)
+    {
+        return materialization.emit(*recipe.arena, binding, builder, cut, environment);
+    }
+    void bind(Operation* cut, RegionExpressions::Id expression, Value value)
+    {
+        materialization.bind(*recipe.arena, recipe, cut, expression, value);
+    }
+    void publish() { materialization.publish(*recipe.arena, recipe); }
+    Value number(uint32_t record, Operation*) { return scalar.number(uint64_t(record) + recordBase).value; }
+    void initializeTrips(scf::ForOp loop) { numericalScalars.initializeTrips(loop); }
+    void initializeOrdinal(scf::ForOp loop) { numericalScalars.initializeOrdinal(loop); }
+    void zeroOrdinal() { numericalScalars.zeroOrdinal(); }
+    Value boundary(const EndpointPiece& piece) { return numericalScalars.boundary(piece).value; }
+    LogicalResult numerical(std::size_t i)
+    {
+        if (!recipe.outer && (maps.empty() || (maps[i] && physicalMapNeedsCoordinate(*maps[i], 0)))) {
+            zeroOrdinal();
         }
-        if (environment) {
-            materialization.publish(*recipe.arena, recipe);
+        return numericalPiece(i, boundary(recipe.pieces[i]));
+    }
+    LogicalResult endpoint(std::size_t i, const ContextualFamilyInputs<Value>& inputs)
+    {
+        const auto& piece = recipe.pieces[i];
+        const auto& binding = recipe.bindings[i];
+        const bool local = piece.kind == EndpointKind::Barrier;
+        auto kind = local ? LogicalCommandKind::Barrier :
+            (piece.kind == EndpointKind::Set ? LogicalCommandKind::Set : LogicalCommandKind::Wait);
+        const auto record = piece.members.front().record + recordBase;
+        PreparedLogicalEndpoint endpoint{piece.cut.before, kind, piece.sourcePipe, piece.targetPipe,
+            namespaces.empty() ? piece.namespaceId + recordBase : namespaces.at(record), inputs.guard, inputs.ordinal};
+        endpoint.records = {record};
+        endpoint.memberCoordinates = inputs.members;
+        if (!maps.empty()) { endpoint.physicalMapping = maps[i]; }
+        retainEndpointCoordinates(endpoint, piece.members.front().coordinates);
+        if (binding.residueCoordinate) {
+            if (endpoint.domain.empty()) { endpoint.domain.emplace_back(); }
+            for (auto& box : endpoint.domain) {
+                box.push_back({inputs.residue, binding.modulus, static_cast<int64_t>(binding.residue)});
+            }
         }
-        for (std::size_t i = 0; i < recipe.pieces.size(); ++i) {
-            const auto& piece = recipe.pieces[i];
-            const auto& binding = recipe.bindings[i];
-            auto* cut = piece.cut.before;
-            Block code;
-            builder.setInsertionPointToEnd(&code);
-            if (!recipe.selectors.empty() && recipe.selectors[i]) {
-                if (!recipe.outer && (maps.empty() || (maps[i] && physicalMapNeedsCoordinate(*maps[i], 0)))) {
-                    ordinal = number(0, cut->getLoc());
-                }
-                preparePiece(cut, i, boundary(piece, cut->getLoc()));
-                adopt(code, cut);
-                continue;
-            }
-            auto emit = [&](const std::shared_ptr<const CutExpressionRecipe>& value) {
-                return materialization.emit(*recipe.arena, *value, builder, cut, environment);
-            };
-            auto guard = emit(binding.activity);
-            if (failed(guard)) {
-                return failure();
-            }
-            const bool local = piece.kind == EndpointKind::Barrier;
-            auto kind = local ? LogicalCommandKind::Barrier :
-                                (piece.kind == EndpointKind::Set ? LogicalCommandKind::Set : LogicalCommandKind::Wait);
-            const auto record = piece.members.front().record + recordBase;
-            PreparedLogicalEndpoint endpoint{
-                cut,
-                kind,
-                piece.sourcePipe,
-                piece.targetPipe,
-                namespaces.empty() ? piece.namespaceId + recordBase : namespaces.at(record),
-                *guard,
-                {}};
-            endpoint.records = {record};
-            if (!maps.empty()) {
-                endpoint.physicalMapping = maps[i];
-            }
-            retainEndpointCoordinates(endpoint, piece.members.front().coordinates);
-            if (binding.residueCoordinate) {
-                auto coordinate = emit(binding.residueCoordinate);
-                if (failed(coordinate)) {
-                    return failure();
-                }
-                if (endpoint.domain.empty()) {
-                    endpoint.domain.emplace_back();
-                }
-                for (auto& box : endpoint.domain) {
-                    box.push_back({*coordinate, binding.modulus, static_cast<int64_t>(binding.residue)});
-                }
-            }
-            if (!local) {
-                if (!endpoint.physicalMapping || physicalMapNeedsCoordinate(*endpoint.physicalMapping, 0)) {
-                    auto ordinal = emit(binding.ordinal);
-                    if (failed(ordinal)) {
-                        return failure();
-                    }
-                    endpoint.identity = *ordinal;
-                }
-                endpoint.memberCoordinates.push_back(
-                    endpoint.physicalMapping && !physicalMapRequiresMember(*endpoint.physicalMapping) ?
-                        Value{} :
-                        number(record, cut->getLoc()));
-            }
-            endpoint.piece = prepared.endpoints.size();
-            prepared.endpoints.push_back(std::move(endpoint));
-            adopt(code, cut);
-        }
+        endpoint.piece = prepared.endpoints.size();
+        prepared.endpoints.push_back(std::move(endpoint));
         return success();
     }
     void adopt(Block& code, Operation* cut)
@@ -240,88 +435,17 @@ private:
         auto& target = prepared.addPreparation(cut);
         target.getOperations().splice(target.end(), code.getOperations());
     }
-    Value number(uint64_t value, Location location)
+    LogicalResult numericalPiece(std::size_t index, Value partnerPresent)
     {
-        auto type = builder.getIndexType();
-        return builder.create<arith::ConstantOp>(location, type, IntegerAttr::get(type, APInt(64, value)));
-    }
-    Value compare(arith::CmpIPredicate predicate, Value a, Value b, Location location)
-    {
-        return builder.create<arith::CmpIOp>(location, predicate, a, b);
-    }
-    void initializeOrdinals()
-    {
-        auto loop = recipe.outer;
-        auto location = loop.getLoc();
-        builder.setInsertionPointToEnd(&prepared.addPreparation(loop));
-        zero = number(0, location);
-        one = number(1, location);
-        auto positive = compare(arith::CmpIPredicate::sgt, loop.getUpperBound(), loop.getLowerBound(), location);
-        auto difference = builder.create<arith::SubIOp>(location, loop.getUpperBound(), loop.getLowerBound());
-        auto span = builder.create<arith::SelectOp>(location, positive, difference, zero);
-        auto quotient = builder.create<arith::DivUIOp>(location, span, loop.getStep());
-        auto remainder = builder.create<arith::RemUIOp>(location, span, loop.getStep());
-        auto partial = compare(arith::CmpIPredicate::ne, remainder, zero, location);
-        auto extra = builder.create<arith::SelectOp>(location, partial, one, zero);
-        trips = builder.create<arith::AddIOp>(location, quotient, extra);
-        builder.setInsertionPointToEnd(&prepared.addPreparation(&loop.getBody()->front()));
-        auto offset = builder.create<arith::SubIOp>(location, loop.getInductionVar(), loop.getLowerBound());
-        ordinal = builder.create<arith::DivUIOp>(location, offset, loop.getStep());
-    }
-    Value boundary(const EndpointPiece& piece, Location location)
-    {
-        const auto displacement = piece.displacement;
-        if (!displacement) {
-            return builder.create<arith::ConstantIntOp>(location, 1, 1);
-        }
-        auto delay = number(displacement, location);
-        if (piece.kind != EndpointKind::Set) {
-            return compare(arith::CmpIPredicate::uge, ordinal, delay, location);
-        }
-        auto remaining = builder.create<arith::SubIOp>(location, trips, delay);
-        auto hasTarget = compare(arith::CmpIPredicate::ult, delay, trips, location);
-        auto beforeEnd = compare(arith::CmpIPredicate::ult, ordinal, remaining, location);
-        return builder.create<arith::AndIOp>(location, hasTarget, beforeEnd);
-    }
-    void preparePiece(Operation* before, std::size_t index, Value partnerPresent)
-    {
-        auto location = before->getLoc();
         const auto& piece = recipe.pieces[index];
         const auto mapping = maps.empty() ? nullptr : maps[index];
-        const bool needMember = !mapping || physicalMapRequiresMember(*mapping);
-        auto selector = needMember ?
-                            emitFamilyExpressions(builder, location, *recipe.selectors[index]) :
-                            FamilyExpressions{{}, emitFamilyPresence(builder, location, *recipe.selectors[index]), {}};
-        Value guard = builder.create<arith::AndIOp>(location, selector.present, partnerPresent);
-        Value identity;
-        auto kind = LogicalCommandKind::Barrier;
-        const bool local = piece.kind == EndpointKind::Barrier;
-        if (!local) {
-            kind = piece.kind == EndpointKind::Set ? LogicalCommandKind::Set : LogicalCommandKind::Wait;
-            if (!mapping || physicalMapNeedsCoordinate(*mapping, 0)) {
-                identity = ordinal;
-                if (piece.kind == EndpointKind::Wait && piece.displacement) {
-                    identity = builder.create<arith::SubIOp>(location, ordinal, number(piece.displacement, location));
-                }
-            }
-        }
-        PreparedLogicalEndpoint endpoint{
-            before,
-            kind,
-            piece.sourcePipe,
-            piece.targetPipe,
+        auto inputs = numericalScalars.piece(recipe, index, mapping.get(), recordBase, scalar.input(partnerPresent));
+        const auto kind = piece.kind == EndpointKind::Barrier ? LogicalCommandKind::Barrier :
+            (piece.kind == EndpointKind::Set ? LogicalCommandKind::Set : LogicalCommandKind::Wait);
+        PreparedLogicalEndpoint endpoint{piece.cut.before, kind, piece.sourcePipe, piece.targetPipe,
             namespaces.empty() ? piece.namespaceId + recordBase :
-                                 namespaces.at(piece.members.front().record + recordBase),
-            guard,
-            identity,
-            {}};
-        if (!local) {
-            Value member = selector.member;
-            if (member && recordBase) {
-                member = builder.create<arith::AddIOp>(location, member, number(recordBase, location));
-            }
-            endpoint.memberCoordinates.push_back(member);
-        }
+                namespaces.at(piece.members.front().record + recordBase), inputs.guard.value, inputs.ordinal.value, {}};
+        for (auto member : inputs.members) { endpoint.memberCoordinates.push_back(member.value); }
         endpoint.physicalMapping = mapping;
         for (const auto& member : piece.members) {
             retainEndpointCoordinates(endpoint, member.coordinates);
@@ -329,26 +453,9 @@ private:
         }
         endpoint.piece = static_cast<int64_t>(prepared.endpoints.size());
         prepared.endpoints.push_back(std::move(endpoint));
+        return success();
     }
-    void prepareCut(TemplateEndpointCut cut, ArrayRef<std::size_t> selected)
-    {
-        builder.setInsertionPointToEnd(&prepared.addPreparation(cut.before));
-        if (!recipe.outer && llvm::any_of(selected, [&](auto index) {
-                return maps.empty() || (maps[index] && physicalMapNeedsCoordinate(*maps[index], 0));
-            })) {
-            ordinal = number(0, cut.before->getLoc());
-        }
-        std::map<std::pair<bool, uint64_t>, Value> predicates;
-        for (auto index : selected) {
-            const auto& piece = recipe.pieces[index];
-            auto [entry, inserted] =
-                predicates.try_emplace(std::make_pair(piece.kind == EndpointKind::Set, piece.displacement));
-            if (inserted) {
-                entry->second = boundary(piece, cut.before->getLoc());
-            }
-            preparePiece(cut.before, index, entry->second);
-        }
-    }
+
 };
 FamilyExpressionPlan buildPieceSelector(const EndpointPiece& piece)
 {
@@ -516,6 +623,13 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildContextualFamilyEndp
             auto ordinal = prepare(family.ordinal, false);
             if (failed(ordinal)) { return failure(); }
             binding.ordinal = std::move(*ordinal);
+            for (auto coordinate : family.matchingCoordinates) {
+                auto planned = prepare(coordinate, false);
+                if (failed(planned)) { return failure(); }
+                binding.matchingCoordinates.push_back(std::move(*planned));
+            }
+        } else if (!family.matchingCoordinates.empty()) {
+            return failure();
         }
         if (family.residueCoordinate != RegionExpressions::invalid) {
             if (!family.modulus || family.residue >= family.modulus || family.residue > INT64_MAX) { return failure(); }
@@ -551,7 +665,8 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> buildMixedFamilyEndpointR
     for (std::size_t i = 0; i < families.size(); ++i) {
         const auto& piece = families[i].piece;
         if (!piece.cut.before || piece.cut.before->getParentOfType<func::FuncOp>() != function ||
-            piece.members.size() != 1 || (!outer && numerical[i] && piece.displacement)) { return failure(); }
+            piece.members.size() != 1 || (!outer && numerical[i] && piece.displacement) ||
+            (numerical[i] && !families[i].matchingCoordinates.empty())) { return failure(); }
         Key key{piece.members.front().record, piece.kind, piece.cut.before};
         if (!origins.emplace(key, i).second) { return failure(); }
         points.push_back(piece);
@@ -747,6 +862,38 @@ LogicalResult collectFamilyParts(const FamilyEndpointRecipe& recipe, SmallVector
     }
     return success();
 }
+detail::ScalarToken constructFamilyActivity(detail::ScalarConstruction& construction,
+    detail::ScalarToken condition, detail::ScalarToken guard)
+{
+    return construction.select(condition, guard, construction.boolean(false));
+}
+template<class Endpoint, class Consumer> LogicalResult applyFamilyContexts(Endpoint& endpoint,
+    std::size_t path, ArrayRef<FamilyContextPath> paths, Consumer& consumer)
+{
+    // The innermost binding is visited first. Inserting at member one then
+    // leaves enclosing invocation coordinates before their descendants.
+    while (path != SIZE_MAX) {
+        const auto& item = paths[path];
+        path = item.parent;
+        if (item.recipe->kind == FamilyContextKind::Invocation && endpoint.kind == LogicalCommandKind::Barrier) {
+            continue;
+        }
+        if (item.recipe->kind == FamilyContextKind::Invocation && endpoint.physicalMapping &&
+            !physicalMapNeedsCoordinate(*endpoint.physicalMapping, item.invocationDepth)) {
+            endpoint.memberCoordinates.insert(endpoint.memberCoordinates.begin() + 1, decltype(endpoint.guard){});
+            continue;
+        }
+        auto value = consumer.lower(*item.recipe, endpoint.before);
+        if (failed(value)) { return failure(); }
+        if (item.recipe->kind == FamilyContextKind::Invocation) {
+            if (endpoint.memberCoordinates.empty()) { return failure(); }
+            endpoint.memberCoordinates.insert(endpoint.memberCoordinates.begin() + 1, *value);
+        } else {
+            endpoint.guard = consumer.mask(*value, endpoint.guard, endpoint.before);
+        }
+    }
+    return success();
+}
 class FamilyContextLowering {
 public:
     FamilyContextLowering(PreparedLogicalPlan& plan, FamilyMaterialization& materialization)
@@ -754,42 +901,20 @@ public:
     {}
     LogicalResult apply(PreparedLogicalEndpoint& endpoint, std::size_t path, ArrayRef<FamilyContextPath> paths)
     {
-        // The innermost binding is visited first. Inserting at member one then
-        // leaves enclosing invocation coordinates before their descendants.
-        while (path != SIZE_MAX) {
-            const auto& item = paths[path];
-            path = item.parent;
-            if (item.recipe->kind == FamilyContextKind::Invocation && endpoint.kind == LogicalCommandKind::Barrier) {
-                continue;
-            }
-            if (item.recipe->kind == FamilyContextKind::Invocation && endpoint.physicalMapping &&
-                !physicalMapNeedsCoordinate(*endpoint.physicalMapping, item.invocationDepth)) {
-                endpoint.memberCoordinates.insert(endpoint.memberCoordinates.begin() + 1, Value{});
-                continue;
-            }
-            auto value = lower(*item.recipe, endpoint.before);
-            if (failed(value)) {
-                return failure();
-            }
-            if (item.recipe->kind == FamilyContextKind::Invocation) {
-                if (endpoint.memberCoordinates.empty()) {
-                    return failure();
-                }
-                endpoint.memberCoordinates.insert(endpoint.memberCoordinates.begin() + 1, *value);
-            } else {
-                // The leaf guard can be in a later stage than the shared cut
-                // value. Append after both dependencies, never into that cache's block.
-                OpBuilder builder(endpoint.before->getContext());
-                builder.setInsertionPointToEnd(&plan.addPreparation(endpoint.before));
-                auto location = endpoint.before->getLoc();
-                auto no = builder.create<arith::ConstantIntOp>(location, 0, 1);
-                endpoint.guard = builder.create<arith::SelectOp>(location, *value, endpoint.guard, no);
-            }
-        }
-        return success();
+        return applyFamilyContexts(endpoint, path, paths, *this);
     }
 
 private:
+    template<class Endpoint, class Consumer> friend LogicalResult applyFamilyContexts(
+        Endpoint&, std::size_t, ArrayRef<FamilyContextPath>, Consumer&);
+    Value mask(Value condition, Value guard, Operation* cut)
+    {
+        // Append after both the leaf guard and any cached wrapper root.
+        OpBuilder builder(cut->getContext());
+        builder.setInsertionPointToEnd(&plan.addPreparation(cut));
+        detail::ScalarConstruction construction(builder, cut->getLoc());
+        return constructFamilyActivity(construction, construction.input(condition), construction.input(guard)).value;
+    }
     PreparedLogicalPlan& plan;
     FamilyMaterialization& materialization;
     FailureOr<Value> lower(const FamilyContextRecipe& recipe, Operation* cut)
@@ -810,6 +935,382 @@ private:
         return value;
     }
 };
+struct CountedFamilyEndpoint {
+    Operation* before = nullptr;
+    LogicalCommandKind kind = LogicalCommandKind::Barrier;
+    uint32_t sourcePipe = 0, targetPipe = 0, record = 0;
+    detail::ScalarToken guard, identity;
+    SmallVector<uint32_t> records;
+    struct Constraint { detail::ScalarToken coordinate; uint64_t modulus; int64_t value; };
+    SmallVector<SmallVector<Constraint>> domain;
+    SmallVector<detail::ScalarToken> memberCoordinates;
+    std::shared_ptr<const PhysicalEndpointMap> physicalMapping;
+};
+// One counter owns every token across all original cuts and shared leaf
+// environments. No generated operation, root recipe or allocation is built.
+class FamilyCounter {
+public:
+    using Scalar = detail::ScalarToken;
+    FamilyCounter(const FamilyEndpointRecipe& recipe, uint32_t recordBase,
+        ArrayRef<std::shared_ptr<const PhysicalEndpointMap>> maps,
+        FamilyConstruction& materialization, detail::ScalarConstruction& construction,
+        const std::map<uint32_t, uint32_t>& namespaces)
+        : recipe(recipe), recordBase(recordBase), maps(maps), materialization(materialization),
+          construction(construction), numericalScalars(construction), namespaces(namespaces) {}
+    template<class Action> LogicalResult at(Operation* cut, Action&& action)
+    {
+        construction.setInsertionCut(cut);
+        return action();
+    }
+    FailureOr<Scalar> emit(const CutExpressionRecipe& binding, Operation* cut,
+        const FamilyEndpointRecipe* environment)
+    {
+        return materialization.emit(*recipe.arena, binding, cut, environment);
+    }
+    void bind(Operation* cut, RegionExpressions::Id expression, Scalar value)
+    {
+        materialization.bind(*recipe.arena, recipe, cut, expression, value);
+    }
+    void publish() { materialization.publish(*recipe.arena, recipe); }
+    Scalar number(uint32_t record, Operation*) { return construction.number(uint64_t(record) + recordBase); }
+    void initializeTrips(scf::ForOp loop) { numericalScalars.initializeTrips(loop); }
+    void initializeOrdinal(scf::ForOp loop) { numericalScalars.initializeOrdinal(loop); }
+    void zeroOrdinal() { numericalScalars.zeroOrdinal(); }
+    Scalar boundary(const EndpointPiece& piece) { return numericalScalars.boundary(piece); }
+    LogicalResult numerical(std::size_t i)
+    {
+        if (!recipe.outer && (maps.empty() || (maps[i] && physicalMapNeedsCoordinate(*maps[i], 0)))) {
+            zeroOrdinal();
+        }
+        return numericalPiece(i, boundary(recipe.pieces[i]));
+    }
+    LogicalResult numericalPiece(std::size_t index, Scalar partnerPresent)
+    {
+        return endpoint(index, numericalScalars.piece(recipe, index,
+            maps.empty() ? nullptr : maps[index].get(), recordBase, partnerPresent));
+    }
+    LogicalResult endpoint(std::size_t index, const ContextualFamilyInputs<Scalar>& inputs)
+    {
+        const auto& piece = recipe.pieces[index];
+        CountedFamilyEndpoint endpoint;
+        endpoint.before = piece.cut.before;
+        endpoint.kind = piece.kind == EndpointKind::Barrier ? LogicalCommandKind::Barrier :
+            (piece.kind == EndpointKind::Set ? LogicalCommandKind::Set : LogicalCommandKind::Wait);
+        endpoint.sourcePipe = piece.sourcePipe; endpoint.targetPipe = piece.targetPipe;
+        const auto record = piece.members.front().record + recordBase;
+        endpoint.record = namespaces.empty() ? piece.namespaceId + recordBase : namespaces.at(record);
+        endpoint.guard = inputs.guard; endpoint.identity = inputs.ordinal;
+        endpoint.memberCoordinates = inputs.members;
+        endpoint.physicalMapping = maps.empty() ? nullptr : maps[index];
+        for (const auto& member : piece.members) {
+            endpoint.records.push_back(member.record + recordBase);
+            if (member.coordinates.empty()) { continue; }
+            SmallVector<CountedFamilyEndpoint::Constraint> box;
+            for (auto coordinate : member.coordinates) {
+                box.push_back({construction.input(coordinate.loop.getInductionVar()), 0, coordinate.induction});
+            }
+            endpoint.domain.push_back(std::move(box));
+        }
+        const bool contextual = recipe.arena && (recipe.selectors.empty() || !recipe.selectors[index]);
+        if (contextual && recipe.bindings[index].residueCoordinate) {
+            const auto& binding = recipe.bindings[index];
+            if (endpoint.domain.empty()) { endpoint.domain.emplace_back(); }
+            for (auto& box : endpoint.domain) {
+                box.push_back({inputs.residue, binding.modulus, static_cast<int64_t>(binding.residue)});
+            }
+        }
+        endpoints.push_back(std::move(endpoint));
+        return success();
+    }
+    SmallVector<CountedFamilyEndpoint, 0> endpoints;
+private:
+    const FamilyEndpointRecipe& recipe;
+    uint32_t recordBase;
+    ArrayRef<std::shared_ptr<const PhysicalEndpointMap>> maps;
+    FamilyConstruction& materialization;
+    detail::ScalarConstruction& construction;
+    NumericalFamilyScalars numericalScalars;
+    const std::map<uint32_t, uint32_t>& namespaces;
+};
+class FamilyContextCounter {
+public:
+    FamilyContextCounter(FamilyConstruction& materialization, detail::ScalarConstruction& construction)
+        : materialization(materialization), construction(construction) {}
+    FailureOr<detail::ScalarToken> lower(const FamilyContextRecipe& recipe, Operation* cut)
+    {
+        auto found = recipe.cuts.find(cut);
+        if (found == recipe.cuts.end()) { return failure(); }
+        construction.setInsertionCut(cut);
+        return materialization.emit(*recipe.arena, *found->second, cut);
+    }
+    detail::ScalarToken mask(detail::ScalarToken condition, detail::ScalarToken guard, Operation* cut)
+    {
+        construction.setInsertionCut(cut);
+        return constructFamilyActivity(construction, condition, guard);
+    }
+private:
+    FamilyConstruction& materialization;
+    detail::ScalarConstruction& construction;
+};
+// Only arithmetic preparation admitted by insertion is represented. Original
+// values remain external identities; generated values retain exact properties,
+// types, result numbers and original insertion cuts in one comparison owner.
+class FamilyNormalizationCounter {
+public:
+    using Scalar = detail::ScalarToken;
+    FamilyNormalizationCounter(detail::ScalarConstruction& construction, const detail::ScalarDeduplication& aliases)
+        : construction(construction), aliases(aliases)
+    {
+        for (std::size_t i = 0; i < construction.trace().size(); ++i) {
+            for (auto result : construction.trace()[i].results) { definitions[result] = i; }
+        }
+    }
+    Scalar canonical(Scalar value) const
+    {
+        return value ? construction.lookup(aliases.canonical(value.id)) : Scalar{};
+    }
+    template<class Action> LogicalResult at(Operation* cut, Action action)
+    {
+        construction.setInsertionCut(cut);
+        return action();
+    }
+    Scalar original(Value value) { return construction.input(value); }
+    bool less(Scalar a, Scalar b) const { return a.id < b.id; }
+    detail::ScalarGuardPattern<Scalar> pattern(Scalar value)
+    {
+        value = canonical(value);
+        if (value.value) {
+            auto* operation = value.value.getDefiningOp();
+            if (!operation) { return {}; }
+            SmallVector<Scalar> operands;
+            for (auto operand : operation->getOperands()) { operands.push_back(original(operand)); }
+            return detail::scalarGuardPattern<Scalar>(operation->getName().getStringRef(),
+                operation->getPropertiesAsAttribute(), operands);
+        }
+        auto found = definitions.find(value.id);
+        if (found == definitions.end()) { return {}; }
+        const auto& instruction = construction.trace()[found->second];
+        SmallVector<Scalar> operands;
+        for (auto operand : instruction.operands) { operands.push_back(canonical(construction.lookup(operand))); }
+        return detail::scalarGuardPattern<Scalar>(instruction.name.getValue(), instruction.properties, operands);
+    }
+    Scalar select(Scalar condition, Scalar yes, Scalar no) { return construction.select(condition, yes, no); }
+    Scalar lor(Scalar a, Scalar b) { return construction.binary<arith::OrIOp>(a, b); }
+    Scalar land(Scalar a, Scalar b) { return construction.binary<arith::AndIOp>(a, b); }
+    std::pair<Scalar, Scalar> selection(const FamilyExpressionRecipe& recipe, bool member)
+    {
+        if (!member) { return {detail::constructFamilyPresence(construction, recipe), {}}; }
+        auto selected = detail::constructFamilyExpressions(construction, recipe);
+        return {selected.present, selected.member};
+    }
+private:
+    detail::ScalarConstruction& construction;
+    const detail::ScalarDeduplication& aliases;
+    llvm::DenseMap<uint64_t, std::size_t> definitions;
+};
+// One request directory for the actual prepared WAIT guards in both routes.
+// Pending evidence proves multiplicity only; it never substitutes for this guard.
+template<class Endpoint>
+FailureOr<std::map<std::pair<uint32_t, Operation*>, decltype(Endpoint{}.guard)>> pendingCleanupGuards(
+    ArrayRef<EndpointFamily> families, ArrayRef<Endpoint> endpoints)
+{
+    using Scalar = decltype(Endpoint{}.guard);
+    std::map<std::pair<uint32_t, Operation*>, Scalar> guards;
+    for (const auto& family : families) {
+        if (!family.targetChoices || !family.targetChoices->pendingMaterialization()) { continue; }
+        if (!family.targetChoices->validPendingSelection() || family.members.size() != 1) { return failure(); }
+        if (!guards.emplace(std::make_pair(family.members.front().record, family.targetCut.before),
+                            Scalar{}).second) { return failure(); }
+    }
+    if (guards.empty()) { return guards; }
+    for (const auto& endpoint : endpoints) {
+        if (endpoint.kind != LogicalCommandKind::Wait) { continue; }
+        for (auto record : endpoint.records) {
+            auto found = guards.find({record, endpoint.before});
+            if (found == guards.end()) { continue; }
+            if (found->second) { return failure(); }
+            found->second = endpoint.guard;
+        }
+    }
+    for (const auto& [key, guard] : guards) {
+        if (!guard) { return failure(); }
+    }
+    return guards;
+}
+// Reproduce the post-dedup owned preparation graph without scalar emission.
+// Non-SSA metadata keeps operations alive, but does not make an eager use a
+// guarded one. Only actual physical-map inputs are command consumers.
+void countSharedSelectorGuards(detail::ScalarConstruction& construction,
+    const detail::ScalarDeduplication& aliases, ArrayRef<CountedFamilyEndpoint> endpoints,
+    ArrayRef<detail::ScalarToken> evidence)
+{
+    SmallVector<detail::SelectorUse> uses;
+    llvm::DenseSet<uint64_t> roots;
+    auto root = [&](detail::ScalarToken token) { if (token) { roots.insert(aliases.canonical(token.id)); } };
+    auto use = [&](detail::ScalarToken token, Operation* cut, detail::ScalarToken guard) {
+        if (token) { uses.push_back({aliases.canonical(token.id), aliases.canonical(guard.id), cut}); }
+    };
+    for (auto token : evidence) { root(token); use(token, nullptr, {}); }
+    for (const auto& endpoint : endpoints) {
+        root(endpoint.guard); root(endpoint.identity);
+        for (auto member : endpoint.memberCoordinates) { root(member); }
+        for (const auto& box : endpoint.domain) {
+            for (auto item : box) { root(item.coordinate); use(item.coordinate, nullptr, {}); }
+        }
+        use(endpoint.guard, endpoint.before, {});
+        if (!endpoint.physicalMapping) { continue; }
+        if (physicalMapNeedsCoordinate(*endpoint.physicalMapping, 0)) {
+            use(endpoint.identity, endpoint.before, endpoint.guard);
+        }
+        for (auto entry : llvm::enumerate(endpoint.memberCoordinates)) {
+            const bool live = entry.index() ? physicalMapNeedsCoordinate(*endpoint.physicalMapping, entry.index()) :
+                physicalMapRequiresMember(*endpoint.physicalMapping);
+            if (live) { use(entry.value(), endpoint.before, endpoint.guard); }
+        }
+    }
+    llvm::DenseSet<std::size_t> redundant(aliases.redundant.begin(), aliases.redundant.end());
+    SmallVector<detail::ScalarInstruction, 0> source;
+    for (auto entry : llvm::enumerate(construction.trace())) {
+        if (redundant.count(entry.index())) { continue; }
+        auto instruction = entry.value();
+        for (auto& operand : instruction.operands) { operand = aliases.canonical(operand); }
+        source.push_back(std::move(instruction));
+    }
+    std::vector<bool> live(source.size(), false);
+    for (std::size_t i = source.size(); i-- > 0;) {
+        live[i] = llvm::any_of(source[i].results, [&](uint64_t id) { return roots.count(id); });
+        if (live[i]) { for (auto id : source[i].operands) { roots.insert(id); } }
+    }
+    SmallVector<detail::ScalarInstruction, 0> retained;
+    for (std::size_t i = 0; i < source.size(); ++i) {
+        if (live[i]) { retained.push_back(std::move(source[i])); }
+    }
+    struct Counter {
+        detail::ScalarConstruction& construction;
+        detail::ScalarToken lookup(uint64_t id) { return construction.lookup(id); }
+        detail::ScalarToken lor(detail::ScalarToken a, detail::ScalarToken b)
+        { return construction.binary<arith::OrIOp>(a, b); }
+        void begin(const detail::SelectorGuardGroup&, detail::ScalarToken) {}
+        void zero(Type type)
+        {
+            if (type.isIndex()) { construction.number(0); }
+            else { construction.integer(APInt(cast<IntegerType>(type).getWidth(), 0)); }
+        }
+        void finish(const detail::SelectorGuardGroup&) {}
+    } counter{construction};
+    const auto groups = detail::planSelectorGuards(retained, uses);
+    for (const auto& group : groups) {
+        construction.setInsertionCut(group.cut);
+        detail::constructSelectorGuardGroup(group, counter);
+    }
+}
+std::optional<uint64_t> ownedPhysicalConstruction(const PhysicalFamilyOutput& output, bool sharedSelectors)
+{
+    if (!output.protocol || !output.protocol->normalized || !output.concrete.empty()) { return std::nullopt; }
+    const auto& inventory = *output.protocol->normalized;
+    Operation* first = nullptr;
+    for (const auto& contribution : inventory.stream) {
+        if (!contribution.leaf) { return std::nullopt; }
+        if (!first && !contribution.leaf->pieces.empty()) { first = contribution.leaf->pieces.front().cut.before; }
+    }
+    if (!first) { return uint64_t(0); }
+    detail::ScalarConstruction construction;
+    construction.enableTrace(first->getContext());
+    FamilyConstruction materialization(construction);
+    FamilyContextCounter contexts(materialization, construction);
+    struct Plan {
+        SmallVector<CountedFamilyEndpoint, 0> endpoints;
+        ArrayRef<EndpointFamily> families;
+        bool independentPieces = true;
+    } plan;
+    plan.families = inventory.families;
+    const auto namespaces = inventory.translateNamespaces ? familyRecordNamespaces(inventory.families) :
+        std::map<uint32_t, uint32_t>{};
+    for (const auto& contribution : inventory.stream) {
+        const auto& leaf = *contribution.leaf;
+        auto found = output.deferred.find(&contribution);
+        if (found == output.deferred.end() || found->second.size() != leaf.pieces.size()) { return std::nullopt; }
+        const auto& maps = found->second;
+        for (auto [piece, mapping] : llvm::zip(leaf.pieces, maps)) {
+            if (!mapping && piece.kind != EndpointKind::Barrier) { return std::nullopt; }
+        }
+        if (leaf.pieces.empty()) { continue; }
+        FamilyCounter counter(leaf, contribution.recordBase, maps, materialization, construction, namespaces);
+        const auto depth = contribution.contextPath == SIZE_MAX ? 0 :
+            inventory.contexts[contribution.contextPath].invocationDepth;
+        if (failed(runFamilyPreparation(leaf, maps, depth, false, counter))) { return std::nullopt; }
+        // This leaf's wrappers run before the next leaf can consume the shared
+        // arena/cut cache, exactly as in actual materialization.
+        for (auto& endpoint : counter.endpoints) {
+            if (failed(applyFamilyContexts(endpoint, contribution.contextPath, inventory.contexts, contexts))) {
+                return std::nullopt;
+            }
+            plan.endpoints.push_back(std::move(endpoint));
+        }
+    }
+    if (!construction.validTrace()) { return std::nullopt; }
+    auto cleanupGuards = pendingCleanupGuards<CountedFamilyEndpoint>(inventory.families, plan.endpoints);
+    if (failed(cleanupGuards)) { return std::nullopt; }
+    detail::CountedCleanupPredicate cleanupView(construction);
+    for (const auto& family : inventory.families) {
+        if (family.sourceChoices && family.sourceChoices->pendingMaterialization()) { return std::nullopt; }
+        if (!family.targetChoices || !family.targetChoices->pendingMaterialization()) { continue; }
+        auto cut = family.targetChoices->cuts().front().before;
+        auto predicate = cleanupGuards->at({family.members.front().record, family.targetCut.before});
+        if (!detail::singletonCleanupConsumer(cut, cleanupView, predicate, cut->getParentOfType<func::FuncOp>())) {
+            return std::nullopt;
+        }
+    }
+    SmallVector<detail::ScalarToken> selectorEvidence;
+    // The materializer qualifies pending cleanup against these original WAIT
+    // guards before endpoint compaction. Later guards cannot replace the proof
+    // owner's retained Value, even when the old guard also has command users.
+    for (const auto& entry : *cleanupGuards) { selectorEvidence.push_back(entry.second); }
+    for (const auto& family : inventory.families) {
+        for (const auto& choices : {family.sourceChoices, family.targetChoices}) {
+            if (choices && choices->consumerPredicate()) {
+                selectorEvidence.push_back(construction.input(choices->consumerPredicate()));
+            }
+        }
+    }
+    const auto aliases = detail::deduplicateScalarInstructions(construction.trace());
+    FamilyNormalizationCounter normalizer(construction, aliases);
+    for (auto& endpoint : plan.endpoints) {
+        endpoint.guard = normalizer.canonical(endpoint.guard);
+        endpoint.identity = normalizer.canonical(endpoint.identity);
+        for (auto& member : endpoint.memberCoordinates) { member = normalizer.canonical(member); }
+        for (auto& box : endpoint.domain) {
+            for (auto& constraint : box) { constraint.coordinate = normalizer.canonical(constraint.coordinate); }
+        }
+    }
+    if (failed(detail::coalesceResidueAlternatives(plan, normalizer))) { return std::nullopt; }
+    if (failed(detail::coalesceEndpointAlternatives(plan, normalizer)) || !construction.validTrace()) {
+        return std::nullopt;
+    }
+    if (sharedSelectors) {
+        countSharedSelectorGuards(construction, aliases, plan.endpoints, selectorEvidence);
+    }
+    std::map<Operation*, SmallVector<const CountedFamilyEndpoint*>> cuts;
+    for (const auto& endpoint : plan.endpoints) { cuts[endpoint.before].push_back(&endpoint); }
+    for (const auto& [cut, endpoints] : cuts) {
+        construction.setInsertionCut(cut);
+        (void)detail::combineBarrierGuards<CountedFamilyEndpoint>(endpoints,
+            [&](auto a, auto b) { return normalizer.lor(a, b); });
+    }
+    uint64_t mapsCost = 0;
+    for (const auto& endpoint : plan.endpoints) {
+        if (!endpoint.physicalMapping) { continue; }
+        const auto cost = physicalMapConstructionOperations(*endpoint.physicalMapping);
+        if (!cost || *cost > uint64_t(INT64_MAX) - mapsCost) { return std::nullopt; }
+        mapsCost += *cost;
+    }
+    // Deduplication and dead-root removal do not refund operations already
+    // constructed. Compaction adds its actual schedule; only retained command
+    // sites subsequently construct physical maps.
+    const auto upstream = construction.operations();
+    if (!upstream || *upstream > uint64_t(INT64_MAX) - mapsCost) { return std::nullopt; }
+    return *upstream + mapsCost;
+}
 } // namespace
 std::size_t familyEndpointPieceCount(const FamilyEndpointRecipe& recipe) { return recipe.pieceCount; }
 FailureOr<FamilyEndpointForms> familyEndpointForms(const FamilyEndpointRecipe& recipe)
@@ -847,22 +1348,39 @@ FailureOr<FamilyEndpointForms> familyEndpointForms(const FamilyEndpointRecipe& r
     }
     return result;
 }
-FailureOr<std::map<uint32_t, uint64_t>> familyMatchingArities(const FamilyEndpointRecipe& recipe)
+FailureOr<std::map<uint32_t, FamilyMatchingShape>> familyMatchingShapes(const FamilyEndpointRecipe& recipe)
 {
     SmallVector<FamilyPart> leaves;
     SmallVector<FamilyContextPath> contexts;
     if (failed(collectFamilyParts(recipe, leaves, contexts))) { return failure(); }
-    std::map<uint32_t, uint64_t> result;
+    std::map<uint32_t, FamilyMatchingShape> result;
     for (const auto& part : leaves) {
         const uint64_t depth = part.contextPath == SIZE_MAX ? 0 : contexts[part.contextPath].invocationDepth;
         if (depth == UINT64_MAX) { return failure(); }
-        for (const auto& piece : part.recipe->pieces) {
-            if (piece.kind == EndpointKind::Barrier) { continue; }
+        for (auto [position, piece] : llvm::enumerate(part.recipe->pieces)) {
+            const auto extra = part.recipe->arena ? part.recipe->bindings[position].matchingCoordinates.size() : 0;
+            if (extra > UINT64_MAX - depth - 1) { return failure(); }
+            const auto arity = depth + 1 + extra;
             for (const auto& member : piece.members) {
-                auto [entry, added] = result.emplace(member.record + part.recordBase, depth + 1);
-                if (!added && entry->second != depth + 1) { return failure(); }
+                if (member.record > UINT32_MAX - part.recordBase) { return failure(); }
+                auto& shape = result[member.record + part.recordBase];
+                if (piece.kind == EndpointKind::Barrier) { shape.hasLocal = true; continue; }
+                if ((shape.hasSet || shape.hasWait) && shape.coordinateCount != arity) { return failure(); }
+                shape.coordinateCount = arity;
+                shape.hasSet |= piece.kind == EndpointKind::Set;
+                shape.hasWait |= piece.kind == EndpointKind::Wait;
             }
         }
+    }
+    return result;
+}
+FailureOr<std::map<uint32_t, uint64_t>> familyMatchingArities(const FamilyEndpointRecipe& recipe)
+{
+    auto shapes = familyMatchingShapes(recipe);
+    if (failed(shapes)) { return failure(); }
+    std::map<uint32_t, uint64_t> result;
+    for (const auto& [record, shape] : *shapes) {
+        if (shape.hasSet || shape.hasWait) { result.emplace(record, shape.coordinateCount); }
     }
     return result;
 }
@@ -1008,6 +1526,10 @@ void appendLeafKey(const FamilyPart& part, SmallVectorImpl<uint64_t>& key)
                 appendCutExpressionKey(*binding.residueCoordinate, key);
             }
             key.append({binding.modulus, binding.residue});
+            key.push_back(binding.matchingCoordinates.size());
+            for (const auto& coordinate : binding.matchingCoordinates) {
+                appendCutExpressionKey(*coordinate, key);
+            }
         }
     }
     key.push_back(leaf.shared.size());
@@ -1102,6 +1624,7 @@ LogicalResult normalizeFamilyEndpointPlan(PreparedLogicalPlan& plan)
     }
     SmallVector<FamilyPart> leaves;
     auto inventory = std::make_shared<NormalizedFamilyInventory>();
+    inventory->families = plan.families;
     for (const auto& family : plan.families) {
         for (const auto& choice : {family.sourceChoices, family.targetChoices}) {
             if (choice && choice->pendingMaterialization()) {
@@ -1215,6 +1738,235 @@ LogicalResult normalizeFamilyEndpointPlan(PreparedLogicalPlan& plan)
     plan.familyProtocol = std::move(normalized);
     return success();
 }
+FailureOr<NumericalFamilyRecipe> numericalFamilyRecipe(PreparedLogicalPlan& plan)
+{
+    if (plan.privateState || plan.completionOwner || plan.physicalOutput || plan.executedOutput ||
+        plan.nestedIdentities ||
+        !plan.endpoints.empty() || !plan.preparation.empty() || !plan.familyRecipe ||
+        failed(normalizeLogicalFamilies(plan))) { return failure(); }
+    const auto& inventory = plan.familyRecipe->normalized;
+    if (!inventory || !inventory->contexts.empty() || inventory->stream.size() != 1 ||
+        !inventory->stream.front().leaf) { return failure(); }
+    const auto& contribution = inventory->stream.front();
+    const auto& leaf = *contribution.leaf;
+    if (leaf.arena || !leaf.shared.empty() || !numericalLeaf(leaf)) { return failure(); }
+    NumericalFamilyRecipe result{leaf.outer, leaf.pieces};
+    const auto namespaces = inventory->translateNamespaces ? familyRecordNamespaces(plan.families) :
+        std::map<uint32_t, uint32_t>{};
+    for (auto& piece : result.pieces) {
+        piece.namespaceId += contribution.recordBase;
+        for (auto& member : piece.members) { member.record += contribution.recordBase; }
+        if (!namespaces.empty()) { piece.namespaceId = namespaces.at(piece.members.front().record); }
+    }
+    return result;
+}
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> restoreNumericalFamilyRecipe(
+    const NumericalFamilyRecipe& source)
+{
+    if (source.pieces.empty()) { return failure(); }
+    auto recipe = std::make_shared<FamilyEndpointRecipe>();
+    recipe->outer = source.outer;
+    recipe->pieces = source.pieces;
+    recipe->pieceCount = source.pieces.size();
+    std::map<Operation*, std::size_t> cuts;
+    for (const auto& piece : source.pieces) {
+        if (!piece.cut.before || piece.cut.block != piece.cut.before->getBlock() || piece.members.empty() ||
+            (!source.outer && piece.displacement)) { return failure(); }
+        auto [cut, added] = cuts.emplace(piece.cut.before, recipe->cuts.size());
+        if (added) { recipe->cuts.push_back({piece.cut, {}}); }
+        recipe->cuts[cut->second].pieces.push_back(recipe->selectors.size());
+        auto selection = buildPieceSelector(piece);
+        if (!selection.error.empty()) { return failure(); }
+        recipe->selectors.push_back(std::move(selection.recipe));
+        recipe->maximumRecord = std::max(recipe->maximumRecord, piece.namespaceId);
+        for (const auto& member : piece.members) {
+            recipe->maximumRecord = std::max(recipe->maximumRecord, member.record);
+        }
+    }
+    for (auto& cut : recipe->cuts) {
+        llvm::stable_sort(cut.pieces, [&](auto a, auto b) {
+            return recipe->pieces[a].order < recipe->pieces[b].order;
+        });
+    }
+    return std::shared_ptr<const FamilyEndpointRecipe>(std::move(recipe));
+}
+FailureOr<std::vector<DeferredFamilyNode>> deferredFamilyRecipe(PreparedLogicalPlan& plan)
+{
+    if (plan.privateState || plan.completionOwner || plan.physicalOutput || plan.executedOutput ||
+        !plan.endpoints.empty() || !plan.preparation.empty() || !plan.familyRecipe ||
+        failed(normalizeLogicalFamilies(plan))) { return failure(); }
+    auto original = familyRecipeForComposition(plan.familyRecipe);
+    std::vector<DeferredFamilyNode> result;
+    std::map<const FamilyEndpointRecipe*, int64_t> positions;
+    SmallVector<std::pair<const FamilyEndpointRecipe*, bool>> pending{{original.get(), false}};
+    while (!pending.empty()) {
+        auto [recipe, ready] = pending.pop_back_val();
+        if (positions.count(recipe)) { continue; }
+        if (!ready) {
+            pending.push_back({recipe, true});
+            if (recipe->previous) { pending.push_back({recipe->previous.get(), false}); }
+            if (recipe->child) { pending.push_back({recipe->child.get(), false}); }
+            continue;
+        }
+        if (recipe->normalized || recipe->endpointIndex) { return failure(); }
+        DeferredFamilyNode node;
+        if (recipe->child) {
+            node.child = positions.at(recipe->child.get());
+            if (recipe->context) {
+                if (recipe->previous || recipe->recordBase) { return failure(); }
+                node.kind = recipe->context->kind == FamilyContextKind::Invocation ?
+                    DeferredFamilyNode::Kind::Invocation : DeferredFamilyNode::Kind::Activity;
+                node.arena = recipe->context->arena;
+                for (const auto& [cut, binding] : recipe->context->cuts) {
+                    node.contextCuts.emplace(cut, cutExpressionRoot(*binding));
+                }
+            } else {
+                node.kind = DeferredFamilyNode::Kind::Append;
+                node.recordBase = recipe->recordBase;
+                if (recipe->previous) { node.previous = positions.at(recipe->previous.get()); }
+            }
+        } else {
+            if (recipe->previous || recipe->pieces.empty()) { return failure(); }
+            node.arena = recipe->arena;
+            node.outer = recipe->outer;
+            node.pieces = recipe->pieces;
+            for (const auto& shared : recipe->shared) { node.shared.push_back(shared.expression); }
+            for (std::size_t i = 0; i < recipe->pieces.size(); ++i) {
+                const bool numerical = !recipe->arena ||
+                    (i < recipe->selectors.size() && bool(recipe->selectors[i]));
+                node.numerical.push_back(numerical);
+                ContextualEndpointFamily family;
+                family.piece = recipe->pieces[i];
+                if (!numerical) {
+                    if (i >= recipe->bindings.size()) { return failure(); }
+                    const auto& binding = recipe->bindings[i];
+                    if (!binding.activity) { return failure(); }
+                    family.activity = cutExpressionRoot(*binding.activity);
+                    if (binding.ordinal) { family.ordinal = cutExpressionRoot(*binding.ordinal); }
+                    if (binding.residueCoordinate) {
+                        family.residueCoordinate = cutExpressionRoot(*binding.residueCoordinate);
+                        family.modulus = binding.modulus; family.residue = binding.residue;
+                    }
+                    for (const auto& coordinate : binding.matchingCoordinates) {
+                        family.matchingCoordinates.push_back(cutExpressionRoot(*coordinate));
+                    }
+                }
+                node.bindings.push_back(std::move(family));
+            }
+        }
+        positions.emplace(recipe, result.size());
+        result.push_back(std::move(node));
+    }
+    return result;
+}
+FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> restoreDeferredFamilyRecipe(
+    ArrayRef<DeferredFamilyNode> nodes)
+{
+    std::vector<std::shared_ptr<const FamilyEndpointRecipe>> restored;
+    for (const auto& node : nodes) {
+        auto reference = [&](int64_t id) -> std::shared_ptr<const FamilyEndpointRecipe> {
+            return id >= 0 && static_cast<uint64_t>(id) < restored.size() ? restored[id] : nullptr;
+        };
+        if (node.kind != DeferredFamilyNode::Kind::Leaf) {
+            auto child = reference(node.child);
+            if (!child || node.outer || !node.pieces.empty() || !node.bindings.empty() ||
+                !node.numerical.empty() || !node.shared.empty()) { return failure(); }
+            if (node.kind == DeferredFamilyNode::Kind::Append) {
+                auto previous = reference(node.previous);
+                if (node.previous != -1 && !previous) { return failure(); }
+                if (node.arena || !node.contextCuts.empty()) { return failure(); }
+                auto joined = appendFamilyEndpointRecipe(previous, child, node.recordBase, 0);
+                if (failed(joined)) { return failure(); }
+                restored.push_back(*joined);
+            } else {
+                if (!node.arena || node.previous != -1 || node.recordBase) { return failure(); }
+                auto context = std::make_shared<FamilyContextRecipe>();
+                context->kind = node.kind == DeferredFamilyNode::Kind::Invocation ?
+                    FamilyContextKind::Invocation : FamilyContextKind::Activity;
+                context->arena = node.arena;
+                auto cuts = originalFamilyCuts(*child, *context);
+                std::size_t count = 0;
+                for (const auto& [cut, nonlocal] : *cuts) {
+                    if (context->kind == FamilyContextKind::Invocation && !nonlocal) { continue; }
+                    auto found = node.contextCuts.find(cut);
+                    if (found == node.contextCuts.end() || found->second >= node.arena->size() ||
+                        node.arena->isBoolean(found->second) != (context->kind == FamilyContextKind::Activity)) {
+                        return failure();
+                    }
+                    RegionExpressions::CutEmission emission;
+                    auto binding = node.arena->prepareContextual(found->second, cut, emission);
+                    if (failed(binding)) { return failure(); }
+                    context->cuts.emplace(cut, std::move(*binding));
+                    ++count;
+                }
+                if (count != node.contextCuts.size()) { return failure(); }
+                auto recipe = std::make_shared<FamilyEndpointRecipe>();
+                recipe->maximumRecord = child->maximumRecord;
+                recipe->maximumEndpointIndex = child->maximumEndpointIndex;
+                recipe->pieceCount = child->pieceCount;
+                recipe->originalCuts = std::move(cuts);
+                recipe->child = std::move(child);
+                recipe->context = std::move(context);
+                restored.push_back(std::move(recipe));
+            }
+            continue;
+        }
+        if (node.child != -1 || node.previous != -1 || node.recordBase || !node.contextCuts.empty() ||
+            node.pieces.empty() || node.bindings.size() != node.pieces.size() ||
+            node.numerical.size() != node.pieces.size()) { return failure(); }
+        if (!node.arena) {
+            if (!node.shared.empty() || llvm::any_of(node.numerical, [](uint8_t value) { return value != 1; })) {
+                return failure();
+            }
+            auto recipe = restoreNumericalFamilyRecipe({node.outer, node.pieces});
+            if (failed(recipe)) { return failure(); }
+            restored.push_back(*recipe);
+            continue;
+        }
+        std::vector<ContextualEndpointFamily> residual;
+        for (std::size_t i = 0; i < node.pieces.size(); ++i) {
+            if (node.numerical[i] > 1) { return failure(); }
+            if (!node.numerical[i]) {
+                auto binding = node.bindings[i]; binding.piece = node.pieces[i];
+                residual.push_back(std::move(binding));
+            }
+        }
+        std::shared_ptr<const FamilyEndpointRecipe> contextual;
+        if (!residual.empty()) {
+            auto prepared = buildContextualFamilyEndpointRecipe(node.arena, residual, node.shared);
+            if (failed(prepared)) { return failure(); }
+            contextual = *prepared;
+        } else if (!node.shared.empty()) { return failure(); }
+        auto recipe = std::make_shared<FamilyEndpointRecipe>();
+        recipe->arena = node.arena; recipe->outer = node.outer; recipe->pieces = node.pieces;
+        recipe->pieceCount = node.pieces.size();
+        if (contextual) { recipe->shared = contextual->shared; }
+        std::size_t residualIndex = 0;
+        for (std::size_t i = 0; i < node.pieces.size(); ++i) {
+            const auto& piece = node.pieces[i];
+            if (node.numerical[i]) {
+                if (!node.outer && piece.displacement) { return failure(); }
+                auto selection = buildPieceSelector(piece);
+                if (!selection.error.empty()) { return failure(); }
+                recipe->selectors.push_back(std::move(selection.recipe)); recipe->bindings.emplace_back();
+            } else {
+                recipe->selectors.push_back(nullptr);
+                recipe->bindings.push_back(contextual->bindings[residualIndex++]);
+            }
+            recipe->cuts.push_back({piece.cut, {}});
+            recipe->maximumRecord = std::max(recipe->maximumRecord, piece.namespaceId);
+            for (const auto& member : piece.members) {
+                recipe->maximumRecord = std::max(recipe->maximumRecord, member.record);
+            }
+        }
+        if (llvm::none_of(node.numerical, [](uint8_t value) { return value != 0; })) {
+            recipe->selectors.clear();
+        }
+        restored.push_back(std::move(recipe));
+    }
+    if (restored.empty()) { return failure(); }
+    return restored.back();
+}
 std::shared_ptr<const FamilyEndpointRecipe> familyRecipeForComposition(
     std::shared_ptr<const FamilyEndpointRecipe> recipe)
 {
@@ -1227,7 +1979,7 @@ ArrayRef<uint64_t> normalizedFamilyProtocolKey(const FamilyEndpointRecipe& recip
 bool validFamilyEndpointProtocol(const PreparedLogicalPlan& plan)
 {
     if (!plan.familyProtocol) {
-        return !plan.physicalOutput;
+        return !plan.physicalOutput && !plan.executedOutput;
     }
     if (!plan.familyProtocol->normalized) {
         return false;
@@ -1270,39 +2022,62 @@ LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPla
     if (plan.privateState) {
         return plan.privateState->requestPhysical(function, plan, eligibleIds);
     }
-    if (plan.physicalOutput || plan.completionOwner || !plan.familyRecipe || !plan.allocationCertificate ||
-        failed(preflightPhysicalOutput(function, plan.allocationCertificate)) ||
-        failed(normalizeFamilyEndpointPlan(plan))) {
-        return failure();
+    auto strategy = plan.allocationCertificate ?
+        plan.allocationCertificate.getAs<StringAttr>("strategy") : StringAttr{};
+    if (strategy && strategy.getValue() == "executed-family-counters") {
+        if (!function || !plan.familyRecipe || failed(normalizeFamilyEndpointPlan(plan))) { return failure(); }
+        // This route currently admits the arithmetic producer's contextual
+        // leaves. No numerical selector or invocation wrapper is approximated.
+        for (const auto& contribution : plan.familyRecipe->normalized->stream) {
+            const auto* leaf = contribution.leaf;
+            if (!leaf || contribution.contextPath != SIZE_MAX || !leaf->arena || !leaf->shared.empty() ||
+                !leaf->selectors.empty() || llvm::any_of(leaf->pieces, [](const auto& piece) {
+                    return piece.members.size() != 1;
+                })) {
+                return function.emitError("executed output requires contextual singleton arithmetic recipes");
+            }
+        }
+        return planExecutedFamilyOutput(function, plan, eligibleIds);
     }
+    auto refuse = [&](StringRef stage, Operation* cut = nullptr) -> InFlightDiagnostic {
+        auto diagnostic = emitError(cut ? cut->getLoc() : function.getLoc());
+        diagnostic << "combined physical mapping: " << stage;
+        return diagnostic;
+    };
+    if (plan.physicalOutput || plan.completionOwner || !plan.familyRecipe || !plan.allocationCertificate) {
+        return refuse("unsupported plan state") << " (physical=" << bool(plan.physicalOutput)
+            << ", completion=" << bool(plan.completionOwner) << ", recipe=" << bool(plan.familyRecipe)
+            << ", certificate=" << bool(plan.allocationCertificate) << ")";
+    }
+    if (failed(preflightPhysicalOutput(function, plan.allocationCertificate))) { return failure(); }
+    if (failed(normalizeFamilyEndpointPlan(plan))) { return refuse("protocol normalization failed"); }
     std::set<int64_t> pool;
     for (auto id : eligibleIds) {
         if (id < 0 || id > 5 || !pool.insert(id).second) {
-            return failure();
+            return refuse("invalid or duplicate eligible ID") << ": " << id;
         }
     }
-    if (pool.empty()) {
-        return failure();
-    }
+    if (pool.empty()) { return refuse("empty eligible ID pool"); }
     auto decoded = decodePhysicalAllocationCertificate(function, plan.allocationCertificate, eligibleIds);
-    if (failed(decoded) || decoded->planId != plan.planId) {
-        return failure();
+    if (failed(decoded)) { return refuse("allocation certificate decoding failed"); }
+    if (decoded->planId != plan.planId) {
+        return refuse("allocation plan identity mismatch") << ": certificate=" << decoded->planId
+            << ", prepared=" << plan.planId;
     }
     auto arities = familyMatchingArities(*plan.familyRecipe);
-    if (failed(arities)) {
-        return failure();
-    }
+    if (failed(arities)) { return refuse("inconsistent deferred matching arities"); }
     for (const auto& endpoint : plan.endpoints) {
-        if (endpoint.kind == LogicalCommandKind::Barrier) {
-            continue;
-        }
+        if (endpoint.kind == LogicalCommandKind::Barrier) { continue; }
         if (endpoint.memberCoordinates.empty()) {
-            return failure();
+            return refuse("concrete endpoint has no matching tuple", endpoint.before)
+                << " (record=" << endpoint.record << ")";
         }
         for (auto record : endpoint.records) {
             auto [found, added] = arities->emplace(record, endpoint.memberCoordinates.size());
             if (!added && found->second != endpoint.memberCoordinates.size()) {
-                return failure();
+                return refuse("concrete/deferred matching arity mismatch", endpoint.before)
+                    << " (record=" << record << ", retained=" << found->second
+                    << ", concrete=" << endpoint.memberCoordinates.size() << ")";
             }
         }
     }
@@ -1315,6 +2090,7 @@ LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPla
         std::map<uint32_t, const PhysicalRecordAllocation*> records;
         for (const auto& record : allocation.records) {
             if (record.record < 0 || record.record > UINT32_MAX || !records.emplace(record.record, &record).second) {
+                refuse("invalid or duplicate allocation record") << ": " << record.record;
                 return failure();
             }
         }
@@ -1326,18 +2102,35 @@ LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPla
             for (auto label : labels) {
                 auto found = records.find(label);
                 auto shape = arities->find(label);
-                if (found == records.end() || shape == arities->end() || found->second->sourcePipe != source ||
-                    found->second->targetPipe != target || (arity && *arity != shape->second)) {
+                if (found == records.end() || shape == arities->end()) {
+                    refuse("missing allocation record or matching arity", cut) << " (record=" << label
+                        << ", allocation=" << (found != records.end()) << ", arity=" << (shape != arities->end())
+                        << ")";
+                    return failure();
+                }
+                if (found->second->sourcePipe != source || found->second->targetPipe != target) {
+                    refuse("allocation direction mismatch", cut) << " (record=" << label
+                        << ", endpoint=" << source << "->" << target << ", allocation="
+                        << found->second->sourcePipe << "->" << found->second->targetPipe << ")";
+                    return failure();
+                }
+                if (arity && *arity != shape->second) {
+                    refuse("endpoint members have different matching arities", cut)
+                        << " (record=" << label << ", first=" << *arity << ", member=" << shape->second << ")";
                     return failure();
                 }
                 arity = shape->second;
                 members.push_back(*found->second);
             }
             if (!arity) {
+                refuse("endpoint has no original records", cut);
                 return failure();
             }
             auto planned = planPhysicalEndpointMap(cut, members, points, *arity, plan.nestedIdentities, dominance);
             if (failed(planned)) {
+                refuse("endpoint map construction failed", cut) << " (first record=" << labels.front()
+                    << ", members=" << labels.size() << ", arity=" << *arity
+                    << ", nested=" << plan.nestedIdentities << ")";
                 return failure();
             }
             for (auto record : labels) {
@@ -1346,6 +2139,8 @@ LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPla
                              std::make_tuple(cut, kind, record),
                              PhysicalFamilyOutput::Binding{source, target, *planned})
                          .second) {
+                    refuse("duplicate original-record binding at command cut", cut)
+                        << " (record=" << record << ", kind=" << static_cast<unsigned>(kind) << ")";
                     return failure();
                 }
             }
@@ -1366,6 +2161,8 @@ LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPla
             for (auto record : endpoint.records) {
                 auto found = provenance.find(record);
                 if (found == provenance.end()) {
+                    refuse("concrete endpoint lacks family provenance", endpoint.before)
+                        << " (record=" << record << ")";
                     return failure();
                 }
                 points.push_back(
@@ -1411,49 +2208,97 @@ LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPla
     if (failed(incumbent)) {
         return failure();
     }
-    auto cost = [](const PhysicalFamilyOutput& output) -> std::optional<uint64_t> {
-        uint64_t total = 0;
-        auto add = [&](const auto& map) {
-            if (!map) {
-                return true;
+    auto compare = [&](const PhysicalFamilyOutput& before, const PhysicalFamilyOutput& after)
+        -> std::optional<std::pair<uint64_t, uint64_t>> {
+        // The fallback suffix comparison requires unchanged command sites.
+        // Owned complete footprints below share the actual normalization and
+        // account for allocation-dependent compaction before counting maps.
+        auto uniqueSites = [](const PhysicalFamilyOutput& output) {
+            std::map<std::pair<Operation*, LogicalCommandKind>, const PhysicalEndpointMap*> sites;
+            for (const auto& [key, binding] : output.bindings) {
+                auto [entry, added] = sites.emplace(
+                    std::make_pair(std::get<0>(key), std::get<1>(key)), binding.mapping.get());
+                if (!added && entry->second != binding.mapping.get()) { return false; }
             }
-            auto value = physicalMapCost(*map);
-            if (!value || *value > uint64_t(INT64_MAX) - total) {
-                return false;
-            }
-            total += *value;
             return true;
         };
-        for (const auto& map : output.concrete) {
-            if (!add(map)) {
-                return std::nullopt;
-            }
+        if (before.protocol != after.protocol || before.concrete.size() != after.concrete.size() ||
+            before.deferred.size() != after.deferred.size()) { return std::nullopt; }
+        const bool ownedPreparation = !plan.privateState && !plan.executedOutput &&
+            plan.preparation.empty() && plan.endpoints.empty();
+        const bool sharedSelectors = ownedPreparation && plan.familyRecipe && !plan.allocationPreparation;
+        const auto oldComplete = ownedPreparation ?
+            ownedPhysicalConstruction(before, sharedSelectors) : std::nullopt;
+        const auto newComplete = ownedPreparation ?
+            ownedPhysicalConstruction(after, sharedSelectors) : std::nullopt;
+        if (oldComplete && newComplete) {
+            accumulateCost(plan.mappingWork.completeFootprints, 1);
+            return std::make_pair(*oldComplete, *newComplete);
         }
-        for (const auto& [contribution, maps] : output.deferred) {
-            (void)contribution;
-            for (const auto& map : maps) {
-                if (!add(map)) {
-                    return std::nullopt;
+        accumulateCost(plan.mappingWork.unavailablePreparation, 1);
+        if (!uniqueSites(before) || !uniqueSites(after)) {
+            accumulateCost(plan.mappingWork.unknownCoalescing, 1);
+            return std::nullopt;
+        }
+        uint64_t oldCost = 0, newCost = 0;
+        auto add = [&](const auto& a, const auto& b) {
+            if (!a || !b) { return !a && !b; }
+            PhysicalMapComparisonKind kind;
+            auto costs = comparePhysicalMapConstruction(*a, *b, &kind);
+            if (kind == PhysicalMapComparisonKind::ExactFootprint) {
+                accumulateCost(plan.mappingWork.exactFootprints, 1);
+            } else if (kind == PhysicalMapComparisonKind::InputDominance) {
+                // Fewer consumers can split a shared guard union into several
+                // groups. Only the complete schedule accounts for the new OR
+                // and fallback work; a map suffix alone cannot cancel it.
+                if (sharedSelectors) {
+                    accumulateCost(plan.mappingWork.unknownInputs, 1);
+                    return false;
                 }
+                accumulateCost(plan.mappingWork.inputDominance, 1);
+            } else { accumulateCost(plan.mappingWork.unknownInputs, 1); }
+            if (!costs || costs->first > uint64_t(INT64_MAX) - oldCost ||
+                costs->second > uint64_t(INT64_MAX) - newCost) { return false; }
+            oldCost += costs->first;
+            newCost += costs->second;
+            return true;
+        };
+        if (before.protocol != after.protocol || before.concrete.size() != after.concrete.size() ||
+            before.deferred.size() != after.deferred.size()) { return std::nullopt; }
+        for (auto [a, b] : llvm::zip(before.concrete, after.concrete)) {
+            if (!add(a, b)) { return std::nullopt; }
+        }
+        for (const auto& [contribution, maps] : before.deferred) {
+            auto found = after.deferred.find(contribution);
+            if (found == after.deferred.end() || maps.size() != found->second.size()) { return std::nullopt; }
+            for (auto [a, b] : llvm::zip(maps, found->second)) {
+                if (!add(a, b)) { return std::nullopt; }
             }
         }
-        return total;
+        // Identical live input masks cancel the exact frozen guard, wrapper,
+        // shared-root, cofactor, replay and integer-expression preparation. Map
+        // selectors/dispatch use their isolated common construction schedule.
+        // The residual dominance subclass may only remove upstream inputs and
+        // does not count assumed exclusive savings. Multiple contributions at
+        // one physical site remain unknown because they may coalesce differently.
+        return std::make_pair(oldCost, newCost);
     };
-    // Both candidates carry independent producer certificates. The secondary
-    // estimate cannot authorize a new assignment or change the logical protocol.
-    if (auto alternative = plan.allocationCertificate.getAs<DictionaryAttr>("regular_candidate");
-        alternative && physicalCandidateFits(alternative, eligibleIds.size())) {
+    // Every alternative already carries a completed parent certificate. This
+    // comparison requests neither summary construction nor reuse proofs.
+    auto alternatives = certifiedAllocationCandidates(plan.allocationCertificate);
+    if (failed(alternatives)) { return refuse("malformed completed allocation candidate inventory"); }
+    for (auto alternative : *alternatives) {
         FailureOr<std::shared_ptr<PhysicalFamilyOutput>> other = failure();
         {
             ScopedDiagnosticHandler optionalDiagnostics(function.getContext(), [](Diagnostic&) { return success(); });
             auto candidate = decodePhysicalAllocationCertificate(function, alternative, eligibleIds);
-            if (succeeded(candidate) && candidate->planId == plan.planId) {
-                other = build(*candidate);
-            }
+            if (succeeded(candidate) && candidate->planId == plan.planId) { other = build(*candidate); }
         }
         if (succeeded(other)) {
-            const auto oldCost = cost(**incumbent), newCost = cost(**other);
-            if (oldCost && newCost && *newCost < *oldCost) {
+            accumulateCost(plan.mappingWork.candidates, 1);
+            const auto costs = compare(**incumbent, **other);
+            if (costs && costs->second < costs->first) {
+                accumulateCost(plan.mappingWork.selected, 1);
                 incumbent = std::move(other);
             }
         }
@@ -1461,9 +2306,17 @@ LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPla
     plan.physicalOutput = std::move(*incumbent);
     return success();
 }
+std::optional<uint64_t> physicalFamilyConstructionOperations(const PreparedLogicalPlan& plan)
+{
+    if (!validFamilyEndpointProtocol(plan) || !validPhysicalFamilyOutput(plan) || !plan.physicalOutput ||
+        plan.executedOutput || plan.privateState || plan.completionOwner || !plan.preparation.empty() ||
+        !plan.endpoints.empty()) { return std::nullopt; }
+    return ownedPhysicalConstruction(*plan.physicalOutput, plan.familyRecipe && !plan.allocationPreparation);
+}
 LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared)
 {
-    if (!validFamilyEndpointProtocol(prepared) || !validPhysicalFamilyOutput(prepared) || !recipe.normalized ||
+    if (!validFamilyEndpointProtocol(prepared) || !validPhysicalFamilyOutput(prepared) ||
+        !validExecutedFamilyOutput(prepared) || !recipe.normalized ||
         prepared.familyWork.materializations) {
         return failure();
     }
@@ -1528,7 +2381,9 @@ LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, 
                        *contribution.leaf, lowered, contribution.recordBase, namespaces, materialization,
                        prepared.physicalOutput ? ArrayRef<std::shared_ptr<const PhysicalEndpointMap>>(
                                                      prepared.physicalOutput->deferred.at(&contribution)) :
-                                                 ArrayRef<std::shared_ptr<const PhysicalEndpointMap>>{})
+                                                 ArrayRef<std::shared_ptr<const PhysicalEndpointMap>>{},
+                       contribution.contextPath == SIZE_MAX ? 0 : contexts[contribution.contextPath].invocationDepth,
+                       bool(prepared.executedOutput))
                        .run())) {
             return failure();
         }
@@ -1543,24 +2398,9 @@ LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, 
     }
     // Only pending cleanup witnesses need a final guard binding. Index their
     // record/cut requests once instead of scanning all endpoints per family.
-    std::map<std::pair<uint32_t, Operation*>, Value> primaryGuards;
-    for (const auto& family : prepared.families) {
-        if (!family.targetChoices || !family.targetChoices->pendingMaterialization()) { continue; }
-        if (!family.targetChoices->validPendingSelection() || family.members.size() != 1) { return failure(); }
-        if (!primaryGuards.emplace(std::make_pair(family.members.front().record, family.targetCut.before),
-                                   Value()).second) { return failure(); }
-    }
-    if (!primaryGuards.empty()) {
-        for (const auto& endpoint : lowered.endpoints) {
-            if (endpoint.kind != LogicalCommandKind::Wait) { continue; }
-            for (auto record : endpoint.records) {
-                auto found = primaryGuards.find({record, endpoint.before});
-                if (found == primaryGuards.end()) { continue; }
-                if (found->second) { return failure(); }
-                found->second = endpoint.guard;
-            }
-        }
-    }
+    auto pendingGuards = pendingCleanupGuards<PreparedLogicalEndpoint>(prepared.families, lowered.endpoints);
+    if (failed(pendingGuards)) { return failure(); }
+    const auto& primaryGuards = *pendingGuards;
     std::vector<std::pair<std::size_t, std::shared_ptr<const EndpointCutChoices>>> resolvedChoices;
     for (std::size_t f = 0; f < prepared.families.size(); ++f) {
         const auto& family = prepared.families[f];

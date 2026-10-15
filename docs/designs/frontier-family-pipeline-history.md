@@ -2879,3 +2879,241 @@ manifest `111e4a77b4b494b560c6bf9e18df6a0551a747b88645c02d3f5bbabe3d4638e3`
 and every referenced receipt hash, and accepted B6 for compiler/oracle closure.
 B1–B6 are accepted within their documented qualifying contracts. The unresolved
 capabilities and device qualification above are not reclassified as completed.
+
+## Construction checkpoint status preserved before milestone loop
+
+Local checkpoint receipts are in `.local/production-closure-m1/` and
+`.local/production-closure-m2/`; new construction receipts are in
+`.local/construction-first/`. Accepted implementation, successful kernel
+compilation and resolved capacity are independent outcomes. GroupNorm reviews
+read existing evidence; the old receipts do not pin the current changing source.
+
+The construction checkpoint now includes immutable threshold preparation within
+unchanged root, lazy branch specialization, ordered cycle products and exact
+fixed-point power truncation. Threshold specialization node visits are independent
+of an unaffected branch's size in the 4/16/32-threshold fixtures. The newest source caches
+immutable topology and reached-family dependencies across calls, evicting removed
+roots on rollback. Its refreshed build, 18 focused checks and ordered 49/22/11
+campaigns pass at the previously reached stages. A packed-storage follow-up is
+validated because the cache increased Delta peak memory; its paired run still
+shows additional memory and no timing improvement. Exact same-occurrence tail
+pruning also passes focused checks. A further immutable projection-cache identity
+change passes its build, 19 focused checks and the ordered production campaigns
+after a prefill stack capture identified storage-selector construction. Its
+paired Delta timings show no improvement, and prefill remains unfinished at the
+watchdog. Prefill has
+exclusive relational-work profiling, factored source-order construction and exact
+lifted containment. Both retained/new containment runs hit the 120-second
+watchdog, so no timing or capacity improvement is claimed.
+
+Sequence crossing consolidation now qualifies dynamic coordinates for singleton
+children using certified child order, preserving the exact residual path for
+unqualified groups. Identical successful requests retain their exact selection
+before candidate traversal; mutable preparation remains fresh. Periodic ranking
+uses shared core-scan/generic-graph structural counts. Full unbuilt-capability
+ranking and changed-coordinate sequence upgrades remain open.
+
+Decode has a checked fixed-protocol trace fixture and an optional replay against
+current logical output. The bound explicitly excludes an automatic textual
+SET-to-WAIT edge. Event-free child qualification now separates empty event-resource
+ownership from completed payloads and uses summary-only SCC transfer to retain
+pending effects. It refuses any additional internal completion requirement;
+pending eventful children still require a broader resource contract.
+
+Validation receipts before the forced compilation-input refresh are historical
+binary observations: a preserved source timestamp left one object stale. They
+cannot establish final-source acceptance or speedup. The refreshed S1/S2 builds and
+18 focused checks passed; S1 ordered campaigns passed 49+22 modules at logical
+and allocation stages and generated C++ for 8/11 prepared kernels. S3 and S4 repeat
+those outcomes; S6 repeats them with 19 focused checks. Broad synchronization
+coverage finishes with 198 passes, 28 failures and two watchdogs. Baseline probes
+attribute reached failure stages; later skipped checks, the standalone recognizer's
+pre-S1 baseline and historical guard-equivalence gaps remain open. Harness failures
+are recorded separately from test results. No full
+milestone is marked complete.
+
+## Milestone-loop guard and construction investigations
+
+The three archived `decode_build_swa_metadata` guard investigations above now
+have a qualified result. The independent diagnostic in
+`.local/milestone-loop/guard-equivalence/` proves all eight parsed actions for
+each of cases 168, 249 and 350. Its controls pass 8,248 comparisons against a
+concrete small-width oracle and signed-cast, undefined-division, loop-wrap and
+complement controls. Every proof preserves the parsed expression arena; each
+case finishes in about 1.2 seconds. Correctness and architecture reviewers
+accept equality only on valuations where **both artifacts' evaluated arithmetic
+is defined**, under the archived 64-bit index layout. This does not establish
+definedness equivalence, token/member equality, storage safety, a corpus-wide
+semantic proof or current-production equivalence. Input, parser and checker
+hashes are pinned in `receipt.json`; the checker hash is
+`7196c8ab8df213f99e9f3186e161adbdf7ebf5378bfb799efbae73bf90588a84`.
+The earlier open status remains an accurate account of the earlier campaign.
+
+The upgrade snapshot in `.local/milestone-loop/upgrade/` completes Delta logical
+analysis in 17.36 seconds, with 208,060 constructed and live operations in its
+largest incoming root. This is one diagnostic run, not a paired speedup result.
+Its detailed lineage connects 55 query aliases to that root: 25 source/source,
+23 completion/completion and seven completion/source queries. The seven residual
+queries connect completion of `tadd` at original operation 247 to issue of
+`tstore` at 263. Alias counts are not exclusive construction costs. They motivate
+a compile-time mandatory-transport certificate while the exact residual query
+path remains available.
+
+Prefill still reaches the upgrade snapshot's 120-second logical-analysis
+watchdog. A separately bounded stack sample reaches integer projection during
+primitive import for regional export. The preceding qualified snapshot sampled
+relational difference during general arithmetic completion. These observations
+locate unfinished work; they neither prove a speedup nor show that the coordinate
+allocation formula is unavailable. The four historical two-ID family proofs and
+the unfinished `11 → 56` composition retain their original scope. The current
+selective-import source change omits only relations unused by storage exports;
+its runtime and production evidence remain pending.
+
+
+The ownership snapshot continues the implementation loop with source acceptance
+from both reviewers for immutable allocation-policy ownership, retained selection
+services, explicit and difference-arithmetic producer migration, contextual recipe
+serialization, shared executed counters and shared-root liveness. Its priority
+production and test objects compile; the complete build and focused runtime gate
+remain pending. The build now selects the active workspace's Python 3.12.13
+environment, with the same cached NumPy 2.5.3 and pybind11 2.13.6 versions used by
+the previous environment. This configuration correction does not change the
+frozen source snapshot.
+
+Two subsequent source batches also have both reviews: exact scalar construction
+counts for stateless mappings with comparable upstream inputs, and owned terminal
+cleanup recipes in schema 3. Their receipts are separate from the ownership
+snapshot, and neither has yet passed compilation or runtime validation. The
+mapping count measures constructed scalar operations before CSE, rather than
+final live code or device latency; unsupported input/coalescing comparisons retain
+the certified incumbent. Schema 3 covers qualified singleton target cleanup at
+the original consumer or terminal return cut, rechecks multiplicity and the actual
+consumer guard, and preserves precise refusals for other choice contracts.
+
+
+After resumption, the complete ownership build passes. Its first focused run
+executes 38 tests: 26 pass and 12 fail. The receipts preserve this failed gate
+before any repair. The coordinate integration failure rejects the required
+whole-invocation terminal ALL drain; both reviewers accept a test correction
+that requires exactly that drain and rejects all internal or additional drains.
+The full executed-counter test then passes, including real coordinate access,
+parent sharing, policy isolation and the migrated arithmetic routes. This is
+local implementation validation; it supplies no device-kernel compilation.
+
+Serial alternating Delta probes compare the same coordinate-allocation policy.
+Historical times are 17.506, 18.610 and 19.661 seconds; ownership times are
+17.407, 17.458 and 18.559 seconds. The corresponding medians are 18.610 and
+17.458 seconds. Constructed/live arithmetic falls from 456,242 to 456,052; the
+largest incoming recipe falls from 208,060 to 207,976. These small structural
+changes do not close the large incoming-root investigation. Both prefill probes
+reach their 120-second watchdog. The bounded ownership debugger sample now
+reaches union-difference arrangement and repeated exact integer feasibility
+during general arithmetic completion, rather than the earlier primitive-import
+projection. The sample identifies current unfinished work, not an allocation
+impossibility or a successful prefill compilation.
+
+The next frozen recipe snapshot has 127 hashed source files. It incorporates
+source-reviewed owned scalar construction schedules, correlated-choice queries,
+capture restriction, identity continuation ranking, qualified cleanup and
+function-owned source/cut directories. The latter repair default printing of
+implicit SCF terminators; numerical yield-cut recipes select the existing owned
+v2 format before emission, while legacy v1 decoding remains. Full compilation
+and runtime gates are still pending for this snapshot. Subsequent coalescing
+and feasibility-ranking batches remain separate, source-reviewed changes.
+
+
+The 127-file recipe snapshot completes its full native build and focused gate:
+31 of 40 tests pass. Identity continuation, shared construction counts, executed
+counters, consumed captures, correlated sequence queries and qualified cleanup
+pass their focused tests. Saved CLI artifacts pass directory restoration but
+then fail local-family cut validation; their exact original source cut needs an
+owned metadata binding. The other failures distinguish unincorporated reviewed
+coalescing/fixture repairs, a stale selected-backend expectation, a test comparing
+indexes across compact/expanded representations, lost originating capabilities
+in new identity-child selection, and a finite-visit producer refusal for lack of
+a common persistent refresh set. Exact commands, source/tool hashes and all nine
+failure attributions are preserved under `.local/milestone-loop/recipes/`.
+These results establish neither a passing milestone gate nor device compilation.
+
+The next 130-file refinement snapshot includes reviewed command coalescing,
+bounded exact-feasibility ranking, identity capability propagation and fixture
+repairs. Its first build rejects an incorrect enum spelling in identity request
+propagation (`Exact` instead of the existing `MinimumExact`). The failed log is
+retained before correction; no test result is inferred from that build. The
+separate construction-trace implementation remains outside this snapshot.
+
+The finite-visit fixture's exact SHA256 also appears in the retained S6 baseline
+receipts, where the same child-retention assertion already fails. The old run
+does not contain today's producer-stage diagnostic, so it does not establish
+the same internal cause. Current qualification refuses to infer a common
+persistent refresh set; its contract and fixture are unchanged. The scoped
+attribution and historical tool/input pins are recorded in
+`.local/milestone-loop/finite-visit-attribution.json`.
+
+The 130-file refinement snapshot passes its corrected full native build and
+32 of 40 focused tests. Arithmetic command emission, bounded-feasibility scaling
+and the new warm/cold identity-capability regressions pass. Later reached tests
+expose a fresh arithmetic recipe owner defeating allocation-cache reuse and a
+multiple-record executed-counter route failure. Saved local-source restoration,
+canonical numerical occurrence comparisons and precise bounded-session
+diagnostics are staged separately for the next execution gate.
+
+Three serial alternating Delta pairs compare the ownership and refinement
+snapshots with the same explicit coordinate policy. Medians are 19.512 and
+19.763 seconds; constructed arithmetic is 456,052 and 456,031. This does not
+demonstrate a speedup or resolve the incoming-root investigation. Both prefill
+runs reach the same 120-second logical watchdog. Source/tool profiles and all
+stage receipts remain under `.local/milestone-loop/refinements/`.
+
+Fresh decode generation and witness replay pass against the pinned refinement
+binary. Delta's replay initially rejects changed scalar-work instrumentation:
+payload and command events are identical, but total/arithmetic/select visit
+counters fall by 211/211/48. An independently checked fresh command graph still
+establishes the unchanged 46 mutually non-reusable V→MTE3 handoffs and the
+45-WAIT batch antichain. The archived fixture remains unchanged. A narrowly
+reviewed replay comparison must preserve exact events, all non-counter fields
+and capacity while allowing these three observational work counters to vary.
+Neither witness establishes a hardware-wide bound or device compilation.
+
+The counter-aware replay comparison has both source reviews and passes fresh
+decode and Delta replay. It ignores only the three measured scalar-work counters,
+retains exact ordered events and every other trace field (including unknown
+fields), and rechecks identical capacity results. Negative controls reject
+changed command gaps, pipes, records, source ordinals, event order, errors and
+payload counts. The archived fixtures are unchanged.
+
+Fresh GroupNorm logical and split output also pass. All eight selected
+core/subblock traces preserve original logical events and independently certify
+six-ID reuse. Combined output and saved-artifact restoration both refuse record
+47's physical palette as duplicate ID0; that shared map conversion remains open.
+These results preserve the partial allocation checkpoint rather than closing
+combined lowering or device compilation.
+
+The local-source repair passes all three saved/contextual/mixed CLI roundtrips
+with six invocation traces each once the harness selects the workspace Python
+and the input's required level3 pipeline. Earlier refusal checks instead reached
+a Python ABI/import error, or explicit-address rejection at the default level.
+The existing deferred-artifact compiler refusal already works with the correct
+invocation; no production compiler preflight change is needed.
+
+
+## Consolidated construction and lowering runtime gate
+
+The [reviewed checkpoint](frontier-reviewed-construction-checkpoint.md) pins 174
+source inputs in `.local/milestone-loop/checkpoint-family-directory/`. Its final
+focused gate passes 46/46 tests; the failed-first gate passes all five former
+failures. The full native incremental build passed before the test-only repairs;
+subsequent builds compiled only the affected test executable. No kernel or device
+compilation is implied.
+
+The gate exposed a production lowering regression: result-bearing shared guards
+hid literal record provenance. Both construction routes now retain those literals.
+Later failures identified malformed fixture contracts, stale block ownership after
+transactional allocation, and incomplete independent interpreters. Repairs retain
+strict production admission and require exact command, tuple, cost and refusal
+checks. Independent fixtures now report all reached failures in one run.
+
+Earlier failed receipts remain pinned to their binaries. This focused acceptance
+does not refresh the ordered production campaigns, close prefill, establish
+GroupNorm combined output, resolve definedness equivalence, or demonstrate a
+construction speedup. Those outcomes remain separate and open.

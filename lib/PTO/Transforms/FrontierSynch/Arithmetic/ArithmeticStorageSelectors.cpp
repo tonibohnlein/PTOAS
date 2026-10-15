@@ -32,8 +32,9 @@ public:
     }
     ArithmeticStorageSelectors result;
     LogicalResult run();
-    LogicalResult import(bool occurrencesOnly = false);
+    LogicalResult import(ArithmeticPrimitiveRequest request);
     IntegerProjectionCache numericalQueries;
+    uint64_t blockerRequests = 0, emptyOrderSkips = 0;
     std::vector<Piece> ownedPieces;
     llvm::ArrayRef<Piece> pieces;
 private:
@@ -146,14 +147,17 @@ FailureOr<std::vector<Piece>> Builder::importPiece(const NormalizedPiece& normal
     }
     return imported;
 }
-LogicalResult Builder::import(bool occurrencesOnly)
+LogicalResult Builder::import(ArithmeticPrimitiveRequest request)
 {
     std::vector<Piece> raw;
     for (const auto& normalized : program.recognition.pieces) {
         if (normalized.empty) { continue; }
         if (normalized.relation >= program.primitives.relations.size()) { return failure(); }
         const auto kind = program.primitives.relations[normalized.relation].kind;
-        if (occurrencesOnly && kind != PrimitiveKind::Occurrences && kind != PrimitiveKind::Context) { continue; }
+        if (request == ArithmeticPrimitiveRequest::Occurrences &&
+            kind != PrimitiveKind::Occurrences && kind != PrimitiveKind::Context) { continue; }
+        if (request == ArithmeticPrimitiveRequest::Storage &&
+            (kind == PrimitiveKind::Native || kind == PrimitiveKind::Prerequisites)) { continue; }
         auto imported = importPiece(normalized);
         if (failed(imported)) { return failure(); }
         for (auto& entry : *imported) {
@@ -249,6 +253,7 @@ std::vector<std::size_t> Builder::candidates(const Piece& candidate, ArithmeticB
 // of the region-entry parameters or the queried physical byte.
 FailureOr<Systems> Builder::blockers(const Piece& candidate, const Piece& other, bool earlier, bool equal)
 {
+    accumulateCost(blockerRequests, 1);
     Systems resultPieces;
     const auto& a = *candidate.schema;
     const auto& b = *other.schema;
@@ -256,6 +261,26 @@ FailureOr<Systems> Builder::blockers(const Piece& candidate, const Piece& other,
     const unsigned tail = (storage(candidate) ? 1 : 0) + result.parameterCount;
     if (parameters(candidate) != parameters(other) || storage(candidate) != storage(other)) { return resultPieces; }
     if (storage(candidate) && (!sameStorage(candidate, other) || candidate.residues[da] != other.residues[db])) {
+        return resultPieces;
+    }
+    const bool diagonal = equal && a.sourceSite == b.sourceSite && da == db &&
+        llvm::ArrayRef<uint64_t>(candidate.residues).take_front(da) ==
+            llvm::ArrayRef<uint64_t>(other.residues).take_front(db);
+    const auto& source = earlier ? other : candidate;
+    const auto& target = earlier ? candidate : other;
+    const unsigned sourceDepth = source.schema->sourceDimensions;
+    const unsigned targetDepth = target.schema->sourceDimensions;
+    std::vector<uint64_t> orderResidues(source.residues.begin(), source.residues.begin() + sourceDepth);
+    orderResidues.insert(orderResidues.end(), target.residues.begin(), target.residues.begin() + targetDepth);
+    const auto parameterResidues = parameters(candidate);
+    orderResidues.insert(orderResidues.end(), parameterResidues.begin(), parameterResidues.end());
+    auto matching = orderIndex.find({*source.schema->sourceSite, *target.schema->sourceSite,
+                                    sourceDepth, targetDepth, std::move(orderResidues)});
+    // The complete immutable import validates schemas before this query. With
+    // neither an equal-occurrence diagonal nor an order piece, no joined tuple
+    // can block the candidate; do not construct its unused numerical products.
+    if (!diagonal && matching == orderIndex.end()) {
+        accumulateCost(emptyOrderSkips, 1);
         return resultPieces;
     }
     const unsigned dimensions = da + db + tail;
@@ -280,31 +305,19 @@ FailureOr<Systems> Builder::blockers(const Piece& candidate, const Piece& other,
         }
         return success();
     };
-    if (equal && a.sourceSite == b.sourceSite && da == db &&
-        llvm::ArrayRef<uint64_t>(candidate.residues).take_front(da) ==
-            llvm::ArrayRef<uint64_t>(other.residues).take_front(db)) {
-        SmallVector<LinearRow> diagonal;
+    if (diagonal) {
+        SmallVector<LinearRow> diagonalRows;
         for (unsigned i = 0; i < da; ++i) {
             LinearRow row;
             row.coefficients.resize(dimensions, 0);
             row.coefficients[i] = 1;
             row.coefficients[da + i] = -1;
             row.equality = true;
-            diagonal.push_back(std::move(row));
+            diagonalRows.push_back(std::move(row));
         }
-        auto identity = rows(dimensions, diagonal);
+        auto identity = rows(dimensions, diagonalRows);
         if (failed(identity) || failed(add(*identity))) { return failure(); }
     }
-    const auto& source = earlier ? other : candidate;
-    const auto& target = earlier ? candidate : other;
-    const unsigned sourceDepth = source.schema->sourceDimensions;
-    const unsigned targetDepth = target.schema->sourceDimensions;
-    std::vector<uint64_t> orderResidues(source.residues.begin(), source.residues.begin() + sourceDepth);
-    orderResidues.insert(orderResidues.end(), target.residues.begin(), target.residues.begin() + targetDepth);
-    const auto parameterResidues = parameters(candidate);
-    orderResidues.insert(orderResidues.end(), parameterResidues.begin(), parameterResidues.end());
-    auto matching = orderIndex.find({*source.schema->sourceSite, *target.schema->sourceSite,
-                                    sourceDepth, targetDepth, std::move(orderResidues)});
     if (matching == orderIndex.end()) { return resultPieces; }
     for (auto index : matching->second) {
         const auto& order = pieces[index];
@@ -460,19 +473,20 @@ LogicalResult Builder::run()
 }
 } // namespace
 FailureOr<ImportedArithmeticPrimitives> importOwnedArithmeticIntegerPieces(
-    const ArithmeticProgram& program, bool occurrencesOnly)
+    const ArithmeticProgram& program, ArithmeticPrimitiveRequest request)
 {
     if (program.extraction.state != RecognitionState::Applicable ||
         program.recognition.state != RecognitionState::Applicable || !program.primitives.period) { return failure(); }
     Builder builder(program, {});
-    if (failed(builder.import(occurrencesOnly))) { return failure(); }
-    return ImportedArithmeticPrimitives(program, occurrencesOnly, std::move(builder.ownedPieces),
+    if (failed(builder.import(request))) { return failure(); }
+    return ImportedArithmeticPrimitives(program, request, std::move(builder.ownedPieces),
                                         builder.numericalQueries.cost());
 }
 FailureOr<std::vector<ArithmeticIntegerPiece>> importArithmeticIntegerPieces(
     const ArithmeticProgram& program, bool occurrencesOnly)
 {
-    auto imported = importOwnedArithmeticIntegerPieces(program, occurrencesOnly);
+    auto imported = importOwnedArithmeticIntegerPieces(program, occurrencesOnly ?
+        ArithmeticPrimitiveRequest::Occurrences : ArithmeticPrimitiveRequest::All);
     if (failed(imported)) { return failure(); }
     return std::move(imported->values);
 }
@@ -480,7 +494,7 @@ ArithmeticStorageSelectors buildArithmeticStorageSelectorsFromImported(
     const ArithmeticProgram& program, const ImportedArithmeticPrimitives& imported,
     llvm::ArrayRef<uint32_t> sitePipes)
 {
-    if (!imported.isCompleteFor(program)) {
+    if (!imported.isCompleteForStorage(program)) {
         ArithmeticStorageSelectors result;
         result.error = "arithmetic storage selectors require a complete import of the unchanged source program";
         return result;
@@ -494,12 +508,14 @@ ArithmeticStorageSelectors buildArithmeticStorageSelectorsFromImported(
                                "and exact projections";
     }
     builder.result.cost = builder.numericalQueries.cost();
+    builder.result.cost.blockerRequests = builder.blockerRequests;
+    builder.result.cost.emptyOrderSkips = builder.emptyOrderSkips;
     return std::move(builder.result);
 }
 ArithmeticStorageSelectors buildArithmeticStorageSelectors(
     const ArithmeticProgram& program, llvm::ArrayRef<uint32_t> sitePipes)
 {
-    auto imported = importOwnedArithmeticIntegerPieces(program);
+    auto imported = importOwnedArithmeticIntegerPieces(program, ArithmeticPrimitiveRequest::Storage);
     if (failed(imported)) {
         ArithmeticStorageSelectors result;
         result.error = "arithmetic storage boundary construction requires complete valid primitives "

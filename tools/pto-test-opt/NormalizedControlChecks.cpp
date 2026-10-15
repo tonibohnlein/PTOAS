@@ -18,8 +18,11 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/FiniteExpansionPlan.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionalRelationsInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/WholeInvocationIdentity.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/DenseSet.h"
+#include "NumericalRequestOracle.h"
+#include "NumericalLogicalTraceChecks.h"
 using namespace mlir;
 LogicalResult checkCrossingCostSelection(func::FuncOp function, pto::GMAliasPolicy)
 {
@@ -227,6 +230,7 @@ LogicalResult checkProducerFailureStages(func::FuncOp function, pto::GMAliasPoli
 {
     using namespace pto::frontiersynch;
     FrontierAnalysis session(function);
+    session.enableStageProfiling();
     if (failed(session.initialize(policy))) { return failure(); }
     const bool dynamic = function->hasAttr("test.dynamic_producer_failure");
     auto first = dynamic ? session.analyzeFiniteExpansion({}) : session.analyzeNumericalRegion({});
@@ -254,6 +258,90 @@ LogicalResult checkProducerFailureStages(func::FuncOp function, pto::GMAliasPoli
             aggregate.stage != AnalysisStage::Demands) {
             return function.emitError("incomplete producer coverage lost its demand-stage obligation");
         }
+        const auto counts = session.constructionCounts();
+        const auto stages = session.diagnosticLedger()->stages.size();
+        const auto selections = session.diagnosticLedger()->selections.size();
+        const auto repeated = session.minimumDemands();
+        if (repeated.status != aggregate.status || repeated.stage != aggregate.stage ||
+            repeated.mathematical != aggregate.mathematical ||
+            repeated.obligations.size() != aggregate.obligations.size() ||
+            repeated.requestId == aggregate.requestId ||
+            session.constructionCounts().requestWalks != counts.requestWalks ||
+            session.constructionCounts().mathematicalAttempts != counts.mathematicalAttempts ||
+            session.constructionCounts().exhaustedWalkHits != counts.exhaustedWalkHits + 1 ||
+            session.diagnosticLedger()->stages.size() != stages + 1 ||
+            session.diagnosticLedger()->selections.size() != selections) {
+            return function.emitError("identical exhausted request walked cached candidate attempts");
+        }
+        for (std::size_t i = 0; i < aggregate.obligations.size(); ++i) {
+            if (repeated.obligations[i].stage != aggregate.obligations[i].stage ||
+                repeated.obligations[i].diagnostic != aggregate.obligations[i].diagnostic) {
+                return function.emitError("exhausted request changed its retained diagnostic recipe");
+            }
+        }
+    }
+    if (!dynamic && !function->hasAttr("test.unproved_outer")) {
+        AnalysisRequest stateful;
+        stateful.needs.evaluation = AnalysisEvaluation::Stateful;
+        auto refused = session.analyze(stateful);
+        const auto walks = session.constructionCounts().requestWalks;
+        auto repeated = session.analyze(stateful);
+        if (refused.status != AnalysisStatus::UnmetObligation || repeated.status != refused.status ||
+            session.constructionCounts().requestWalks != walks) {
+            return function.emitError("stateful exhausted recipe was not retained independently");
+        }
+        // The weak native answer did not request arithmetic recognition. This
+        // public audit publishes a reusable original form even though the
+        // stateful capability itself remains unavailable.
+        if (failed(session.recognizeArithmetic())) { return failure(); }
+        auto afterEvidence = session.analyze(stateful);
+        if (afterEvidence.status != refused.status ||
+            session.constructionCounts().requestWalks != walks + 1 ||
+            afterEvidence.requestId == repeated.requestId) {
+            return function.emitError("new retained form failed to invalidate an exhausted walk");
+        }
+        const auto retried = session.constructionCounts().requestWalks;
+        if (failed(session.recognizeArithmetic()) ||
+            session.analyze(stateful).status != refused.status ||
+            session.constructionCounts().requestWalks != retried) {
+            return function.emitError("unchanged retained form invalidated an exhausted walk");
+        }
+        auto fallback = stateful;
+        fallback.mode = AnalysisMode::Fallback;
+        if (session.analyze(fallback).status != refused.status ||
+            session.constructionCounts().requestWalks == retried) {
+            return function.emitError("exhausted request crossed its mode context");
+        }
+    }
+    {
+        // Exact cache key controls, including contexts that ordinary public
+        // calls cannot forge: audit, active parent and same-node continuation.
+        AnalysisSessionState cache;
+        AnalysisRequest request;
+        AnalysisOutcome refusal;
+        refusal.status = AnalysisStatus::UnmetObligation;
+        const auto key = cache.exhaustedKey(request);
+        cache.retainExhausted(key, refusal);
+        if (!cache.exhausted(key)) { return failure(); }
+        request.needs.queries = true;
+        if (cache.exhausted(cache.exhaustedKey(request))) { return failure(); }
+        request.needs.queries = false;
+        cache.certifying = true;
+        if (cache.exhausted(cache.exhaustedKey(request))) { return failure(); }
+        cache.certifying = false;
+        cache.activeRegions.push_back(1);
+        if (cache.exhausted(cache.exhaustedKey(request))) { return failure(); }
+        cache.activeRegions.clear();
+        if (cache.exhausted(cache.exhaustedKey(request, true))) { return failure(); }
+        cache.retainedEvidencePublished();
+        if (cache.exhausted(key)) { return failure(); }
+        cache.retainExhausted(key, refusal);
+        cache.retainedEvidenceGeneration = UINT64_MAX;
+        cache.retainExhausted(key, refusal);
+        cache.retainedEvidencePublished();
+        if (cache.exhausted(key) || !cache.exhaustedRequests.empty()) { return failure(); }
+        AnalysisSessionState fresh;
+        if (fresh.exhausted(key)) { return failure(); }
     }
     llvm::outs() << "producer-failure: typed form-status cached invalid-request-unresolved\n";
     return success();
@@ -314,6 +402,162 @@ LogicalResult checkPiecewiseAccessCache(func::FuncOp function, pto::GMAliasPolic
     llvm::outs() << "piecewise-access: cached exact-or-unresolved isolated-context\n";
     return success();
 }
+LogicalResult checkConditionalEndpointUpgrade(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    auto render = [&]() {
+        std::string text;
+        llvm::raw_string_ostream stream(text); function.print(stream); stream.flush(); return text;
+    };
+    const auto original = render();
+    pto::SyncInput input(policy);
+    auto index = std::make_shared<PhaseIndex>();
+    if (failed(input.build(function, pto::SyncInstructionView::PipeEnvelopes)) ||
+        failed(index->build(function, input))) { return failure(); }
+    auto program = recognizeProgram(function, input, *index, ProgramRecognitionMode::Exhaustive);
+    if (failed(program)) { return failure(); }
+    std::optional<std::size_t> conditional;
+    for (auto [id, node] : llvm::enumerate(program->nodes)) {
+        if (node.kind != StructureKind::Conditional) { continue; }
+        if (conditional) { return function.emitError("conditional upgrade fixture has multiple branches"); }
+        conditional = id;
+    }
+    if (!conditional) { return function.emitError("conditional upgrade fixture lacks a branch"); }
+    auto arena = std::make_shared<RegionExpressions>();
+    std::map<std::size_t, RegionalAnalysis> arms;
+    unsigned builds = 0, prepared = 0;
+    SequenceRegionResolver resolver;
+    resolver.region = [&](std::size_t id, bool endpoints, std::string& error) -> FailureOr<RegionalAnalysis> {
+        auto found = arms.find(id);
+        if (found == arms.end()) {
+            ++builds;
+            auto child = analyzeSequenceRegion(function, input, *program, id, arena, index, false);
+            if (!child.error.empty()) { error = child.error; return failure(); }
+            found = arms.emplace(id, sequenceRegionalResult(child)).first;
+        }
+        auto out = found->second;
+        if (endpoints) {
+            const auto owner = std::make_shared<const RegionalAnalysis>(out);
+            if (owner->prepare) {
+                out.prepare = [owner, &prepared]() { ++prepared; return owner->prepare(); };
+            }
+            if (owner->prepareWithVisits) {
+                out.prepareWithVisits = [owner, &prepared](ArrayRef<scf::ForOp> loops) {
+                    ++prepared; return owner->prepareWithVisits(loops);
+                };
+            }
+        }
+        return out;
+    };
+    auto weak = analyzeSequenceRegionWithResolver(
+        function, input, *program, *conditional, arena, index, false, resolver);
+    if (!weak.error.empty() || !weak.state || weak.state->relationalResult || weak.state->children.size() != 2 ||
+        llvm::any_of(weak.state->children, [](const Child& child) {
+            return !child.originalNode || !child.originalArmGuard;
+        })) { return function.emitError("conditional upgrade fixture lacks two original guarded arm owners"); }
+    const auto old = weak.state;
+    const auto nodes = arena->size();
+    const auto childBuilds = builds;
+    auto upgraded = upgradeSequenceEndpoints(weak, *conditional, resolver);
+    if (!upgraded || !upgraded->error.empty() || !upgraded->state || upgraded->state->upgradeSource != old ||
+        upgraded->upgradeWork.retainedChildren != 2 || upgraded->upgradeWork.replacedChildren ||
+        upgraded->upgradeWork.recomposedCrossings || upgraded->upgradeWork.reusedCrossings != old->crossings.size() ||
+        builds != childBuilds || arena->size() != nodes) {
+        return function.emitError("conditional endpoint upgrade rebuilt unchanged mathematics");
+    }
+    auto branch = cast<scf::IfOp>(program->nodes[*conditional].anchor);
+    const auto condition = arena->input(branch.getCondition());
+    for (unsigned arm = 0; arm < 2; ++arm) {
+        const auto& before = old->children[arm];
+        const auto& after = upgraded->state->children[arm];
+        if (before.originalArmGuard != after.originalArmGuard ||
+            !sameOriginalCoordinates(before.regional, after.regional)) { return failure(); }
+        for (unsigned flag : {0U, 1U}) {
+            for (unsigned type = 0; type < after.anchors.size(); ++type) {
+                auto present = regionalPresence(after.regional,
+                    {type, arena->constant(0), PeriodicEventKind::Start, {}});
+                if (!present) { return failure(); }
+                RegionExpressions::Transaction evaluation(*arena);
+                RegionExpressions::Substitution binding({{condition, arena->boolean(flag)}});
+                if (arena->constantValue(arena->substitute(*present, binding)) != (flag == unsigned(arm == 0))) {
+                    return function.emitError("retained conditional arm lost exact branch presence");
+                }
+            }
+        }
+    }
+    // Both public preparation paths must invoke each raw arm once. The default
+    // path uses its owned guarded callback; the explicit resolver receives the
+    // preserved semantic view and returns a fresh raw plan for the existing mask.
+    auto direct = prepareSequenceLogicalInsertion(*upgraded);
+    if (failed(direct) || prepared != 2) { return function.emitError("owned conditional preparation failed"); }
+    unsigned resolved = 0;
+    SequenceEndpointResolver preparation = [&](std::size_t id, const RegionalAnalysis& retained,
+        ArrayRef<scf::ForOp> enclosing) -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
+        ++resolved;
+        const auto found = arms.find(id);
+        if (found == arms.end() || !sameOriginalCoordinates(found->second, retained)) { return failure(); }
+        return found->second.prepareWithVisits ? found->second.prepareWithVisits(enclosing) : found->second.prepare();
+    };
+    auto resolvedPlan = prepareSequenceLogicalInsertion(*upgraded, {}, preparation);
+    auto cold = analyzeSequenceRegionWithResolver(
+        function, input, *program, *conditional, arena, index, true, resolver);
+    auto coldPlan = cold.error.empty() ? prepareSequenceLogicalInsertion(cold) :
+        FailureOr<std::unique_ptr<PreparedLogicalPlan>>(failure());
+    if (failed(resolvedPlan) || failed(coldPlan) || resolved != 2 || prepared != 4 ||
+        (*direct)->completeInvocation || (*resolvedPlan)->completeInvocation || (*coldPlan)->completeInvocation) {
+        return function.emitError("conditional preparation changed invocation or callback ownership");
+    }
+    auto signature = [&](PreparedLogicalPlan& plan) -> std::optional<std::string> {
+        if (failed(materializeLogicalFamilies(plan)) || plan.endpoints.empty()) { return std::nullopt; }
+        std::string text;
+        llvm::raw_string_ostream stream(text);
+        for (const auto& stage : plan.preparation) {
+            for (auto& operation : *stage.code) { operation.print(stream); }
+        }
+        for (const auto& endpoint : plan.endpoints) {
+            stream << unsigned(endpoint.kind) << ":" << endpoint.record << ":" << endpoint.sourcePipe << ":"
+                << endpoint.targetPipe << ":" << endpoint.memberCoordinates.size() << "\n";
+            endpoint.before->print(stream);
+        }
+        stream.flush();
+        return text;
+    };
+    auto expected = signature(**coldPlan);
+    if (!expected || signature(**direct) != expected || signature(**resolvedPlan) != expected) {
+        return function.emitError("conditional retained/default/resolved/cold command recipes differ");
+    }
+    auto changed = resolver;
+    changed.region = [&](std::size_t id, bool, std::string&) -> FailureOr<RegionalAnalysis> {
+        auto out = arms.at(id);
+        out.firstOrdinal = arena->constant(1);
+        return out;
+    };
+    if (upgradeSequenceEndpoints(weak, *conditional, changed)) {
+        return function.emitError("changed conditional coordinates incorrectly reused old closure");
+    }
+    auto foreign = resolver;
+    foreign.region = [&](std::size_t id, bool, std::string&) -> FailureOr<RegionalAnalysis> {
+        auto out = arms.at(id);
+        out.expressions = std::make_shared<RegionExpressions>();
+        return out;
+    };
+    if (upgradeSequenceEndpoints(weak, *conditional, foreign)) {
+        return function.emitError("conditional upgrade reinterpreted an original guard in another arena");
+    }
+    auto mismatched = weak;
+    mismatched.state = std::make_shared<SequenceAnalysisState>(*weak.state);
+    mismatched.state->children.front().originalArmGuard = arena->boolean(true);
+    if (upgradeSequenceEndpoints(mismatched, *conditional, resolver)) {
+        return function.emitError("conditional upgrade accepted a foreign arm guard");
+    }
+    weak.state.reset();
+    if (upgraded->state->upgradeSource != old || render() != original) {
+        return function.emitError("conditional upgrade lost ownership or mutated original source");
+    }
+    llvm::outs() << "conditional-endpoint-upgrade: guarded-closure-reused "
+        "both-preparation-routes cold-equivalent residual\n";
+    return success();
+}
 LogicalResult checkSequenceEndpointRetry(func::FuncOp function, pto::GMAliasPolicy policy)
 {
     using namespace pto::frontiersynch;
@@ -321,6 +565,24 @@ LogicalResult checkSequenceEndpointRetry(func::FuncOp function, pto::GMAliasPoli
     llvm::raw_string_ostream original(before); function.print(original); original.flush();
     FrontierAnalysis session(function);
     if (failed(session.initialize(policy))) { return failure(); }
+    // Establish the representation whose later endpoint upgrade this fixture
+    // checks. Candidate ranking is free to prefer an original-coordinate form
+    // in a cold request; it need not select expansion to exercise this test.
+    const auto* structure = session.result();
+    const auto outer = llvm::find_if(structure->nodes, [&](const auto& node) {
+        return node.kind == StructureKind::Loop && node.anchor->getParentOp() == function;
+    });
+    if (outer == structure->nodes.end()) { return function.emitError("sequence retry lacks an outer loop"); }
+    const auto outerId = static_cast<std::size_t>(outer - structure->nodes.begin());
+    AnalysisRequest expandedRequest;
+    expandedRequest.region = outerId;
+    expandedRequest.needs.queries = expandedRequest.needs.selectors = true;
+    const auto seeded = session.analyzeFiniteExpansion(expandedRequest);
+    if (seeded.status != AnalysisStatus::Ready || !seeded.mathematical ||
+        seeded.mathematical->backend != "expanded-finite-guarded" || !seeded.regionalExports ||
+        !seeded.regionalExports->capabilities.exactQueries || !seeded.regionalExports->capabilities.exactSelectors) {
+        return function.emitError("sequence retry could not establish expanded child queries and selectors");
+    }
     auto weak = session.minimumDemands();
     if (weak.status != AnalysisStatus::Ready || !weak.mathematical) {
         return function.emitError("sequence retry lacks initial exact mathematics");
@@ -340,10 +602,68 @@ LogicalResult checkSequenceEndpointRetry(func::FuncOp function, pto::GMAliasPoli
             if (!child.originalNode) { continue; }
             auto original = session.minimumDemands(*child.originalNode);
             expanded |= original.mathematical && original.mathematical->backend == "expanded-finite-guarded";
+            if (original.mathematical && original.mathematical->backend == "expanded-finite-guarded") {
+                FrontierAnalysis cold(function);
+                if (failed(cold.initialize(policy))) { return failure(); }
+                const auto id = *child.originalNode;
+                const auto order = cold.exactForms({id});
+                if (order != std::vector<AnalysisForm>{AnalysisForm::Original, AnalysisForm::SmallCountExpanded} ||
+                    cold.normalizationConstructions() || cold.numericTemplatePreflights() ||
+                    cold.result()->formConstructions) {
+                    return function.emitError("cold expanded fallback eagerly qualified a candidate");
+                }
+                const auto selected = cold.minimumDemands(id);
+                const auto costs = cold.costRecords();
+                auto attempted = [&](StringRef method) {
+                    return llvm::any_of(costs, [&](const auto& row) {
+                        return row.region == id && !row.request && row.method == method && row.attemptConstructions;
+                    });
+                };
+                if (selected.status != AnalysisStatus::Ready || !selected.mathematical ||
+                    !attempted("form-original")) {
+                    return function.emitError("cold screening failed to produce exact original-region mathematics");
+                }
+                const bool choseExpanded = selected.mathematical->backend == "expanded-finite-guarded";
+                if (attempted("form-expanded") != choseExpanded) {
+                    return function.emitError("cold screening qualified an unused expanded form or lost its fallback");
+                }
+            }
         }
     }
     if (!expanded || strong.mathematical == weak.mathematical) {
         return function.emitError("sequence retry did not replace expanded child coordinates");
+    }
+    const auto& upgradedSequence = *strong.mathematical->sequenceDemands;
+    const auto& oldSequence = *weak.mathematical->sequenceDemands;
+    if (!upgradedSequence.state->upgradeSource || !upgradedSequence.upgradeWork.replacedChildren ||
+        !upgradedSequence.upgradeWork.retainedChildren || upgradedSequence.upgradeWork.reusedCrossings ||
+        upgradedSequence.upgradeWork.recomposedCrossings != upgradedSequence.state->crossings.size() ||
+        upgradedSequence.upgradeWork.retainedChildren + upgradedSequence.upgradeWork.replacedChildren !=
+            oldSequence.state->children.size()) {
+        return function.emitError("sequence upgrade recollected unchanged children or reused stale closure");
+    }
+    SequenceRegionResolver sameCoordinates;
+    sameCoordinates.region = [source = upgradedSequence.state](std::size_t region, bool endpoints,
+        std::string&) -> FailureOr<RegionalAnalysis> {
+        if (!endpoints) { return failure(); }
+        const auto found = llvm::find_if(source->children, [&](const Child& child) {
+            return child.originalNode == region;
+        });
+        return found == source->children.end() ? FailureOr<RegionalAnalysis>(failure()) : found->regional;
+    };
+    const auto expressionCount = upgradedSequence.state->expressions.size();
+    auto unchanged = upgradeSequenceEndpoints(upgradedSequence, 0, std::move(sameCoordinates));
+    if (!unchanged || !unchanged->error.empty() || unchanged->state == upgradedSequence.state ||
+        unchanged->state->upgradeSource != upgradedSequence.state || unchanged->upgradeWork.replacedChildren ||
+        unchanged->upgradeWork.recomposedCrossings ||
+        unchanged->upgradeWork.reusedCrossings != upgradedSequence.state->crossings.size() ||
+        unchanged->upgradeWork.retainedChildren != upgradedSequence.state->children.size() ||
+        unchanged->state->expressions.size() != expressionCount) {
+        return function.emitError("same-coordinate endpoint upgrade reconstructed mathematical work");
+    }
+    auto unchangedExports = sequenceRegionalResult(*unchanged);
+    if (!unchangedExports.capabilities.endpointRecipes || !unchangedExports.prepareWithVisits) {
+        return function.emitError("same-coordinate upgrade lost its owned endpoint export");
     }
     const auto attempts = session.constructionCounts().mathematicalAttempts;
     auto again = session.analyze(request);
@@ -379,6 +699,11 @@ LogicalResult checkSequenceEndpointRetry(func::FuncOp function, pto::GMAliasPoli
         return text;
     };
     const auto independent = renderPlan(**right);
+    auto unchangedPlan = prepareSequenceLogicalInsertion(*unchanged);
+    if (failed(unchangedPlan) || failed(materializeLogicalFamilies(**unchangedPlan)) ||
+        renderPlan(**unchangedPlan) != independent) {
+        return function.emitError("retained closure preparation changed emitted control");
+    }
     left->reset();
     const bool ownerRetained = renderPlan(**right) == independent;
     if (!ownerRetained) { return function.emitError("sequence plan lost its owner"); }
@@ -444,9 +769,12 @@ LogicalResult checkNaturalRotatingExportRetry(func::FuncOp function, pto::GMAlia
     auto later = session.analyze(strong);
     auto usesArithmetic = [](const AnalysisOutcome& outcome) {
         if (!outcome.mathematical) { return false; }
-        const auto& math = *outcome.mathematical;
-        return math.arithmeticRegionalDemands ||
-            (math.sequenceDemands && math.sequenceDemands->cost.arithmeticRegions != 0);
+        const auto* math = outcome.mathematical.get();
+        // Identity composition transports the retained child's mathematics.
+        // Its wrapper need not duplicate the child's producer-specific fields.
+        while (math && math->identityComposition) { math = math->identityComposition->child.get(); }
+        return math && (math->arithmeticRegionalDemands ||
+            (math->sequenceDemands && math->sequenceDemands->cost.arithmeticRegions != 0));
     };
     const bool laterReady = later.status == AnalysisStatus::Ready && later.mathematical &&
         usesArithmetic(later) && later.available.queries && later.available.selectors;
@@ -485,8 +813,40 @@ LogicalResult checkNaturalRotatingExportRetry(func::FuncOp function, pto::GMAlia
     auto rootRequest = strong; rootRequest.region = 0;
     auto root = session.analyze(rootRequest);
     const bool rootReady = root.status == AnalysisStatus::Ready && root.available.queries && root.available.selectors &&
+        root.mathematical && root.mathematical->identityComposition &&
+        root.mathematical->identityComposition->child == later.mathematical && root.regionalExports == snapshot &&
+        usesArithmetic(root) && session.arithmeticRegionConstructions() == arithmeticBuilds &&
         !session.constructionCounts().logicalPreparations && !session.constructionCounts().allocationExports;
-    if (!rootReady) { return function.emitError("root and regional export retry outcomes disagree"); }
+    if (!rootReady) {
+        llvm::errs() << "natural root: backend=" << (root.mathematical ? root.mathematical->backend : "none")
+            << " status=" << unsigned(root.status) << " stage=" << unsigned(root.stage)
+            << " queries=" << root.available.queries << " selectors=" << root.available.selectors
+            << " arithmetic-builds=" << session.arithmeticRegionConstructions()
+            << " prior-builds=" << arithmeticBuilds << "\n";
+        for (const auto& issue : root.obligations) { llvm::errs() << issue.diagnostic << "\n"; }
+        return function.emitError("root and regional export retry outcomes disagree");
+    }
+    auto rootRetry = session.analyze(rootRequest);
+    if (rootRetry.status != AnalysisStatus::Ready || rootRetry.mathematical != root.mathematical ||
+        rootRetry.regionalExports != root.regionalExports ||
+        session.arithmeticRegionConstructions() != arithmeticBuilds) {
+        return function.emitError("strong identity root retry replaced its retained child or exports");
+    }
+    FrontierAnalysis coldRoot(function);
+    if (failed(coldRoot.initialize(policy)) || failed(coldRoot.configureArithmeticProfiles({profile}, {profile}))) {
+        return failure();
+    }
+    auto coldRootResult = coldRoot.analyze(rootRequest);
+    if (coldRootResult.status != AnalysisStatus::Ready || !coldRootResult.mathematical ||
+        !coldRootResult.mathematical->identityComposition || !usesArithmetic(coldRootResult) ||
+        !coldRootResult.available.queries || !coldRootResult.available.selectors ||
+        coldRoot.constructionCounts().logicalPreparations || coldRoot.constructionCounts().allocationExports) {
+        llvm::errs() << "natural cold root: backend="
+            << (coldRootResult.mathematical ? coldRootResult.mathematical->backend : "none")
+            << " status=" << unsigned(coldRootResult.status) << " stage=" << unsigned(coldRootResult.stage) << "\n";
+        for (const auto& issue : coldRootResult.obligations) { llvm::errs() << issue.diagnostic << "\n"; }
+        return function.emitError("cold strong identity root lost requested arithmetic exports");
+    }
     std::string after;
     llvm::raw_string_ostream current(after); function.print(current); current.flush();
     if (before != after) { return function.emitError("natural export retry changed original IR"); }
@@ -601,14 +961,15 @@ LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasP
     function.print(originalStream);
     const auto order = session.exactForms({id});
     const auto records = session.costRecords().size();
-    const auto sourceVisits = session.normalizationSourceVisits();
     const bool repeatRank = session.exactForms({id}) == order && records == session.costRecords().size() &&
-        session.normalizationConstructions() == 1 && !session.constructionCounts().mathematicalAttempts &&
-        !session.numericalRegionConstructions();
-    if (!repeatRank) { return function.emitError("description ranking constructed demands or repeated normalization"); }
+        order == std::vector<AnalysisForm>{AnalysisForm::Original, AnalysisForm::SmallCountExpanded} &&
+        !session.normalizationConstructions() && !session.normalizationSourceVisits() &&
+        !session.numericTemplatePreflights() && !session.result()->formConstructions &&
+        !session.constructionCounts().mathematicalAttempts && !session.numericalRegionConstructions();
+    if (!repeatRank) { return function.emitError("cold screening constructed an unused qualification"); }
     if (!function->hasAttr("test.normalization_external")) {
         session.exactForms({0});
-        const bool canonical = session.normalizationConstructions() == 1;
+        const bool canonical = !session.normalizationConstructions();
         if (!canonical) {
             return function.emitError("whole-loop ranking lost canonical representation identity");
         }
@@ -626,7 +987,7 @@ LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasP
     const bool separateRequests = queryRecords == beforeExports + extra &&
         selectorRecords == queryRecords + extra && session.costRecords().size() == selectorRecords &&
         !queryOrder.empty() && !session.constructionCounts().mathematicalAttempts &&
-        session.normalizationConstructions() == 1;
+        !session.normalizationConstructions() && !session.numericTemplatePreflights();
     if (!separateRequests) { return function.emitError("interface ranking cache repeated or constructed mathematics"); }
     const auto numerical = session.analyzeNumericalRegion({id});
     const bool rejectsNumerical = function->hasAttr("test.normalization_runtime_guard");
@@ -641,9 +1002,19 @@ LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasP
         finite.mathematical->finiteGuardedDemands && finite.mathematical->normalizedInput;
     if (!available) { return function.emitError("finite adapter cannot consume retained normalized input"); }
     const auto owner = finite.mathematical->normalizedInput;
+    const auto sourceVisits = session.normalizationSourceVisits();
+    const auto preflights = session.numericTemplatePreflights();
+    const auto formChecks = session.result()->formConstructions;
+    const auto warmOrder = session.exactForms({id});
+    const auto warmRecords = session.costRecords().size();
+    const bool retainedOnly = session.exactForms({id}) == warmOrder &&
+        session.costRecords().size() == warmRecords && session.normalizationConstructions() == 1 &&
+        session.numericTemplatePreflights() == preflights && session.result()->formConstructions == formChecks &&
+        session.normalizationSourceVisits() == sourceVisits;
+    if (!retainedOnly) { return function.emitError("warm screening reconstructed retained qualification"); }
     const bool alternative = owner->original != nullptr;
-    const bool expectedOrder = order.size() == (alternative ? 2 : 1) &&
-        (alternative || order.front() == AnalysisForm::Original);
+    const bool expectedOrder = warmOrder.size() == (alternative ? 2 : 1) &&
+        (alternative || warmOrder.front() == AnalysisForm::Original);
     if (!expectedOrder) {
         return function.emitError("compact fallback was advertised as another expanded description");
     }
@@ -652,6 +1023,8 @@ LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasP
             *owner->index, *owner->input, {}, true, {}, {}, owner);
         const bool eligible = plan.form.result.state == RecognitionState::Applicable;
         auto costs = session.costRecords();
+        // Refreshed evidence is append-only; inspect its latest estimate pair.
+        std::reverse(costs.begin(), costs.end());
         auto expanded = llvm::find_if(costs, [&](const auto& record) {
             return record.region == id && !record.request && record.method == "form-expanded";
         });
@@ -667,20 +1040,20 @@ LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasP
         const bool priced = eligible ? expanded->estimate.generatorPieces == estimatedMultiply(effects, effects) &&
             expanded->estimate.ports == estimatedMultiply(plan.form.countedPayloads, 2) :
             !expanded->estimate.work;
-        const auto first = estimatedCostLess(expanded->estimate, original->estimate) ?
+        const auto first = estimatedSelectionWorkLess(expanded->estimate, original->estimate) ?
             AnalysisForm::SmallCountExpanded : AnalysisForm::Original;
-        const bool correctRank = priced && order.front() == first;
+        const bool correctRank = priced && warmOrder.front() == first;
         if (!correctRank) {
             return function.emitError("candidate order or residual occurrence cost is incorrect");
         }
         const bool unknownOriginalFirst = eligible && !original->estimate.work &&
-            order.front() != AnalysisForm::SmallCountExpanded;
+            warmOrder.front() != AnalysisForm::SmallCountExpanded;
         if (unknownOriginalFirst) {
             return function.emitError("known expanded work did not precede unknown original work");
         }
-        const bool runtimeRank = rejectsNumerical && order.front() != AnalysisForm::Original;
+        const bool runtimeRank = rejectsNumerical && warmOrder.front() != AnalysisForm::Original;
         if (runtimeRank) {
-            return function.emitError("unknown-work candidates ignored compact representation size");
+            return function.emitError("unknown-work candidates lost stable ordering");
         }
         FrontierAnalysis dispatched(function);
         if (failed(dispatched.initialize(policy))) { return failure(); }
@@ -692,13 +1065,10 @@ LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasP
             });
             return record != actual.end() && record->attemptConstructions;
         };
-        const bool dispatchedFirst = attempted(first == AnalysisForm::Original ? "form-original" : "form-expanded");
-        const bool selectedExpanded = first != AnalysisForm::SmallCountExpanded ||
-            (selected.status == AnalysisStatus::Ready && selected.mathematical &&
-             selected.mathematical->numericalDemands && !attempted("form-original"));
-        const bool selectedOriginal = !rejectsNumerical ||
-            (selected.status == AnalysisStatus::Ready && !attempted("form-expanded"));
-        if (!dispatchedFirst || !selectedExpanded || !selectedOriginal) {
+        const bool dispatchedFirst = attempted("form-original");
+        const bool selectedOriginal = selected.status == AnalysisStatus::Ready &&
+            selected.mathematical && !attempted("form-expanded");
+        if (!dispatchedFirst || !selectedOriginal) {
             return function.emitError("dispatcher did not preserve first successful exact form");
         }
     }
@@ -848,6 +1218,50 @@ LogicalResult checkExactFormFastPath(func::FuncOp function, pto::GMAliasPolicy p
         !session.result()->formConstructions && !session.arithmeticGeneratorConstructions() &&
         !session.numericTemplatePreflights() && !session.constructionCounts().logicalPreparations;
     if (!explicitOnly) { return function.emitError("straight-line analysis left the explicit fast path"); }
+    auto prepared = session.prepareLogical(demands);
+    const auto& explicitAnalysis = *demands.mathematical->explicitDemands;
+    if (failed(prepared)) { return function.emitError("explicit endpoint recipe preparation failed"); }
+    if (!(*prepared)->preparation.empty() || !(*prepared)->endpoints.empty() ||
+        (!explicitAnalysis.reduction.retained.empty() && !(*prepared)->familyRecipe)) {
+        return function.emitError("explicit endpoint preparation did not retain an unmaterialized owned recipe");
+    }
+    if (session.normalizationConstructions() || session.result()->formConstructions ||
+        session.arithmeticGeneratorConstructions() || session.numericTemplatePreflights()) {
+        return function.emitError("explicit endpoint preparation constructed later forms: normalization=")
+            << session.normalizationConstructions() << ", forms=" << session.result()->formConstructions
+            << ", arithmetic=" << session.arithmeticGeneratorConstructions()
+            << ", preflights=" << session.numericTemplatePreflights();
+    }
+    if (failed(materializeLogicalFamilies(**prepared))) { return failure(); }
+    std::size_t endpointIndex = 0;
+    for (auto [record, edge] : llvm::enumerate(explicitAnalysis.reduction.retained)) {
+        const auto sourcePipe = explicitAnalysis.occurrences[edge.source].pipe;
+        const auto targetPipe = explicitAnalysis.occurrences[edge.target].pipe;
+        auto* source = explicitAnalysis.phases[edge.source]->elementOp;
+        auto* target = explicitAnalysis.phases[edge.target]->elementOp;
+        const bool local = sourcePipe == targetPipe;
+        for (unsigned side = 0; side < (local ? 1U : 2U); ++side) {
+            if (endpointIndex >= (*prepared)->endpoints.size()) { return failure(); }
+            const auto& endpoint = (*prepared)->endpoints[endpointIndex++];
+            const auto kind = local ? LogicalCommandKind::Barrier :
+                side ? LogicalCommandKind::Wait : LogicalCommandKind::Set;
+            auto guard = endpoint.guard.getDefiningOp<arith::ConstantOp>();
+            if (endpoint.kind != kind || endpoint.before != (local || side ? target : source->getNextNode()) ||
+                endpoint.record != static_cast<int64_t>(record) ||
+                endpoint.records != SmallVector<uint32_t>{static_cast<uint32_t>(record)} ||
+                endpoint.sourcePipe != sourcePipe || endpoint.targetPipe != targetPipe || !guard ||
+                !cast<IntegerAttr>(guard.getValue()).getValue().isOne()) { return failure(); }
+            if (!local) {
+                auto ordinal = endpoint.identity.getDefiningOp<arith::ConstantOp>();
+                auto member = endpoint.memberCoordinates.size() == 1 ?
+                    endpoint.memberCoordinates.front().getDefiningOp<arith::ConstantOp>() : arith::ConstantOp{};
+                if (!ordinal || !cast<IntegerAttr>(ordinal.getValue()).getValue().isZero() || !member ||
+                    cast<IntegerAttr>(member.getValue()).getInt() != static_cast<int64_t>(record)) { return failure(); }
+            }
+        }
+    }
+    if (endpointIndex != (*prepared)->endpoints.size()) { return failure(); }
+    // Auditing every child is separate from constructing this selected root.
     const auto certifications = session.certifyRegions();
     const bool lazyCertification = !certifications.empty() && !session.result()->arithmetic &&
         session.result()->arithmeticContracts.empty() && !session.arithmeticGeneratorConstructions();
@@ -876,114 +1290,97 @@ LogicalResult checkNumericalRequestOrder(func::FuncOp function, pto::GMAliasPoli
         (first.mathematical ? first.mathematical->regionalDemands : nullptr);
     const auto secondExports = second.regionalExports ? second.regionalExports :
         (second.mathematical ? second.mathematical->regionalDemands : nullptr);
+    const auto freshBuilds = fresh.numericalRegionConstructions();
+    auto diagnose = [&](StringRef stage, const AnalysisOutcome& a, const AnalysisOutcome& b) {
+        llvm::errs() << "numerical " << stage << ": fresh="
+            << (a.mathematical ? a.mathematical->backend : "none") << " status=" << unsigned(a.status)
+            << " queries=" << a.available.queries << " selectors=" << a.available.selectors
+            << " sync=" << a.available.synchronization << " builds=" << fresh.numericalRegionConstructions()
+            << "; warm=" << (b.mathematical ? b.mathematical->backend : "none")
+            << " status=" << unsigned(b.status) << " queries=" << b.available.queries
+            << " selectors=" << b.available.selectors << " sync=" << b.available.synchronization
+            << " builds=" << warm.numericalRegionConstructions() << "\n";
+    };
     const bool ready = first.status == AnalysisStatus::Ready && second.status == AnalysisStatus::Ready &&
         firstExports && secondExports && first.available.queries && first.available.selectors &&
         second.available.queries && second.available.selectors && retained.mathematical &&
         warm.analyzeNumericalRegion({id}).mathematical == retained.mathematical &&
-        firstExports->anchors.size() == secondExports->anchors.size() &&
-        warm.numericalRegionConstructions() == 1 && fresh.numericalRegionConstructions() == 1;
-    if (!ready) { return function.emitError("numerical export adapter depends on request history"); }
-    auto evaluate = [&](const RegionalAnalysis& region, RegionExpressions::Id expression, uint64_t upper) {
-        SmallVector<std::pair<RegionExpressions::Id, RegionExpressions::Id>> bindings;
-        for (auto input : region.expressions->referencedInputs(expression)) {
-            const bool supplied = function.getNumArguments() == 1 && input.second == function.getArgument(0);
-            if (!supplied) {
-                return std::optional<uint64_t>{};
-            }
-            bindings.push_back({input.first, region.expressions->constant(upper)});
-        }
-        RegionExpressions::Substitution substitution(bindings);
-        return region.expressions->constantValue(region.expressions->substitute(expression, substitution));
-    };
-    const auto& a = *firstExports;
-    const auto& b = *secondExports;
-    auto event = [](const RegionalAnalysis& region, uint32_t type, uint64_t ordinal, PeriodicEventKind kind) {
-        RegionalEvent result{type, region.expressions->constant(ordinal), kind};
-        if (!region.outerLoops.empty()) {
-            result.visits.assign(region.outerLoops[type].size(), region.expressions->constant(0));
-        }
-        return result;
-    };
-    auto sameSelectors = [&](const std::vector<RegionalSelector>& x, const std::vector<RegionalSelector>& y,
-                             uint64_t upper) {
-        const bool sameSize = x.size() == y.size();
-        if (!sameSize) { return false; }
-        for (std::size_t i = 0; i < x.size(); ++i) {
-            const auto xp = evaluate(a, x[i].present, upper), yp = evaluate(b, y[i].present, upper);
-            const bool present = xp && yp && xp == yp;
-            if (!present) { return false; }
-            if (!*xp) { continue; }
-            const auto xo = evaluate(a, x[i].event.ordinal, upper);
-            const auto yo = evaluate(b, y[i].event.ordinal, upper);
-            const bool same = xo && yo && xo == yo && x[i].event.type == y[i].event.type &&
-                x[i].event.kind == y[i].event.kind &&
-                x[i].event.visits.size() == y[i].event.visits.size();
-            if (!same) { return false; }
-            for (std::size_t j = 0; j < x[i].event.visits.size(); ++j) {
-                const auto xv = evaluate(a, x[i].event.visits[j], upper);
-                const auto yv = evaluate(b, y[i].event.visits[j], upper);
-                const bool sameVisit = xv && yv && xv == yv;
-                if (!sameVisit) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    };
+        warm.numericalRegionConstructions() == 1 && freshBuilds <= 1;
+    if (!ready) {
+        diagnose("exports", first, second);
+        llvm::errs() << "anchors: fresh=" << (firstExports ? firstExports->anchors.size() : 0)
+            << " warm=" << (secondExports ? secondExports->anchors.size() : 0)
+            << " retained=" << bool(retained.mathematical) << "\n";
+        return function.emitError("numerical export adapter depends on request history");
+    }
+    // A cold request may select an exact cheaper producer without building the
+    // numerical form. Subsequent identical requests must retain that answer.
+    const auto repeatFirst = fresh.analyze(request), repeatSecond = warm.analyze(request);
+    if (repeatFirst.mathematical != first.mathematical || repeatSecond.mathematical != second.mathematical ||
+        repeatFirst.regionalExports != first.regionalExports ||
+        repeatSecond.regionalExports != second.regionalExports ||
+        fresh.numericalRegionConstructions() != freshBuilds || warm.numericalRegionConstructions() != 1) {
+        return function.emitError("numerical export retry rebuilt or replaced the retained answer");
+    }
+    numerical_request_oracle::Oracle oracle(function);
+    if (!oracle.initialize(*warm.input(), cast<scf::ForOp>(node->anchor))) {
+        return function.emitError("numerical oracle requires unique original payloads in unconditional counted loops");
+    }
     for (uint64_t upper : {0, 1, 3, 8}) {
-        const bool sameCells = a.storageBoundary.size() == b.storageBoundary.size();
-        if (!sameCells) { return failure(); }
-        for (std::size_t i = 0; i < a.storageBoundary.size(); ++i) {
-            const auto& x = a.storageBoundary[i];
-            const auto& y = b.storageBoundary[i];
-            const bool sameCell = sameStorageDomain(x.cell, y.cell) && x.cell.begin == y.cell.begin &&
-                x.cell.end == y.cell.end;
-            const bool same = sameCell && sameSelectors(x.firstWriters, y.firstWriters, upper) &&
-                sameSelectors(x.lastWriters, y.lastWriters, upper) &&
-                x.firstReaders.size() == y.firstReaders.size() && x.lastReaders.size() == y.lastReaders.size();
-            if (!same) { return function.emitError("numerical storage selector adapter changed cell extrema"); }
-            auto readersEqual = [&](const auto& left, const auto& right) {
-                for (const auto& readers : left) {
-                    auto found = right.find(readers.first);
-                    const bool equal = found != right.end() && sameSelectors(readers.second, found->second, upper);
-                    if (!equal) { return false; }
-                }
-                return true;
-            };
-            const bool sameReaders = readersEqual(x.firstReaders, y.firstReaders) &&
-                readersEqual(x.lastReaders, y.lastReaders);
-            if (!sameReaders) {
-                return function.emitError("numerical storage selector adapter changed pipe extrema");
-            }
-        }
-        for (uint32_t source = 0; source < a.anchors.size(); ++source) {
-            for (uint32_t target = 0; target < a.anchors.size(); ++target) {
-                for (uint64_t ordinal : {0, 1, 2}) {
-                    auto left = regionalReachability(a, event(a, source, 0, PeriodicEventKind::Completion),
-                        event(a, target, ordinal, PeriodicEventKind::Start));
-                    auto right = regionalReachability(b, event(b, source, 0, PeriodicEventKind::Completion),
-                        event(b, target, ordinal, PeriodicEventKind::Start));
-                    const bool equal = left && right && evaluate(a, *left, upper) == evaluate(b, *right, upper) &&
-                        evaluate(a, *left, upper).has_value();
-                    if (!equal) { return function.emitError("numerical query adapter changed exact event answers"); }
-                }
-            }
+        if (!oracle.compare(*firstExports, *secondExports, upper)) {
+            diagnose("original-occurrence equivalence", first, second);
+            llvm::errs() << "numerical oracle upper=" << upper << " fresh-anchors=" << firstExports->anchors.size()
+                << " warm-anchors=" << secondExports->anchors.size() << "\n";
+            return function.emitError(
+                "numerical adapters disagree on original occurrence presence, extrema or queries");
         }
     }
     request.needs.synchronization = true;
     const auto logicalFirst = fresh.analyze(request), logicalSecond = warm.analyze(request);
     const bool logical = logicalFirst.status == AnalysisStatus::Ready &&
-        logicalSecond.status == AnalysisStatus::Ready &&
-        logicalFirst.mathematical == first.mathematical && logicalSecond.mathematical == second.mathematical &&
-        warm.numericalRegionConstructions() == 1 && fresh.numericalRegionConstructions() == 1;
-    if (!logical) { return function.emitError("numerical logical adapter depends on request history"); }
+        logicalSecond.status == AnalysisStatus::Ready && logicalFirst.mathematical && logicalSecond.mathematical &&
+        logicalFirst.available.queries && logicalFirst.available.selectors && logicalFirst.available.synchronization &&
+        logicalSecond.available.queries && logicalSecond.available.selectors &&
+        logicalSecond.available.synchronization &&
+        warm.numericalRegionConstructions() == 1 && fresh.numericalRegionConstructions() == freshBuilds;
+    if (!logical) {
+        diagnose("logical", logicalFirst, logicalSecond);
+        return function.emitError("numerical logical adapter depends on request history");
+    }
+    auto weakRequest = request; weakRequest.needs.synchronization = false;
+    const auto stillFirst = fresh.analyze(weakRequest), stillSecond = warm.analyze(weakRequest);
+    if (stillFirst.mathematical != first.mathematical || stillSecond.mathematical != second.mathematical ||
+        stillFirst.regionalExports != first.regionalExports || stillSecond.regionalExports != second.regionalExports) {
+        return function.emitError("strong logical request replaced retained weaker mathematics or exports");
+    }
+    const auto strongFirst = logicalFirst.regionalExports ? logicalFirst.regionalExports :
+        logicalFirst.mathematical->regionalDemands;
+    const auto strongSecond = logicalSecond.regionalExports ? logicalSecond.regionalExports :
+        logicalSecond.mathematical->regionalDemands;
+    if (!strongFirst || !strongSecond) { return failure(); }
+    for (uint64_t bound : {0, 1, 3, 8}) {
+        if (!oracle.compare(*firstExports, *strongFirst, bound) ||
+            !oracle.compare(*secondExports, *strongSecond, bound)) {
+            return function.emitError("strong logical export changed retained original-occurrence mathematics");
+        }
+    }
+    const auto coldTrace = numerical_request_oracle::numericalLogicalTraces(
+        function, policy, id, false, logicalFirst.mathematical->backend);
+    const auto warmTrace = numerical_request_oracle::numericalLogicalTraces(
+        function, policy, id, true, logicalSecond.mathematical->backend);
+    if (!coldTrace || !warmTrace || *coldTrace != *warmTrace) {
+        return function.emitError("numerical cold/warm logical output changed payloads, matching or command causality");
+    }
     if (!function->hasAttr("test.numerical_external")) {
         request.region = 0;
         const auto rootFirst = fresh.analyze(request), rootSecond = warm.analyze(request);
         const bool rootReady = rootFirst.status == AnalysisStatus::Ready &&
             rootSecond.status == AnalysisStatus::Ready &&
-            warm.numericalRegionConstructions() == 1 && fresh.numericalRegionConstructions() == 1;
-        if (!rootReady) { return function.emitError("numerical root/child export adapters disagree"); }
+            warm.numericalRegionConstructions() == 1 && fresh.numericalRegionConstructions() == freshBuilds;
+        if (!rootReady) {
+            diagnose("root", rootFirst, rootSecond);
+            return function.emitError("numerical root/child export adapters disagree");
+        }
     }
     llvm::outs() << "numerical-request-order: fresh-and-warm exact-queries selectors logical-root-and-child\n";
     return success();
@@ -1233,7 +1630,25 @@ mlir::LogicalResult checkUniformCircuit(mlir::func::FuncOp function,
             return function.emitError("uniform circuit fixture lacks a finite source interface");
         }
         auto symbolic = *view;
-        const auto finite = *view;
+        auto finite = *view;
+        // This fixture has one payload type per child. Its GM accesses cannot
+        // need an internal cross-pipe handoff. Present their already exact
+        // extrema as deferred effects, independently of which producer won.
+        // The parent must still establish every cross-child relationship.
+        if (symbolic.anchors.size() != 1) {
+            return function.emitError("uniform deferred fixture requires one payload type per child");
+        }
+        llvm::erase_if(symbolic.accessBoundary, [&](const auto& access) {
+            const auto& effect = symbolic.accessModel->effects()[access.effect];
+            if (!effect.memory || effect.memory->scope != pto::AddressSpace::GM) { return false; }
+            auto deferred = access;
+            deferred.representedByCells = false;
+            symbolic.deferredAccessBoundary.push_back(std::move(deferred));
+            return true;
+        });
+        llvm::erase_if(finite.storageBoundary, [](const auto& boundary) {
+            return boundary.cell.space == pto::AddressSpace::GM;
+        });
         symbolic.storageBoundary.clear(); symbolic.symbolicStorageEffects.clear();
         symbolic.relations.reset(); symbolic.arithmeticRelations.reset(); symbolic.numerical.reset();
         auto certificate = std::make_shared<RegionalSymbolicStorageCertificate>();
@@ -1259,6 +1674,7 @@ mlir::LogicalResult checkUniformCircuit(mlir::func::FuncOp function,
         }
         symbolic.symbolicStorage = std::move(certificate);
         symbolic.storageSelectors = [finite](RegionalByteAddress address) -> std::optional<RegionalStorageSelectors> {
+            if (address.space == pto::AddressSpace::GM) { return RegionalStorageSelectors{}; }
             if (finite.storageSelectors) { return finite.storageSelectors(address); }
             auto& e = *finite.expressions;
             RegionalStorageSelectors result;
@@ -1289,6 +1705,9 @@ mlir::LogicalResult checkUniformCircuit(mlir::func::FuncOp function,
     const bool checkMissing = !function->hasAttr("test.nonuniform_deferred") &&
         session.input()->memory().gmPolicy() == mlir::pto::GMAliasPolicy::MayAlias;
     if (checkMissing) {
+        if (children.front().deferredAccessBoundary.empty()) {
+            return function.emitError("uniform circuit fixture lacks the deferred extrema under test");
+        }
         auto missing = children;
         missing.front().deferredAccessBoundary.clear();
         auto unavailable = composeRegionalSequence(function, arena, missing, true, false);

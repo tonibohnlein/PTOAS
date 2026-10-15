@@ -8,6 +8,7 @@
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticPeriodicConversion.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/AnalysisSessionInternal.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -22,6 +23,33 @@ namespace fs = mlir::pto::frontiersynch;
 namespace {
 using B = fs::BoundInteger;
 using Graph = std::vector<std::vector<bool>>;
+bool retainedGeneratorEstimate(const fs::ArithmeticProgram& program, fs::AnalysisSessionState& retained)
+{
+    fs::ProgramRecognition structure;
+    fs::AnalysisSessionState cold;
+    for (auto backend : {fs::AnalysisBackend::Arithmetic, fs::AnalysisBackend::ArithmeticPeriodic}) {
+        const auto before = fs::previewRetainedBackendWork(cold, structure, 0, {}, backend, {}, &program);
+        const auto after = fs::previewRetainedBackendWork(retained, structure, 0, {}, backend, {}, &program);
+        if (before.generators != fs::RetainedStage::Missing || after.generators != fs::RetainedStage::Ready ||
+            after.generatorWork != fs::EstimatedCount{0} || before.generatorWork == fs::EstimatedCount{0} ||
+            after.work[0] != before.work[0] ||
+            fs::estimatedAdd(after.total, before.generatorWork) != before.total || after == before) {
+            return false;
+        }
+        for (unsigned retry = 0; retry < 32; ++retry) {
+            if (!(fs::previewRetainedBackendWork(retained, structure, 0, {}, backend, {}, &program) == after)) {
+                return false;
+            }
+        }
+        // A distinct immutable form does not inherit another owner's generator
+        // stage merely because the primitive descriptions compare equal.
+        const auto other = program;
+        const auto isolated = fs::previewRetainedBackendWork(retained, structure, 0, {}, backend, {}, &other);
+        if (isolated.generators != fs::RetainedStage::Missing || isolated.total != before.total) { return false; }
+        retained.primitiveShapes.erase(&other);
+    }
+    return true;
+}
 void close(Graph& g)
 {
     for (std::size_t z = 0; z < g.size(); ++z) {
@@ -318,7 +346,12 @@ int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pt
     if (failed(index.build(function, input))) { return 1; }
     auto program = fs::recognizeArithmeticProgram(function, index, input, input.accesses(), {8,8,2,4096});
     auto protection = fs::structuredProtection(input.accesses());
-    auto stage = fs::analyzeGeneralArithmeticGenerators(program, &protection);
+    fs::AnalysisSessionState costs;
+    costs.generalGenerators.emplace(fs::analyzeGeneralArithmeticGenerators(program, &protection));
+    auto& stage = *costs.generalGenerators;
+    if (!retainedGeneratorEstimate(program, costs)) {
+        llvm::errs() << "retained integer generators were priced as unbuilt work\n"; return 1;
+    }
     auto converted = fs::convertArithmeticPeriodicProgram(program, stage);
     if (!converted.conversion.guarded) {
         llvm::errs() << "periodic importer: " << stage.analysis().error << " "
@@ -347,7 +380,12 @@ int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pt
         llvm::errs() << "arithmetic generator continuation differs\n"; return 1;
     }
     if (program.recognition.arithmeticClass == fs::ArithmeticClass::Differences) {
-        auto native = fs::analyzeDifferenceArithmeticGenerators(program, &protection);
+        fs::AnalysisSessionState nativeCosts;
+        nativeCosts.differenceGenerators.emplace(fs::analyzeDifferenceArithmeticGenerators(program, &protection));
+        auto& native = *nativeCosts.differenceGenerators;
+        if (!retainedGeneratorEstimate(program, nativeCosts)) {
+            llvm::errs() << "retained DBM generators were priced as unbuilt work\n"; return 1;
+        }
         auto adapted = fs::convertArithmeticPeriodicProgram(program, native, {}, false);
         auto demand = fs::reduceDifferenceArithmeticDemands(native);
         if (!demand || !demand->exactMinimum || native.analysis().exactMinimum ||

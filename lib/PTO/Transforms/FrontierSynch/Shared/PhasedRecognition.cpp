@@ -264,6 +264,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                         }
                         if (invariant) {
                             SequenceRegionResolver specialized;
+                            specialized.allocationPolicy = allocationPolicy;
                             specialized.specializedDemands = resolveOriginal.specializedDemands;
                             specialized.specializedNumeric = resolveOriginal.specializedNumeric;
                             specialized.specializedGuarded = resolveOriginal.specializedGuarded;
@@ -321,11 +322,13 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                                 {function, root}, constants, diagnostic);
                             if (mathematics) {
                                 view = exportSpecializedArithmeticRegion(
-                                    *mathematics, arena, true, diagnostic, parameterBinding);
+                                    *mathematics, arena, true, diagnostic, parameterBinding,
+                                    resolveOriginal.allocationPolicy);
                             }
                         } else {
                             view = analyzeArithmeticRegionWithProfiles({function, root}, index, *input, arena,
-                                diagnostic, program->regionalArithmeticProfiles, parameterBinding);
+                                diagnostic, program->regionalArithmeticProfiles, parameterBinding,
+                                program->allocationPolicy);
                         }
                         if (failed(view)) { return false; }
                         parts.push_back(std::move(*view));
@@ -455,7 +458,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                         }
                         if (childParts.empty()) { return true; }
                         auto composed = composeRegionalSequenceWithin(
-                            function, arena, std::move(childParts), true, false, child.loops, index.sourceFacts());
+                            function, arena, std::move(childParts), true, false, child.loops,
+                            index.sourceFacts(), allocationPolicy);
                         if (!composed.error.empty()) {
                             return unavailable("nested slice composition: " + composed.error);
                         }
@@ -480,6 +484,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                         }
                         if (invariant) {
                             SequenceRegionResolver specialized;
+                            specialized.allocationPolicy = allocationPolicy;
                             specialized.specializedDemands = resolveOriginal.specializedDemands;
                             specialized.specializedNumeric = resolveOriginal.specializedNumeric;
                             specialized.specializedGuarded = resolveOriginal.specializedGuarded;
@@ -537,7 +542,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                 protectionContext.push_back(outer);
                 const bool emptyBody = parts.empty();
                 auto composed = composeRegionalSequenceWithin(function, arena, std::move(parts), true, false,
-                                                               protectionContext, index.sourceFacts());
+                    protectionContext, index.sourceFacts(), allocationPolicy);
                 if (!composed.error.empty()) {
                     compactFailure = "phase body composition: " + composed.error;
                     invalidExpression = !expressions.constructionError().empty();
@@ -663,7 +668,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
         }
         auto repeated = repeatPhasedRegions(function, outer, std::move(phases), interval.interval.end,
                                            node.loops, interval.interval.begin, interval.maximumLength,
-                                           std::move(storage));
+                                           std::move(storage), allocationPolicy);
         if (!repeated.error.empty()) { return unavailable(repeated.error); }
         intervalViews.push_back(std::move(repeated.regional));
     }
@@ -677,7 +682,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
         // those original-site edges here would invent cross-visit uses. Storage
         // and native boundary crossings are still constructed and reduced.
         auto composed = composeRegionalSequenceWithin(
-            function, arena, std::move(intervalViews), false, false, node.loops);
+            function, arena, std::move(intervalViews), false, false, node.loops, {}, allocationPolicy);
         if (!composed.error.empty()) { return unavailable("outer slice composition: " + composed.error); }
         composed.state->completeInvocation = false;
         composed.state->requiredOuterLoops.assign(node.loops.begin(), node.loops.end());

@@ -10,6 +10,18 @@
 #define PTO_FRONTIERSYNCH_PHYSICALEXECUTEDCOUNTERS_H
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 namespace mlir::pto::frontiersynch {
+struct PreparedLogicalPlan;
+struct PreparedLogicalEndpoint;
+// An owned whole-function counter assignment bound to the frozen recipe. Its
+// command emitter is shared by direct output and serialized logical allocation.
+LogicalResult planExecutedFamilyOutput(func::FuncOp function, PreparedLogicalPlan& plan,
+    ArrayRef<int64_t> eligibleIds);
+bool validExecutedFamilyOutput(const PreparedLogicalPlan& plan);
+bool validExecutedFamilyEndpoint(const PreparedLogicalPlan& plan, const PreparedLogicalEndpoint& endpoint);
+// Direct executed output consumes only exact guards; ordinal/member/tuple
+// inputs are dead. Counter count includes independent publication/acquisition.
+std::optional<uint64_t> executedFamilyCounterCount(const PreparedLogicalPlan& plan);
+void emitExecutedFamilyOutput(func::FuncOp function, PreparedLogicalPlan& plan);
 // Closed whole-function arithmetic scope only. Each width>1 family receives
 // separate SET/WAIT SSA counters, both zero at invocation entry. They advance
 // modulo width only when the corresponding logical command executes. Existing

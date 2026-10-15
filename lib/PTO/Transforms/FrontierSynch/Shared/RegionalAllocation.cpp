@@ -8,6 +8,7 @@
 // Compose certified cyclic palettes using required-order lifetime envelopes.
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "RegionalAllocationCandidates.h"
+#include "CertifiedAllocationCandidates.h"
 #include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneCertificate.h"
@@ -74,7 +75,7 @@ std::shared_ptr<RegionalAllocationSummary> finiteRegionalAllocation(
     return result;
 }
 DictionaryAttr regionalBaseAllocationCertificate(const RegionalAnalysis& region, const PreparedLogicalPlan& plan,
-    AllocationProfile* profile)
+    AllocationProfile* profile, ArrayRef<int64_t> eligibleIds)
 {
     AllocationProfile::Scope groupsWork(profile, AllocationProfile::Groups);
     // A supplied summary certifies its own internal reuse. Nested coordinates
@@ -252,10 +253,12 @@ DictionaryAttr regionalBaseAllocationCertificate(const RegionalAnalysis& region,
         b.getNamedAttr("macro_reservations", b.getUnitAttr()),
         b.getNamedAttr("groups", serializedGroups)});
     AllocationProfile::Scope serialization(profile, AllocationProfile::Serialization);
-    return certificate.getDictionary(b.getContext());
+    auto evidence = certificate.getDictionary(b.getContext());
+    plan.allocationPreparation.retainCertificate(plan, plan.regionalAllocation, evidence, eligibleIds);
+    return evidence;
 }
 DictionaryAttr strengthenRegionalAllocationCertificate(const RegionalAnalysis& region,
-    const PreparedLogicalPlan& plan, DictionaryAttr base, AllocationProfile* profile)
+    const PreparedLogicalPlan& plan, DictionaryAttr base, AllocationProfile* profile, ArrayRef<int64_t> eligibleIds)
 {
     if (!base || !plan.regionalAllocation) { return base; }
     auto groups = base.getAs<ArrayAttr>("groups");
@@ -265,13 +268,21 @@ DictionaryAttr strengthenRegionalAllocationCertificate(const RegionalAnalysis& r
     AllocationProfile::Scope serialization(profile, AllocationProfile::Serialization);
     NamedAttrList certificate(base);
     certificate.set("lane_evidence", lanes);
-    return certificate.getDictionary(base.getContext());
+    auto evidence = certificate.getDictionary(base.getContext());
+    plan.allocationPreparation.retainCertificate(plan, plan.regionalAllocation, evidence, eligibleIds);
+    return evidence;
 }
 DictionaryAttr regionalAllocationCertificate(const RegionalAnalysis& region, const PreparedLogicalPlan& plan,
     AllocationProfile* profile)
 {
     auto base = regionalBaseAllocationCertificate(region, plan, profile);
-    return strengthenRegionalAllocationCertificate(region, plan, base, profile);
+    auto certificate = strengthenRegionalAllocationCertificate(region, plan, base, profile);
+    if (!certificate) { return {}; }
+    SmallVector<DictionaryAttr> completed;
+    for (const auto& entry : plan.allocationPreparation.retainedCertificates(plan)) {
+        completed.push_back(entry.evidence);
+    }
+    return withAllocationInventory(certificate, completed);
 }
 
 namespace {

@@ -10,6 +10,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_PROGRAMRECOGNITION_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_PROGRAMRECOGNITION_H
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgram.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticAllocationPolicy.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRecognition.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateAnalysis.h"
@@ -109,6 +110,7 @@ struct ProgramContractAuditWork {
     uint64_t refreshRequests = 0, materializations = 0, nodeVisits = 0, candidatesPublished = 0;
 };
 struct ProgramRecognition {
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId;
     // Immutable session configuration for all specialized composition views.
     // Direct library clients retain the historical regional defaults.
     SmallVector<ArithmeticLimits> regionalArithmeticProfiles{{8, 8, 1, 4096}, {8, 8, 2, 4096}};
@@ -159,7 +161,7 @@ StringRef contractName(ContractDiagnosticKind kind);
 // mode defers class checks until requested; compatibility clients default to
 // exhaustive checks. Arithmetic extraction is requested separately.
 // Applicable certifies the input contract only. Backend fields remain absent
-// until an explicit FrontierAnalysis::analyzeNumericCandidates request.
+// until an explicit FrontierAnalysis::auditNumericCandidates request.
 FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input);
 // Reuses the session index; the compatibility overload constructs its own.
 FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input,

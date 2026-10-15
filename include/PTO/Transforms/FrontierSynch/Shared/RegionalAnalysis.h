@@ -101,6 +101,11 @@ struct RegionalRelations;
 struct RegionalCapabilities {
     bool completeStorageModel = false, exactQueries = false, exactSelectors = false, endpointRecipes = false;
     bool contextualGuards = false; // Endpoint circuits may contain branch-local predicates.
+    // Producer qualification: replacing valid coordinates by equal expressions
+    // under a consumed activity cannot introduce an unsupported query or new
+    // historical evaluation inputs. Exact optional queries alone do not imply
+    // this property. Coordinate/query-changing adapters must requalify it.
+    bool substitutionStableQueries = false;
 };
 struct RegionalAnalysis {
     std::shared_ptr<RegionExpressions> expressions;

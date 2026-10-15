@@ -6,13 +6,15 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "AnalysisSessionInternal.h"
+#include "WholeInvocationIdentity.h"
+#include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInsertion.h"
 #include "Shared/NormalizedControl.h"
 #include "Structured/NumericTemplatePlan.h"
-#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticPeriodicConversion.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicWork.h"
 #include "llvm/Support/JSON.h"
 #include <algorithm>
 #include <tuple>
+#include <numeric>
 namespace mlir::pto::frontiersynch {
 AnalysisProfileScope::AnalysisProfileScope(std::shared_ptr<AnalysisLedger> owner, StringRef stage,
     std::size_t region, StringRef method, bool newRequest, uint64_t originatingRequest)
@@ -79,6 +81,11 @@ void AnalysisProfileScope::cacheHit()
 {
     if (timed) { accumulateCost(ledger->stages[index].cacheHits, 1); }
 }
+void AnalysisProfileScope::recordWork(std::vector<std::pair<std::string, uint64_t>> work)
+{
+    if (timed) { ledger->stages[index].work = std::move(work); }
+}
+
 StringRef analysisBackendName(AnalysisBackend backend)
 {
     switch (backend) {
@@ -135,6 +142,23 @@ void FrontierAnalysis::writeStageProfile(llvm::raw_ostream& stream, StringRef wo
         stages.push_back(std::move(entry));
     }
     const auto* recognition = result();
+    llvm::json::Array selections;
+    for (const auto& selection : sessionState->ledger->selections) {
+        auto strings = [](const std::vector<std::string>& values) {
+            llvm::json::Array array;
+            for (const auto& value : values) { array.push_back(value); }
+            return array;
+        };
+        llvm::json::Object entry{{"request", selection.request}, {"region", selection.region},
+            {"method", selection.method}, {"reason", selection.reason},
+            {"reused", strings(selection.reused)}, {"missing", strings(selection.missing)},
+            {"retained_unrequested", strings(selection.retainedUnrequested)},
+            {"refused", strings(selection.refused)}, {"attempted", selection.attempted},
+            {"failure_stage", selection.failureStage}};
+        entry["unbuilt_work"] = selection.unbuiltWork ? llvm::json::Value(*selection.unbuiltWork) :
+            llvm::json::Value(nullptr);
+        selections.push_back(std::move(entry));
+    }
     llvm::json::Object audit;
     if (recognition) {
         const auto& work = recognition->contractAuditWork;
@@ -154,22 +178,22 @@ void FrontierAnalysis::writeStageProfile(llvm::raw_ostream& stream, StringRef wo
         {"normalization_source_visits", normalizationSourceVisits()},
         {"regional_normalization_views", normalizationConstructions()},
         {"form_constructions", recognition ? recognition->formConstructions : 0},
-        {"stages", std::move(stages)}}) << "\n";
+        {"selections", std::move(selections)}, {"stages", std::move(stages)}}) << "\n";
 }
 namespace {
-struct GeneratorShape {
-    EstimatedCount pieces = 0, native = 0, rows = 0, domains = 0;
-    uint64_t dimensions = 0;
-};
 // Estimate joins from certified primitive descriptions before projection or
 // generator construction. These are selection estimates, not output bounds.
-GeneratorShape primitiveShape(const ArithmeticProgram& program)
+const ArithmeticPrimitiveShape& primitiveShape(const AnalysisSessionState& session, const ArithmeticProgram& program)
 {
-    GeneratorShape shape;
+    auto found = session.primitiveShapes.find(&program);
+    if (found != session.primitiveShapes.end()) { return found->second; }
+    ArithmeticPrimitiveShape shape;
+    accumulateCost(session.primitiveShapeBuilds, 1);
     shape.domains = program.sites.size();
     shape.dimensions = program.recognition.observedDimensions;
     EstimatedCount reads = 0, writes = 0, prerequisite = 0, rows = 0, pieces = 0;
     for (const auto& relation : program.primitives.relations) {
+        accumulateCost(session.primitiveShapeRelationVisits, 1);
         const auto count = EstimatedCount(relation.pieces.size());
         if (relation.kind == PrimitiveKind::Reads) { reads = estimatedAdd(reads, count); }
         if (relation.kind == PrimitiveKind::Writes) { writes = estimatedAdd(writes, count); }
@@ -177,6 +201,7 @@ GeneratorShape primitiveShape(const ArithmeticProgram& program)
         if (relation.kind == PrimitiveKind::Native) { shape.native = estimatedAdd(shape.native, count); }
         pieces = estimatedAdd(pieces, count);
         for (const auto& piece : relation.pieces) {
+            accumulateCost(session.primitiveShapePieceVisits, 1);
             EstimatedCount constraints;
             if (piece.machineSystem) {
                 constraints = estimatedAdd(piece.machineSystem->constraints().size(),
@@ -194,10 +219,19 @@ GeneratorShape primitiveShape(const ArithmeticProgram& program)
         EstimatedCount(*rows / *pieces + uint64_t(*rows % *pieces != 0)) : EstimatedCount{};
     shape.rows = estimatedMultiply(estimatedAdd(shape.pieces, shape.native),
         estimatedMultiply(averageRows, 3));
-    return shape;
+    return session.primitiveShapes.emplace(&program, std::move(shape)).first->second;
+}
+EstimatedCount generatorConstructionWork(const ArithmeticPrimitiveShape& shape)
+{
+    const auto dimension = estimatedAdd(shape.dimensions, 1);
+    // Price primitive imports and projected conflict/prerequisite joins as a
+    // separate stage. These are structural work estimates, not relation bounds.
+    return estimatedAdd(estimatedMultiply(shape.rows, dimension),
+        estimatedMultiply(shape.pieces, estimatedPower(dimension, 3)));
 }
 std::pair<AnalysisCostEstimate, AnalysisCostEstimate> estimates(
-    const ArithmeticProgram& program, const GeneratorShape& shape, const AnalysisNeeds& needs)
+    const ArithmeticProgram& program, const ArithmeticPrimitiveShape& shape, const AnalysisNeeds& needs,
+    bool includeGenerators = true)
 {
     AnalysisCostEstimate periodic, arithmetic;
     const auto types = estimatedMultiply(program.sites.size(), program.primitives.period);
@@ -243,11 +277,167 @@ std::pair<AnalysisCostEstimate, AnalysisCostEstimate> estimates(
     const auto exports = estimatedMultiply(interfaces, estimatedMultiply(generators, vertices));
     periodic.work = estimatedAdd(periodic.work, exports);
     arithmetic.work = estimatedAdd(arithmetic.work, estimatedMultiply(exports, dimension));
+    if (includeGenerators) {
+        const auto generatorsWork = generatorConstructionWork(shape);
+        periodic.work = estimatedAdd(periodic.work, generatorsWork);
+        arithmetic.work = estimatedAdd(arithmetic.work, generatorsWork);
+    }
     periodic.representation = estimatedAdd(periodic.representation, exports);
     arithmetic.representation = estimatedAdd(arithmetic.representation, exports);
     return {periodic, arithmetic};
 }
+const BackendAttempt* namedAttempt(const AnalysisSessionState& session, std::size_t region,
+    AnalysisBackend backend)
+{
+    const auto scope = session.attempts.find(region);
+    if (scope == session.attempts.end()) { return nullptr; }
+    const auto found = scope->second.find(backend);
+    return found == scope->second.end() ? nullptr : &found->second;
+}
+const BackendAttempt* loopAttempt(const AnalysisSessionState& session, std::size_t region,
+    AnalysisBackend backend)
+{
+    const auto found = session.loopAttempts.find({region, backend});
+    return found == session.loopAttempts.end() ? nullptr : &found->second;
+}
+RetainedStage retainedStage(bool attempted, bool available)
+{
+    return available ? RetainedStage::Ready : (attempted ? RetainedStage::Refused : RetainedStage::Missing);
+}
+RetainedBackendWork retainedBackendWork(const AnalysisSessionState& session, const ProgramRecognition& program,
+    std::size_t region, std::optional<std::size_t> canonical, AnalysisBackend backend,
+    const AnalysisNeeds& needs, const ArithmeticProgram* arithmetic, std::size_t depth = 0)
+{
+    RetainedBackendWork result;
+    const auto* named = namedAttempt(session, region, backend);
+    const BackendAttempt* owner = named;
+    const auto normalized = session.normalizedInputs.find(canonical.value_or(region));
+    const auto* representation = normalized == session.normalizedInputs.end() ? nullptr : normalized->second.get();
+    if (!owner || !owner->produced) {
+        const BackendAttempt* retained = nullptr;
+        if (canonical) { retained = loopAttempt(session, *canonical, backend); }
+        if (backend == AnalysisBackend::Arithmetic && region) {
+            const auto found = session.arithmeticRegionAttempts.find(region);
+            if (found != session.arithmeticRegionAttempts.end()) { retained = &found->second; }
+        }
+        if (backend == AnalysisBackend::ExpandedFinite && representation) {
+            const auto found = session.expandedAttempts.find(representation);
+            if (found != session.expandedAttempts.end()) { retained = &found->second; }
+        }
+        if (retained && retained->produced) { owner = retained; }
+    }
+    result.evidence = {named, owner, representation, arithmetic};
+    const auto* math = owner ? owner->mathematical.get() : nullptr;
+    bool identityNeedsQueries = false;
+    result.evidence.push_back(math);
+    result.stages[0] = retainedStage(owner && owner->produced, math != nullptr);
+    if (math && math->identityComposition && depth < program.nodes.size()) {
+        const auto& identity = *math->identityComposition;
+        auto childNeeds = needs;
+        childNeeds.synchronization = false;
+        auto child = retainedBackendWork(session, program, identity.childRegion, identity.childRegion,
+            identity.childBackend, childNeeds, nullptr, depth + 1);
+        result.stages[1] = child.stages[1]; result.stages[2] = child.stages[2];
+        result.work[1] = child.work[1]; result.work[2] = child.work[2];
+        identityNeedsQueries = child.required[1];
+        result.evidence.insert(result.evidence.end(), child.evidence.begin(), child.evidence.end());
+    } else if (math && !math->identityComposition) {
+        const auto available = mathematicalExports(*math);
+        result.stages[1] = retainedStage(true, available.queries);
+        result.stages[2] = retainedStage(true, available.selectors);
+        const BackendAttempt* exports = nullptr;
+        if (math->boundedDemands) {
+            const auto found = llvm::find_if(program.nodes, [&](const auto& node) {
+                return node.anchor == math->boundedDemands->loop.getOperation();
+            });
+            if (found != program.nodes.end()) {
+                exports = loopAttempt(session, std::distance(program.nodes.begin(), found),
+                    AnalysisBackend::BoundedLifetime);
+            }
+            result.stages[1] = retainedStage(exports && exports->boundedQueriesAttempted,
+                exports && bool(exports->boundedQueries));
+            result.stages[2] = retainedStage(exports && exports->boundedSelectorsAttempted,
+                exports && bool(exports->boundedSelectors));
+        } else if (math->arithmeticRegionalDemands) {
+            const auto found = session.arithmeticRegionAttempts.find(region);
+            if (found != session.arithmeticRegionAttempts.end()) { exports = &found->second; }
+            result.stages[1] = retainedStage(exports && exports->arithmeticQueriesAttempted,
+                exports && bool(exports->arithmeticQueries));
+            result.stages[2] = retainedStage(exports && exports->arithmeticSelectorsAttempted,
+                exports && bool(exports->arithmeticSelectors));
+        } else if (math->varyingNode) {
+            exports = loopAttempt(session, *math->varyingNode, AnalysisBackend::VaryingBoundary);
+            result.stages[1] = retainedStage(exports && exports->varyingQueriesAttempted,
+                exports && bool(exports->varyingQueries));
+            result.stages[2] = retainedStage(exports && exports->varyingSelectorsAttempted,
+                exports && bool(exports->varyingSelectors));
+        } else if (math->backend == "expanded-finite-guarded") {
+            exports = named;
+            result.stages[1] = retainedStage(exports && bool(exports->expandedQueries),
+                exports && exports->expandedQueries && exports->expandedQueries->capabilities.exactQueries);
+            result.stages[2] = retainedStage(exports && exports->expandedSelectorsAttempted,
+                exports && exports->expandedSelectors && exports->expandedSelectors->capabilities.exactSelectors);
+        }
+        result.evidence.push_back(exports);
+    }
+    result.stages[3] = retainedStage(named && named->endpoints.has_value(),
+        named && named->endpoints.value_or(false));
+    // Identity recursion already filtered child work by its effective needs;
+    // retain a selector's hidden query prerequisite at the wrapper as well.
+    const bool queryDependency = math && (identityNeedsQueries || (needs.selectors &&
+        (math->boundedDemands || math->arithmeticRegionalDemands || math->backend == "expanded-finite-guarded")) ||
+        ((needs.selectors || needs.synchronization) && math->varyingBoundaryDemands));
+    const std::array<bool, 4> required{true, needs.queries || queryDependency, needs.selectors, needs.synchronization};
+    result.required = required;
+    const bool arithmeticMethod =
+        backend == AnalysisBackend::Arithmetic || backend == AnalysisBackend::ArithmeticPeriodic;
+    const bool certified = arithmetic && arithmetic->extraction.state == RecognitionState::Applicable &&
+        arithmetic->recognition.state == RecognitionState::Applicable;
+    if (arithmeticMethod && certified) {
+        const auto& shape = primitiveShape(session, *arithmetic);
+        const bool sharedGenerators = region == 0;
+        const auto cold = estimates(*arithmetic, shape, {}, !sharedGenerators);
+        const auto& estimate = backend == AnalysisBackend::Arithmetic ? cold.second : cold.first;
+        if (result.stages[0] == RetainedStage::Missing) { result.work[0] = estimate.work; }
+        if (sharedGenerators) {
+            result.generators = RetainedStage::Missing;
+            auto retained = [&](const auto& stage) {
+                if (!stage || !stage->belongsTo(*arithmetic)) { return; }
+                result.evidence.push_back(&*stage);
+                result.generators = stage->analysis().error.empty() ? RetainedStage::Ready : RetainedStage::Refused;
+            };
+            retained(session.differenceGenerators);
+            retained(session.generalGenerators);
+            if (result.stages[0] == RetainedStage::Missing) {
+                result.generatorWork = *result.generators == RetainedStage::Missing ?
+                    generatorConstructionWork(shape) : EstimatedCount{0};
+                // A failed owned generator stage cannot enter either reducer.
+                // The ordinary request still reports its precise refusal.
+                if (*result.generators == RetainedStage::Refused) { result.work[0] = 0; }
+            }
+        }
+        auto exportWork = estimatedMultiply(estimatedAdd(shape.pieces, shape.native), estimate.ports);
+        if (backend == AnalysisBackend::Arithmetic) {
+            exportWork = estimatedMultiply(exportWork, estimatedAdd(shape.dimensions, 1));
+        }
+        for (unsigned i = 1; i < 4; ++i) {
+            if (result.stages[i] == RetainedStage::Missing) { result.work[i] = exportWork; }
+        }
+    }
+    result.total = result.generatorWork;
+    for (unsigned i = 0; i < required.size(); ++i) {
+        if (!required[i] || result.stages[i] != RetainedStage::Missing) { result.work[i] = 0; }
+        result.total = estimatedAdd(result.total, result.work[i]);
+    }
+    return result;
+}
 } // namespace
+RetainedBackendWork previewRetainedBackendWork(const AnalysisSessionState& session,
+    const ProgramRecognition& program, std::size_t region, std::optional<std::size_t> canonical,
+    AnalysisBackend backend, const AnalysisNeeds& needs, const ArithmeticProgram* arithmetic)
+{
+    return retainedBackendWork(session, program, region, canonical, backend, needs, arithmetic);
+}
 std::vector<AnalysisForm> FrontierAnalysis::exactForms(const AnalysisRequest& request)
 {
     const bool valid = storage && succeeded(recognizeStructure()) && request.region < program->nodes.size();
@@ -256,79 +446,80 @@ std::vector<AnalysisForm> FrontierAnalysis::exactForms(const AnalysisRequest& re
     sessionState->requestsStarted = true;
     AnalysisProfileScope profile(sessionState->ledger, "selection", request.region, "exactForms");
     const auto identity = std::make_pair(request.region, analysisRequestKey(request));
+    const StructureNode* loop = request.region ? &program->nodes[request.region] :
+        wholeInvocationLoop(function, *storage, *program, *structuralIndex);
+    const auto canonical = loop ? static_cast<std::size_t>(loop - program->nodes.data()) : request.region;
+    const auto retained = sessionState->normalizedInputs.find(canonical);
+    const auto* normalized = retained == sessionState->normalizedInputs.end() ? nullptr : retained->second.get();
+    const auto preflight = sessionState->numericTemplatePlans.find({canonical, true});
+    const auto* numerical = preflight == sessionState->numericTemplatePlans.end() ? nullptr : preflight->second.get();
+    const RecognitionResult* rotating = loop && loop->rotatingResult ? &*loop->rotatingResult : nullptr;
+    const std::vector<const void*> evidence{normalized, numerical, rotating};
     auto cached = sessionState->formOrders.find(identity);
-    if (cached != sessionState->formOrders.end()) { profile.cacheHit(); return cached->second; }
-    auto normalized = normalizedRegion(request.region);
+    if (cached != sessionState->formOrders.end() && cached->second.evidence == evidence) {
+        profile.cacheHit(); return cached->second.order;
+    }
     std::vector<AnalysisForm> order{AnalysisForm::Original};
-    if (!normalized->original) {
-        sessionState->formOrders.emplace(identity, order); return order;
+    if (normalized && !normalized->original) {
+        sessionState->expandedFormEstimates[identity] = {};
+        sessionState->formOrders[identity] = {order, evidence}; return order;
     }
     AnalysisCostEstimate original, expanded;
-    const auto* numerical = numericalPreflight(request.region);
-    const auto& source = *normalized->original;
-    const uint64_t interfaces = uint64_t(request.needs.queries) + uint64_t(request.needs.selectors) +
-                                uint64_t(request.needs.synchronization);
-    // Count backend occurrences, not just normalized syntax: retained dependent
-    // finite domains still enumerate visits during numerical materialization.
-    const bool numericalEligible = numerical && numerical->form.result.state == RecognitionState::Applicable;
-    EstimatedCount payloads, effects, visits;
-    if (numericalEligible) {
-        payloads = numerical->form.countedPayloads;
-        visits = numerical->form.countedVisits;
-        effects = 0;
-        for (const auto& occurrence : numerical->payloads) {
-            effects = estimatedAdd(effects, storage->accesses().effectsFor(occurrence.phase).size());
+    // Absence of retained qualification leaves both candidates eligible. In
+    // particular, the expanded bucket also owns the numerical-sequence adapter.
+    if (normalized) {
+        const auto& source = *normalized->original;
+        const uint64_t interfaces = uint64_t(request.needs.queries) + uint64_t(request.needs.selectors) +
+                                    uint64_t(request.needs.synchronization);
+        // Count backend occurrences, not just normalized syntax: retained dependent
+        // finite domains still enumerate visits during numerical materialization.
+        const bool numericalEligible = numerical && numerical->form.result.state == RecognitionState::Applicable;
+        EstimatedCount payloads, effects, visits;
+        if (numericalEligible) {
+            payloads = numerical->form.countedPayloads;
+            visits = numerical->form.countedVisits;
+            effects = 0;
+            for (const auto& occurrence : numerical->payloads) {
+                effects = estimatedAdd(effects, storage->accesses().effectsFor(occurrence.phase).size());
+            }
         }
-    }
-    const auto joins = estimatedMultiply(effects, effects);
-    expanded.generatorPieces = joins;
-    expanded.ports = estimatedMultiply(payloads, 2);
-    expanded.numericalWindow = estimatedMultiply(payloads, estimatedAdd(effects, 1));
-    expanded.circuitNodes = expanded.relationConversion = 0;
-    // Keep the existing conservative per-form estimate for stable selection.
-    // Actual shared-tree source visits are recorded separately by the session.
-    const auto normalization = estimatedAdd(estimatedMultiply(source.representedNodes, 2),
-        estimatedAdd(normalized->representedNodes, source.representedNodes));
-    expanded.work = estimatedAdd(normalization, estimatedAdd(visits,
-        estimatedAdd(joins, estimatedMultiply(expanded.numericalWindow, estimatedAdd(interfaces, 1)))));
-    original.representation = estimatedAdd(source.representedNodes, source.effects);
-    expanded.representation = numericalEligible ? estimatedAdd(normalized->representedNodes,
-        estimatedAdd(effects, estimatedMultiply(interfaces, expanded.ports))) :
-        estimatedAdd(normalized->representedNodes, normalized->effects);
-    // Only a complete known original form receives a known estimate. An
-    // unavailable signature leaves work unknown, never removes that attempt.
-    const StructureNode* loop = request.region ? &program->nodes[request.region] : nullptr;
-    if (!request.region) {
-        for (const auto& node : program->nodes) {
-            const bool topLevelLoop = node.kind == StructureKind::Loop && node.anchor->getParentOp() == function;
-            if (!topLevelLoop) { continue; }
-            const bool complete = llvm::all_of(storage->instructions(), [&](auto* phase) {
-                return node.anchor->isProperAncestor(phase->elementOp);
-            });
-            if (complete) { loop = &node; break; }
+        const auto joins = estimatedMultiply(effects, effects);
+        expanded.generatorPieces = joins;
+        expanded.ports = estimatedMultiply(payloads, 2);
+        expanded.numericalWindow = estimatedMultiply(payloads, estimatedAdd(effects, 1));
+        expanded.circuitNodes = expanded.relationConversion = 0;
+        // Keep the existing conservative per-form estimate for stable selection.
+        // Actual shared-tree source visits are recorded separately by the session.
+        const auto normalization = estimatedAdd(estimatedMultiply(source.representedNodes, 2),
+            estimatedAdd(normalized->representedNodes, source.representedNodes));
+        expanded.work = estimatedAdd(normalization, estimatedAdd(visits,
+            estimatedAdd(joins, estimatedMultiply(expanded.numericalWindow, estimatedAdd(interfaces, 1)))));
+        original.representation = estimatedAdd(source.representedNodes, source.effects);
+        expanded.representation = numericalEligible ? estimatedAdd(normalized->representedNodes,
+            estimatedAdd(effects, estimatedMultiply(interfaces, expanded.ports))) :
+            estimatedAdd(normalized->representedNodes, normalized->effects);
+        // Only a complete known original form receives a known estimate. An
+        // unavailable signature leaves work unknown, never removes that attempt.
+        if (rotating && rotating->state == RecognitionState::Applicable) {
+            const EstimatedCount fragments = rotating->accesses.size();
+            const EstimatedCount sites = loop->payloadCount;
+            original.generatorPieces = estimatedMultiply(fragments, fragments);
+            original.ports = estimatedMultiply(sites, 2);
+            original.numericalWindow = original.circuitNodes = original.relationConversion = 0;
+            original.work = estimatedAdd(source.representedNodes, estimatedMultiply(original.generatorPieces,
+                estimatedAdd(sites, estimatedAdd(interfaces, 1))));
+            original.representation = estimatedAdd(original.generatorPieces,
+                estimatedMultiply(original.ports, estimatedAdd(interfaces, 1)));
         }
-    }
-    if (loop && loop->kind == StructureKind::Loop) {
-        recognizeForm(static_cast<std::size_t>(loop - program->nodes.data()), ProgramForm::Rotating);
-    }
-    const RecognitionResult* rotating = loop && loop->rotatingResult ? &*loop->rotatingResult : nullptr;
-    if (rotating && rotating->state == RecognitionState::Applicable) {
-        const EstimatedCount fragments = rotating->accesses.size();
-        const EstimatedCount sites = loop->payloadCount;
-        original.generatorPieces = estimatedMultiply(fragments, fragments);
-        original.ports = estimatedMultiply(sites, 2);
-        original.numericalWindow = original.circuitNodes = original.relationConversion = 0;
-        original.work = estimatedAdd(source.representedNodes, estimatedMultiply(original.generatorPieces,
-            estimatedAdd(sites, estimatedAdd(interfaces, 1))));
-        original.representation = estimatedAdd(original.generatorPieces,
-            estimatedMultiply(original.ports, estimatedAdd(interfaces, 1)));
     }
     order.push_back(AnalysisForm::SmallCountExpanded);
-    if (estimatedCostLess(expanded, original)) { std::reverse(order.begin(), order.end()); }
+    if (estimatedSelectionWorkLess(expanded, original)) { std::reverse(order.begin(), order.end()); }
     sessionState->ledger->recordEstimate({request.region, identity.second, "form-original", original});
     sessionState->ledger->recordEstimate({request.region, identity.second, "form-expanded", expanded});
-    sessionState->expandedFormEstimates.emplace(identity, expanded);
-    sessionState->formOrders.emplace(identity, order);
+    // Records are append-only evidence snapshots; refreshed qualifications get
+    // a new record, while identical evidence produces only a selection cache hit.
+    sessionState->expandedFormEstimates[identity] = expanded;
+    sessionState->formOrders[identity] = {order, evidence};
     return order;
 }
 std::vector<AnalysisBackend> FrontierAnalysis::arithmeticMethods(const AnalysisRequest& request)
@@ -340,34 +531,120 @@ std::vector<AnalysisBackend> FrontierAnalysis::arithmeticMethods(const AnalysisR
     AnalysisProfileScope profile(sessionState->ledger, "selection", request.region, "arithmeticMethods");
     const auto key = analysisRequestKey(request);
     const auto identity = std::make_pair(request.region, key);
-    if (auto found = sessionState->arithmeticOrders.find(identity); found != sessionState->arithmeticOrders.end()) {
-        return found->second;
-    }
     // The regional periodic adapter is not implemented. Do not advertise it as
     // a reducer choice; the available regional arithmetic path stays eligible.
     std::vector<AnalysisBackend> order = request.region ? std::vector<AnalysisBackend>{AnalysisBackend::Arithmetic} :
         std::vector<AnalysisBackend>{AnalysisBackend::ArithmeticPeriodic, AnalysisBackend::Arithmetic};
     const ArithmeticProgram* form = nullptr;
-    if (request.region) { form = recognizeArithmeticRegion(request.region); }
-    else if (succeeded(recognizeArithmetic()) && program->arithmetic) { form = &*program->arithmetic; }
+    if (request.region) {
+        auto found = arithmeticForms.find(request.region);
+        if (found != arithmeticForms.end()) { form = found->second.get(); }
+    } else if (program->arithmetic) { form = &*program->arithmetic; }
+    const std::vector<const void*> evidence{form};
+    if (auto found = sessionState->arithmeticOrders.find(identity);
+        found != sessionState->arithmeticOrders.end() && found->second.evidence == evidence) {
+        profile.cacheHit(); return found->second.order;
+    }
     AnalysisCostEstimate periodic, arithmetic;
     const bool certified = form && form->extraction.state == RecognitionState::Applicable &&
         form->recognition.state == RecognitionState::Applicable;
     if (certified) {
-        std::tie(periodic, arithmetic) = estimates(*form, primitiveShape(*form), request.needs);
-        std::string diagnostic;
-        if (!request.region && !checkArithmeticPeriodicSkeleton(*form, diagnostic)) {
-            periodic.work.reset(); periodic.representation.reset();
-        }
+        std::tie(periodic, arithmetic) = estimates(*form, primitiveShape(*sessionState, *form), request.needs);
     }
-    if (!request.region && estimatedCostLess(arithmetic, periodic)) { std::reverse(order.begin(), order.end()); }
+    if (!request.region && estimatedSelectionWorkLess(arithmetic, periodic)) {
+        std::reverse(order.begin(), order.end());
+    }
     for (auto method : order) {
         const bool periodicMethod = method == AnalysisBackend::ArithmeticPeriodic;
         sessionState->ledger->recordEstimate({request.region, key,
                                       periodicMethod ? "arithmetic-periodic" : "arithmetic",
                                       periodicMethod ? periodic : arithmetic});
     }
-    sessionState->arithmeticOrders.emplace(identity, order);
+    sessionState->arithmeticOrders[identity] = {order, evidence};
+    return order;
+}
+std::vector<AnalysisBackend> FrontierAnalysis::rankExactCandidates(const AnalysisRequest& request,
+    const std::vector<AnalysisBackend>& candidates)
+{
+    AnalysisProfileScope profile(sessionState->ledger, "selection", request.region, "retained-work");
+    uint64_t candidateMask = 0;
+    for (const auto backend : candidates) { candidateMask |= uint64_t{1} << unsigned(backend); }
+    const auto identity = std::make_tuple(request.region, analysisRequestKey(request), sessionState->certifying,
+        candidateMask);
+    const StructureNode* loop = request.region ? &program->nodes[request.region] :
+        wholeInvocationLoop(function, *storage, *program, *structuralIndex);
+    const auto canonical = loop ? std::optional<std::size_t>(loop - program->nodes.data()) : std::nullopt;
+    const ArithmeticProgram* arithmetic = nullptr;
+    if (!request.region && program->arithmetic) { arithmetic = &*program->arithmetic; }
+    if (request.region) {
+        const auto found = arithmeticForms.find(request.region);
+        if (found != arithmeticForms.end()) { arithmetic = found->second.get(); }
+    }
+    std::vector<RetainedBackendWork> previews;
+    for (const auto backend : candidates) {
+        previews.push_back(previewRetainedBackendWork(*sessionState, *program, request.region, canonical,
+            backend, request.needs, arithmetic));
+    }
+    auto found = sessionState->backendOrders.find(identity);
+    const bool retained = found != sessionState->backendOrders.end() &&
+        found->second.candidates == candidates && found->second.evidence == previews;
+    std::vector<AnalysisBackend> order;
+    if (retained) { profile.cacheHit(); order = found->second.order; }
+    else {
+        std::vector<std::size_t> positions(candidates.size());
+        std::iota(positions.begin(), positions.end(), 0);
+        std::stable_sort(positions.begin(), positions.end(), [&](auto a, auto b) {
+            AnalysisCostEstimate left, right;
+            left.work = previews[a].total; right.work = previews[b].total;
+            return estimatedSelectionWorkLess(left, right);
+        });
+        // Named adapters must follow their dependency even when its remaining
+        // work is unknown. They cannot memoize a premature prerequisite failure.
+        while (!positions.empty()) {
+            auto eligible = llvm::find_if(positions, [&](auto position) {
+                const auto backend = candidates[position];
+                std::optional<AnalysisBackend> dependency;
+                if (backend == AnalysisBackend::NumericalSequence) { dependency = AnalysisBackend::NumericalPeriodic; }
+                if (backend == AnalysisBackend::SequenceEndpoints) { dependency = AnalysisBackend::Sequence; }
+                return !dependency || !llvm::any_of(positions, [&](auto other) {
+                    return candidates[other] == *dependency;
+                });
+            });
+            assert(eligible != positions.end() && "exact candidate dependencies must be acyclic");
+            order.push_back(candidates[*eligible]);
+            positions.erase(eligible);
+        }
+        sessionState->backendOrders[identity] = {candidates, order, previews};
+    }
+    if (sessionState->ledger->profiling) {
+        constexpr const char* stages[] = {"demands", "queries", "selectors", "synchronization"};
+        for (const auto backend : order) {
+            const auto position = std::distance(candidates.begin(), llvm::find(candidates, backend));
+            const auto& work = previews[position];
+            AnalysisLedger::Selection record;
+            record.request = profile.requestId(); record.region = request.region;
+            record.method = analysisBackendName(backend).str(); record.unbuiltWork = work.total;
+            record.reason = retained ? "retained-selection" :
+                (!work.total ? "unknown-unbuilt-work" : (*work.total ? "estimated-unbuilt-work" : "no-unbuilt-work"));
+            if (work.generators) {
+                auto& list = *work.generators == RetainedStage::Ready ? record.reused :
+                    (*work.generators == RetainedStage::Refused ? record.refused : record.missing);
+                list.push_back("arithmetic-generators");
+            }
+            for (unsigned stage = 0; stage < work.stages.size(); ++stage) {
+                if (!work.required[stage]) {
+                    if (work.stages[stage] == RetainedStage::Ready) {
+                        record.retainedUnrequested.push_back(stages[stage]);
+                    }
+                    continue;
+                }
+                auto& list = work.stages[stage] == RetainedStage::Ready ? record.reused :
+                    (work.stages[stage] == RetainedStage::Refused ? record.refused : record.missing);
+                list.push_back(stages[stage]);
+            }
+            sessionState->ledger->selections.push_back(std::move(record));
+        }
+    }
     return order;
 }
 std::vector<AnalysisCostRecord> FrontierAnalysis::costRecords() const

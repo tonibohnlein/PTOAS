@@ -416,7 +416,7 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
                 regional = resolveOriginal.exports(id, AnalysisBackend::Arithmetic, arithmeticError);
             } else {
                 regional = analyzeArithmeticRegionWithProfiles({function, child.loop}, index, *input, arena,
-                    arithmeticError, program->regionalArithmeticProfiles);
+                    arithmeticError, program->regionalArithmeticProfiles, {}, program->allocationPolicy);
             }
             if (succeeded(regional)) {
                 if (node.boundedDemands && child.loop->getParentOp() == function) {

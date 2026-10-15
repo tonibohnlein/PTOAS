@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent finite physical-conflict DAGs for the symbolic demand backend.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticSelectors.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisProfile.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/IntegerImplicationCache.h"
@@ -711,6 +712,56 @@ bool checkLocalAdjacencyQueries()
     llvm::outs() << "local-adjacency queries: empty, cross-pipe-only, nonadjacent same-pipe\n";
     return true;
 }
+bool checkDemandProfiles()
+{
+    MLIRContext context;
+    context.disableMultithreading();
+    Bundle bundle(context, 0, 1);
+    const fs::StructuredProtection protection;
+    auto disabled = std::make_shared<fs::AnalysisLedger>();
+    auto plain = fs::analyzeGeneralArithmeticDemandsWithProtection(bundle.program, protection, {disabled, 17});
+    if (!disabled->stages.empty() || !disabled->activeStages.empty() || disabled->nextRequest ||
+        !plain.error.empty()) { return false; }
+    auto ledger = std::make_shared<fs::AnalysisLedger>();
+    ledger->profiling = true;
+    fs::GeneralArithmeticDemandAnalysis profiled;
+    {
+        fs::AnalysisProfileScope parent(ledger, "profile-oracle", 17, "integer", true);
+        profiled = fs::analyzeGeneralArithmeticDemandsWithProtection(bundle.program, protection, {ledger, 17});
+    }
+    if (!profiled.error.empty() || !profiled.exactMinimum || !ledger->activeStages.empty()) { return false; }
+    std::set<std::string> stages;
+    for (const auto& record : ledger->stages) {
+        if (record.region != 17 || record.request != ledger->stages.front().request) { return false; }
+        uint64_t children = 0;
+        for (const auto& child : ledger->stages) {
+            if (child.parent == record.id) { children += child.elapsedNanoseconds; }
+        }
+        if (record.exclusiveNanoseconds + children != record.elapsedNanoseconds) { return false; }
+        stages.insert(record.stage);
+        if (record.stage == "arithmetic-demand-reduction" && record.work.empty()) { return false; }
+    }
+    for (const char* stage : {"arithmetic-demand-generators", "arithmetic-demand-reduction",
+             "arithmetic-demand-native-closure", "arithmetic-demand-required-closure",
+             "arithmetic-demand-required-difference", "arithmetic-demand-cover-composition",
+             "arithmetic-demand-cover-difference", "arithmetic-demand-adjacency",
+             "arithmetic-demand-composition", "arithmetic-demand-difference"}) {
+        if (!stages.count(stage)) { return false; }
+    }
+    const auto& a = plain.cost.integerDifference;
+    const auto& b = profiled.cost.integerDifference;
+    if (a.requests != b.requests || a.axes != b.axes || a.skippedAxes != b.skippedAxes || a.slices != b.slices ||
+        a.outputPieces != b.outputPieces || !b.requests) { return false; }
+    bool plainAdjacent = true, profiledAdjacent = true;
+    for (int64_t trips = 0; trips <= 3; ++trips) {
+        for (int64_t guard = 0; guard <= 1; ++guard) {
+            if (!checkCase(plain, 0, trips, guard, plainAdjacent) ||
+                !checkCase(profiled, 0, trips, guard, profiledAdjacent)) { return false; }
+        }
+    }
+    llvm::outs() << "arithmetic demand profiles: optional, exclusive, original-region, semantic-equivalent\n";
+    return true;
+}
 template<class Analyze>
 int runChecks(Analyze analyze, llvm::StringRef name)
 {
@@ -752,7 +803,8 @@ int runArithmeticDemandChecks()
 }
 int runGeneralArithmeticDemandChecks()
 {
-    if (!checkNumericalUnionMergeCache() || !checkNumericalUnionDifferenceCache() || !checkImplicationCertificates() ||
+    if (!checkDemandProfiles() || !checkNumericalUnionMergeCache() || !checkNumericalUnionDifferenceCache() ||
+        !checkImplicationCertificates() ||
         !checkLatticeImplicationCertificates() || !checkOptionalInclusionCertificates() ||
         !checkProtectedPhysicalJoinReuse() || !checkLocalAdjacencyQueries()) { return 1; }
     bool reused = false, differenceReused = false, physicalReused = false, emptyPhysicalReused = false;
