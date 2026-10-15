@@ -146,15 +146,17 @@ def bind_decode(logical, bindings):
 
 
 def same_fixed_protocol(left, right):
-    """Compare protocol evidence while allowing measured scalar work to change."""
-    counters = {"visits", "arithmetic_visits", "select_visits"}
+    """Compare protocol evidence while allowing measured control work to change."""
+    # Guard consolidation and conditional rank evaluation change executed If
+    # counts. Causality is carried by the exact ordered command events below.
+    counters = {"visits", "arithmetic_visits", "select_visits", "guard_visits"}
     return ({key: value for key, value in left.items() if key not in counters}
             == {key: value for key, value in right.items() if key not in counters})
 
 
 def check_protocol_comparison():
     original = feedback_case(False)["trace"]
-    measured = dict(original, visits=100, arithmetic_visits=80, select_visits=20)
+    measured = dict(original, visits=100, arithmetic_visits=80, select_visits=20, guard_visits=7)
     assert same_fixed_protocol(original, measured)
     for changed in (dict(measured, error="invalid"), dict(measured, payloads=1),
                     dict(measured, events=list(reversed(original["events"]))),

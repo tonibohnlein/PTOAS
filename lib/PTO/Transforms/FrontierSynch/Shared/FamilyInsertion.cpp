@@ -1636,7 +1636,9 @@ LogicalResult normalizeFamilyEndpointPlan(PreparedLogicalPlan& plan)
         return failure();
     }
     inventory->snapshot = familyPlanSnapshot(plan);
-    inventory->translateNamespaces = bool(original->child);
+    // Original records define namespaces for direct producers as well as
+    // composed leaves; recipe-local labels are not separate protocol domains.
+    inventory->translateNamespaces = bool(original->child) || !plan.families.empty();
     const auto namespaces =
         inventory->translateNamespaces ? familyRecordNamespaces(plan.families) : std::map<uint32_t, uint32_t>{};
     uint64_t inputSites = 0;
@@ -2330,8 +2332,8 @@ LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, 
     if (failed(collectFamilyParts(recipe, leaves, contexts))) {
         return failure();
     }
-    // Sequence namespace normalization applies to delayed and concrete records
-    // alike. Validate the translated provenance before allocating any operations.
+    // Original-record namespace normalization applies to direct and composed
+    // recipes alike. Validate provenance before allocating any operations.
     auto namespaces = recipe.normalized->translateNamespaces ? familyRecordNamespaces(prepared.families) :
                                                                std::map<uint32_t, uint32_t>{};
     if (recipe.normalized->translateNamespaces) {

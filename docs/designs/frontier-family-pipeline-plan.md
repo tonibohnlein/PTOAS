@@ -6,7 +6,7 @@ The implementation owner maintains source, tests and receipts. Correctness and
 architecture reviewers independently assess each batch before its milestone
 commit. Earlier plans and measurements remain in the
 [historical evidence log](frontier-family-pipeline-history.md). The
-[current checkpoint receipt](frontier-reviewed-construction-checkpoint.md) separates reviewed
+[current namespace checkpoint receipt](frontier-explicit-namespace-checkpoint.md) separates reviewed
 implementation from executed validation and unresolved protocol work.
 
 ## Current status
@@ -14,8 +14,8 @@ implementation from executed validation and unresolved protocol work.
 | Work | Implementation acceptance | Kernel compilation | Fixed-protocol capacity investigation |
 |---|---|---|---|
 | M1 normalization and outcome distinctions | Accepted and committed | Separate historical receipts; not re-established here | Does not close remaining protocols |
-| GroupNorm lane spans | Both reviews accept a partial allocation checkpoint | Not established; combined output open | Six-ID split allocation and existing interval/trace checks support the split assignment only |
-| Prefill coordinate allocation | Experimental candidate retained in the checkpoint; construction investigation open | Not established | Historical diagnostic: four families reached two-ID proofs; `11 → 56` stopped during composition. S6 reaches its watchdog without this family-stage observation. |
+| GroupNorm lane spans | Accepted partial allocation checkpoint; fresh combined/split/restored trace checks pass | Device compilation not established | Preserved six-ID assignment checked in 24 physical traces across those three routes; tested protocol scope only |
+| Prefill coordinate allocation | Experimental candidate retained in the checkpoint; construction investigation open | Not established | Historical diagnostic: four families reached two-ID proofs; `11 → 56` stopped during composition. Current default-policy logical construction succeeds; allocation export remains unavailable. The opt-in candidate requires fresh family-stage attribution. |
 | Decode witness | Retained evidence for the admitted execution | Not established by the witness | Nine-ID witness applies to its fixed protocol, not a universal hardware lower bound |
 | Delta prefix protocol | Logical support retained; construction work continues | Not established | Checked one-token command graph: 46 mutually non-reusable V→MTE3 handoffs under the unchanged prefix protocol; other realizations remain separate |
 
