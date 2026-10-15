@@ -596,19 +596,25 @@ bool checkProtocolSelectionLifetime(mlir::MLIRContext* context)
         location, "protocol_selection_owner", builder.getFunctionType({}, {})));
     auto* body = function->addEntryBlock();
     builder.setInsertionPointToEnd(body);
-    auto* cut = builder.create<arith::ConstantIndexOp>(location, 0).getOperation();
+    auto* publication = builder.create<arith::ConstantIndexOp>(location, 0).getOperation();
+    auto* cut = builder.create<arith::ConstantIndexOp>(location, 1).getOperation();
     auto* terminal = builder.create<func::ReturnOp>(location).getOperation();
     std::weak_ptr<const fs::RegionExpressions> proofOwner;
     std::shared_ptr<const fs::FamilyEndpointRecipe> cached;
     {
         auto arena = std::make_shared<fs::RegionExpressions>();
-        fs::ContextualEndpointFamily endpoint;
-        endpoint.piece.cut = {body, cut};
-        endpoint.piece.kind = fs::EndpointKind::Barrier;
-        endpoint.piece.sourcePipe = endpoint.piece.targetPipe = 1;
-        endpoint.piece.members.push_back({0, {}});
-        endpoint.activity = arena->boolean(true);
-        auto recipe = fs::buildContextualFamilyEndpointRecipe(arena, {endpoint});
+        SmallVector<fs::ContextualEndpointFamily> endpoints;
+        for (auto* before : {publication, cut, terminal}) {
+            fs::ContextualEndpointFamily endpoint;
+            endpoint.piece.cut = {body, before};
+            endpoint.piece.kind = before == publication ? fs::EndpointKind::Set : fs::EndpointKind::Wait;
+            endpoint.piece.sourcePipe = 1; endpoint.piece.targetPipe = 2;
+            endpoint.piece.members.push_back({0, {}});
+            endpoint.activity = arena->boolean(before != terminal);
+            endpoint.ordinal = arena->constant(0);
+            endpoints.push_back(std::move(endpoint));
+        }
+        auto recipe = fs::buildContextualFamilyEndpointRecipe(arena, endpoints);
         if (failed(recipe)) { return false; }
         // The pending proof deliberately belongs to a different arena from
         // the deferred command. Only the frozen evidence inventory owns it.
@@ -621,6 +627,11 @@ bool checkProtocolSelectionLifetime(mlir::MLIRContext* context)
         plan.familyRecipe = *recipe;
         fs::EndpointFamily family;
         family.id = 0;
+        // The directory owns the actual singleton handoff, including the
+        // inactive complementary cleanup side. Its proof arena is independent.
+        family.sourcePipe = 1; family.targetPipe = 2;
+        family.sourceCut = {body, publication}; family.targetCut = {body, cut};
+        family.members.push_back({0, 0, 1, {}, {}});
         family.targetChoices = choice;
         plan.families.push_back(std::move(family));
         if (failed(fs::normalizeLogicalFamilies(plan))) { return false; }

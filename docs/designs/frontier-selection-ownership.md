@@ -62,8 +62,9 @@ Ordinary recursive requests must still descend to an original child. Same-node
 identity continuation uses a separate cache namespace and its existing restricted
 candidate suffix. Backend failure memoization is unchanged.
 
-The exhausted-walk changes are source-reviewed work with runtime validation
-pending. `checkProducerFailureStages` checks a real exhausted candidate walk,
+The exhausted-walk changes passed source review and the 46-test focused gate
+recorded in the [construction checkpoint](frontier-reviewed-construction-checkpoint.md).
+The broader production refresh remains a separate gate. `checkProducerFailureStages` checks a real exhausted candidate walk,
 unchanged diagnostics and fresh request identity, a direct recognition publication
 that permits a retry, and mode/audit/capability/caller/continuation isolation.
 Structural `request_walks` and `exhausted_walk_hits` counters report this work
@@ -105,7 +106,8 @@ The symbolic-sibling fixture upgrades the original sequence producer, asserts
 zero relation composition and arena growth during the upgrade, then checks its
 queries and minimum covers against an independently enumerated event graph.
 Emitted logical commands are checked for full-identity matching in zero, one
-and multiple-visit invocations. These new checks require the final runtime gate.
+and multiple-visit invocations. These checks passed the committed focused checkpoint gate; broader production
+validation remains separate.
 
 When a child representation changes, unchanged child mathematics is still
 retained. The parent partition and transitive closure are reconstructed. This is

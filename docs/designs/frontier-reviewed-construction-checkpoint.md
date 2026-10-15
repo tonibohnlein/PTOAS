@@ -48,7 +48,11 @@ interpretations. No real formatting findings remain. `git diff --check` passes.
 Full EChecker/SecK and device-environment checks were unavailable; no full analyzer
 or device compliance claim is made.
 
-## Open outcomes
+## Open outcomes at this checkpoint
+
+The subsequent [namespace checkpoint](frontier-explicit-namespace-checkpoint.md)
+records refreshed production and protocol evidence. The following limits describe
+this predecessor snapshot and its original acceptance boundary.
 
 Implementation acceptance, native build, kernel compilation and fixed-protocol
 capacity resolution remain separate. No device kernel compilation or execution

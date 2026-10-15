@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateRegional.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Finite/ExplicitAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
@@ -21,6 +22,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/WholeInvocationIdentity.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/DenseSet.h"
+#include "mlir/IR/Diagnostics.h"
 #include "NumericalRequestOracle.h"
 #include "NumericalLogicalTraceChecks.h"
 using namespace mlir;
@@ -1234,9 +1236,15 @@ LogicalResult checkExactFormFastPath(func::FuncOp function, pto::GMAliasPolicy p
     }
     if (failed(materializeLogicalFamilies(**prepared))) { return failure(); }
     std::size_t endpointIndex = 0;
+    std::map<std::pair<uint32_t, uint32_t>, uint32_t> namespaces;
+    bool repeatedNamespace = false;
     for (auto [record, edge] : llvm::enumerate(explicitAnalysis.reduction.retained)) {
         const auto sourcePipe = explicitAnalysis.occurrences[edge.source].pipe;
         const auto targetPipe = explicitAnalysis.occurrences[edge.target].pipe;
+        // Explicit records have zero displacement. The first retained record
+        // for a direction owns its namespace; member labels remain distinct.
+        auto space = namespaces.emplace(std::make_pair(sourcePipe, targetPipe), static_cast<uint32_t>(record));
+        repeatedNamespace |= !space.second;
         auto* source = explicitAnalysis.phases[edge.source]->elementOp;
         auto* target = explicitAnalysis.phases[edge.target]->elementOp;
         const bool local = sourcePipe == targetPipe;
@@ -1247,7 +1255,7 @@ LogicalResult checkExactFormFastPath(func::FuncOp function, pto::GMAliasPolicy p
                 side ? LogicalCommandKind::Wait : LogicalCommandKind::Set;
             auto guard = endpoint.guard.getDefiningOp<arith::ConstantOp>();
             if (endpoint.kind != kind || endpoint.before != (local || side ? target : source->getNextNode()) ||
-                endpoint.record != static_cast<int64_t>(record) ||
+                endpoint.record != static_cast<int64_t>(space.first->second) ||
                 endpoint.records != SmallVector<uint32_t>{static_cast<uint32_t>(record)} ||
                 endpoint.sourcePipe != sourcePipe || endpoint.targetPipe != targetPipe || !guard ||
                 !cast<IntegerAttr>(guard.getValue()).getValue().isOne()) { return failure(); }
@@ -1261,6 +1269,35 @@ LogicalResult checkExactFormFastPath(func::FuncOp function, pto::GMAliasPolicy p
         }
     }
     if (endpointIndex != (*prepared)->endpoints.size()) { return failure(); }
+    if (function->hasAttr("test.repeated_explicit_namespace") && !repeatedNamespace) {
+        return function.emitError("explicit fixture did not retain repeated-direction original records");
+    }
+    if (function->hasAttr("test.repeated_explicit_namespace")) {
+        auto incomplete = prepareExplicitInsertion(function, explicitAnalysis, false);
+        if (failed(incomplete) || (*incomplete)->families.size() < 2) { return failure(); }
+        (*incomplete)->families.pop_back();
+        const auto recipe = (*incomplete)->familyRecipe;
+        if (succeeded(normalizeLogicalFamilies(**incomplete)) || (*incomplete)->familyRecipe != recipe ||
+            (*incomplete)->familyProtocol || !(*incomplete)->preparation.empty() ||
+            !(*incomplete)->endpoints.empty()) {
+            return function.emitError("incomplete explicit original-record directory was accepted or mutated");
+        }
+        auto& endpoint = (*prepared)->endpoints.front();
+        const auto canonical = endpoint.record;
+        endpoint.record = INT64_MAX;
+        std::string before, after;
+        llvm::raw_string_ostream original(before); function.print(original); original.flush();
+        LogicalResult refused = success();
+        {
+            ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
+            refused = insertLogicalSynchronization(function, **prepared);
+        }
+        llvm::raw_string_ostream unchanged(after); function.print(unchanged); unchanged.flush();
+        endpoint.record = canonical;
+        if (succeeded(refused) || before != after) {
+            return function.emitError("malformed explicit namespace escaped strict insertion or changed original IR");
+        }
+    }
     // Auditing every child is separate from constructing this selected root.
     const auto certifications = session.certifyRegions();
     const bool lazyCertification = !certifications.empty() && !session.result()->arithmetic &&

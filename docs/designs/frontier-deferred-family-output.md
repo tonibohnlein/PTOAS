@@ -118,9 +118,9 @@ contributions that may coalesce differently remain unknown and retain the valid
 incumbent. Incomparable upstream masks require the complete preparation schedule
 below; other uncovered preparation forms remain unknown. The saved recipe route replans
 through this same service. No alternative proof or unused scalar endpoint is
-built to rank maps. This extension is source-only pending its emitted-count,
-identity and production-route regressions; it does not close the full mapping
-cost obligation.
+built to rank maps. The emitted-count, identity and CLI route regressions pass in the
+[46-test construction checkpoint](frontier-reviewed-construction-checkpoint.md).
+Uncovered preparation forms still leave the full mapping cost unavailable.
 
 The focused checks compare saved and combined output after all original producer
 owners have been destroyed. They independently execute zero and partial
@@ -131,7 +131,7 @@ types, integer attribute widths and command order. The production CLI regression
 runs saving and allocation in separate processes and compares unfolded
 communications and generated arithmetic counts with combined output.
 
-The added version-two checks are source-only pending compilation and execution.
+The version-two checks passed compilation and the focused checkpoint gate.
 They exercise owner destruction, two simultaneous contextual families, shared
 integer predicates, signed witness expressions, two invocation coordinates,
 nonunit/skipped visits, and a tuple mapping that omits a 32-level coordinate DAG.
@@ -141,13 +141,14 @@ negative floor witnesses and mapped integer predicates; malformed zero divisors,
 forward edges, unknown opcodes, type mismatches and oversized dimension claims
 must refuse without publishing expression nodes. A payload-call fixture checks
 that staged decoding preserves the original module symbol context.
-Existing numerical execution receipts do not validate this new extension.
+The checkpoint includes these contextual and integer checks; earlier numerical-only
+receipts did not validate this extension.
 
 Completed checks establish only their tested implementation contract. They do not by
 themselves establish kernel compilation, device execution or capacity for a
 separate protocol.
 
-The version-three checks are source-only pending compilation and execution. They
+The version-three checks passed the focused checkpoint gate. They
 use the finite and sequence production exporters, including a nested consumer
 with zero, one or multiple loop visits, and compare ordinary, combined and parsed
 saved output after destroying the original owners. Resealed malformed artifacts
@@ -156,7 +157,7 @@ missing, swapped or repeated cuts; invalid predicate types and roots; missing
 source bindings; duplicate choice records; and removal of singleton visit
 selection. All failures must leave the saved input unchanged.
 
-The next source-only construction extension covers self-contained contextual
+The accepted construction extension covers self-contained contextual
 contributions, including their typed integer predicates and witnesses, original
 scalar replay, cofactored bindings and shared roots. Counting and emission use
 the same prepared root schedule and the same cut/environment cache policy.
@@ -172,14 +173,13 @@ presence-only selection and source ordinal adjustment, followed by each leaf's
 wrappers in endpoint order before the next leaf. Repeated activity wrappers still
 construct their own mask operations even when their prepared root is cached.
 
-Concrete/private-state contributions and pending cleanup qualification remain
-outside the complete count. Those forms retain the previously supported
+Supported terminal-cleanup qualification participates in the complete count.
+Concrete/private-state contributions remain outside it. Those forms retain the previously supported
 common-input cancellation or restricted dominance proof when applicable; an
 unavailable complete count is never treated as zero. Structural diagnostics
 separate complete footprints from common-input comparisons and unavailable
-preparation. Counts measure constructed scalar operations before normalization,
-not final live code or device time. The added tests remain unexecuted until the
-next frozen integration build; they compare counts with actual emitted operations,
+preparation. Counts include scalar construction across preparation, normalization and mapping
+without subtracting erased operations; they do not measure final live code or device time. The focused checkpoint tests compare counts with actual emitted operations,
 cover different live coordinates and dead shared roots, signed integer lowering,
 partial multiresult replay, missing/foreign bindings, and dominating versus
 non-dominating shared environments.
@@ -189,9 +189,9 @@ preparation and map operations, then independently evaluate displaced matching,
 zero/partial and nonunit visits, activity masks and selected IDs. They include
 pure and mixed numerical leaves, live/dead invocation coordinates, repeated
 wrappers, translated records and a later contextual leaf sharing the wrapper
-arena and cut. These checks are source-only pending the next integration build.
+arena and cut. These checks passed in the focused checkpoint gate.
 
-The following source-only extension includes changing compaction for represented
+The accepted extension includes changing compaction for represented
 owned recipes. Emission and counting share the original-cut arithmetic identity
 trace and the actual residue, finite-coordinate and local-barrier schedules.
 Operation properties, raw attributes, result types, commutative operands and
@@ -202,4 +202,5 @@ sites. It does not subtract operations erased by deduplication or liveness.
 Actual preparation, compaction, mapping and barrier construction counters provide
 an independent parity gate. New controls compare the trace with LLVM operation
 equivalence and execute same/different full-map cases through the emitted
-commands. These additions are awaiting compilation and runtime validation.
+commands. These additions passed compilation and the focused checkpoint gate. Production
+campaigns, device compilation and protocol capacity remain separate outcomes.

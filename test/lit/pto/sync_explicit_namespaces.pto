@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
+// RUN: %python %S/Inputs/check_explicit_namespaces.py pto-test-opt pto-sync-input-test %s
+// CHECK: exact-form-fast-path: explicit no-normalization no-arithmetic
+// Real load/move/matmul accesses retain distinct records with repeated pipe pairs.
+!mat = !pto.tile_buf<mat, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 64x64xf32, valid=?x?, slayout=row_major>
+!right = !pto.tile_buf<right, 64x64xf32, valid=?x?, slayout=col_major>
+!acc = !pto.tile_buf<acc, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>
+!view = !pto.tensor_view<?x?xf32>
+!partition = !pto.partition_tensor_view<64x64xf32>
+!ptr = !pto.ptr<f32, gm>
+module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<cube>, pto.target_arch = "a3"} {
+  func.func @explicit_namespaces(%arg0: !ptr, %arg1: !ptr, %arg2: !ptr)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>, test.exact_form_explicit,
+                  test.repeated_explicit_namespace} {
+    %c0_i64 = arith.constant 0 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0 : index
+    %0 = pto.make_tensor_view %arg0, shape = [%c64, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>} : !view
+    %1 = pto.make_tensor_view %arg1, shape = [%c64, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>} : !view
+    %2 = pto.make_tensor_view %arg2, shape = [%c64, %c64], strides = [%c64, %c1] {layout = #pto.layout<nd>} : !view
+    %3 = pto.alloc_tile addr = %c0_i64 valid_row = %c64 valid_col = %c64 : !mat
+    %4 = pto.partition_view %0, offsets = [%c0, %c0], sizes = [%c64, %c64] : !view
+    pto.tload ins(%4 : !partition)
+      outs(%3 : !mat) {layout = #pto.layout<nd>}
+    %5 = pto.alloc_tile addr = %c16384_i64 valid_row = %c64 valid_col = %c64 : !mat
+    %6 = pto.partition_view %1, offsets = [%c0, %c0], sizes = [%c64, %c64] : !view
+    pto.tload ins(%6 : !partition)
+      outs(%5 : !mat) {layout = #pto.layout<nd>}
+    %7 = pto.alloc_tile addr = %c0_i64 valid_row = %c64 valid_col = %c64 : !left
+    pto.tmov ins(%3 : !mat)
+      outs(%7 : !left)
+    %8 = pto.alloc_tile addr = %c0_i64 valid_row = %c64 valid_col = %c64 : !right
+    pto.tmov ins(%5 : !mat)
+      outs(%8 : !right)
+    %9 = pto.alloc_tile addr = %c0_i64 valid_row = %c64 valid_col = %c64 : !acc
+    pto.tmatmul ins(%7, %8 : !left, !right)
+      outs(%9 : !acc)
+    %10 = pto.partition_view %2, offsets = [%c0, %c0], sizes = [%c64, %c64] : !view
+    pto.tstore ins(%9 : !acc)
+      outs(%10 : !partition) {layout = #pto.layout<nd>}
+    return
+  }
+}
