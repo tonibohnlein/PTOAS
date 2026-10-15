@@ -14,6 +14,7 @@
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 #include <set>
+#include "RegionSubstitutionChecks.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 bool runSparseSharedBindingChecks(Operation* cut);
@@ -1766,6 +1767,8 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         !checked("checkIntegerEmission", checkIntegerEmission(function, cuts, hidden)) ||
         !checked("checkPlacementRetry", checkPlacementRetry(function, cuts)) ||
         !checked("checkSubstitution", checkSubstitution(function.getArgument(0), function.getArgument(1))) ||
+        !checked("checkAffectedSubstitution",
+                 checkAffectedSubstitution(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkImport", checkImport(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkImportOwners", checkImportOwners(function.getArgument(0))) ||
         !checked("checkImportReplay", checkImportReplay(cuts[0])) ||

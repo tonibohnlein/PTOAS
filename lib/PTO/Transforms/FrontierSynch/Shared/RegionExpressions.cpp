@@ -10,6 +10,7 @@
 #include "ScalarConstruction.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include "RegionIntegerExpressionsInternal.h"
+#include "RegionSubstitutionTopology.h"
 #include "OriginalCutFacts.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -32,6 +33,7 @@ RegionExpressions::Transaction::~Transaction()
         arena.evaluations.erase(arena.evaluationInsertions.back());
         arena.evaluationInsertions.pop_back();
     }
+    if (arena.substitutionTopology) { arena.substitutionTopology->truncate(arena, count); }
     arena.thresholdPreparations.erase(arena.thresholdPreparations.lower_bound(count),
                                       arena.thresholdPreparations.end());
     arena.thresholdDependencies.erase(arena.thresholdDependencies.lower_bound({count, 0}),

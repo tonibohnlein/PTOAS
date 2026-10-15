@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Bind nested occurrence coordinates without cloning source IR or DAG paths.
-#include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
+#include "RegionSubstitutionTopology.h"
 #include "llvm/ADT/STLExtras.h"
 namespace mlir::pto::frontiersynch {
 RegionExpressions::Id RegionExpressions::substitute(Id expression, Substitution& context, uint64_t* nodeVisits)
@@ -16,6 +16,7 @@ RegionExpressions::Id RegionExpressions::substitute(Id expression, Substitution&
     }
     if (!context.owner) {
         for (auto [source, target] : context.bindings) {
+            SubstitutionTopology::count(nodeVisits);
             if (!valid(source) || !valid(target) || isBoolean(source) != isBoolean(target)) {
                 return reject("regional substitution has an invalid or differently typed binding");
             }
@@ -26,16 +27,61 @@ RegionExpressions::Id RegionExpressions::substitute(Id expression, Substitution&
         }
         context.owner = this;
     }
+    if (auto found = context.memo.find(expression); found != context.memo.end()) {
+        SubstitutionTopology::count(nodeVisits);
+        return found->second;
+    }
+    if (context.bindings.empty()) {
+        SubstitutionTopology::count(nodeVisits);
+        context.memo[expression] = expression;
+        return expression;
+    }
+    // Only Boolean input cofactors use the structural index. Coordinate and
+    // arbitrary-expression substitutions retain the root-local original DFS:
+    // a numeric input can have many unrelated query roots among its parents.
+    const bool cofactor = context.bindings.size() == 1 &&
+        nodes[context.bindings.front().first].kind == Kind::Input &&
+        isBoolean(context.bindings.front().first) &&
+        nodes[context.bindings.front().second].kind == Kind::Constant;
+    llvm::DenseSet<Id> affected;
+    if (cofactor) {
+        if (!substitutionTopology) { substitutionTopology = std::make_shared<SubstitutionTopology>(); }
+        substitutionTopology->extend(*this, expression, nodeVisits);
+        SmallVector<Id> ancestors;
+        const auto source = context.bindings.front().first;
+        SubstitutionTopology::count(nodeVisits);
+        if (source <= expression) { ancestors.push_back(source); }
+        while (!ancestors.empty()) {
+            SubstitutionTopology::count(nodeVisits);
+            const auto current = ancestors.pop_back_val();
+            if (!affected.insert(current).second) { continue; }
+            substitutionTopology->appendParents(current, expression, ancestors, nodeVisits);
+        }
+        if (!affected.contains(expression)) {
+            context.memo[expression] = expression;
+            return expression;
+        }
+    }
     SmallVector<Id> pending{expression}, order;
     llvm::DenseSet<Id> seen;
     while (!pending.empty()) {
-        if (nodeVisits && *nodeVisits != UINT64_MAX) {
-            ++*nodeVisits;
-        }
+        SubstitutionTopology::count(nodeVisits);
         const Id next = pending.pop_back_val();
         if (context.memo.count(next) || !seen.insert(next).second) { continue; }
         order.push_back(next);
-        appendOperands(nodes[next], pending);
+        if (!cofactor) {
+            appendOperands(nodes[next], pending);
+            continue;
+        }
+        // Seed every unchanged immediate operand, including IntegerRecipe's
+        // coordinate inputs: DenseMap::lookup's missing zero is a real node ID.
+        SmallVector<Id, 3> operands;
+        appendOperands(nodes[next], operands);
+        for (auto operand : operands) {
+            SubstitutionTopology::count(nodeVisits);
+            if (affected.contains(operand)) { pending.push_back(operand); }
+            else { context.memo.try_emplace(operand, operand); }
+        }
     }
     llvm::sort(order);
     for (Id id : order) {
