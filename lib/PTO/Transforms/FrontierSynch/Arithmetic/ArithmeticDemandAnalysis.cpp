@@ -436,7 +436,7 @@ private:
         for (auto count : {cost.remapBuilds, cost.intersectionBuilds, cost.projectionBuilds,
                            cost.emptinessBuilds}) { accumulateCost(result.cost.importQueryBuilds, count); }
         // Every imported piece owns its system. No query view survives import.
-        importQueries = IntegerProjectionCache{};
+        importQueries.clear();
     }
     bool import()
     {

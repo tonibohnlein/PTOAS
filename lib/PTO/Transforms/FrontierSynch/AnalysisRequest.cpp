@@ -195,9 +195,7 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
     auto& attempt = sessionState->attempts[request.region][backend];
     if (attempt.produced) { profile.cacheHit(); }
     if (backend == AnalysisBackend::NumericalSequence) {
-        const uint8_t key = unsigned(request.needs.queries) | (unsigned(request.needs.selectors) << 1) |
-            (unsigned(request.needs.synchronization) << 2) | (unsigned(request.mode == AnalysisMode::Fallback) << 3) |
-            (unsigned(request.needs.evaluation == AnalysisEvaluation::Stateful) << 4);
+        const auto key = analysisRequestKey(request);
         const auto identity = std::make_pair(request.region, key);
         if (sessionState->numericalSequenceEstimates.insert(identity).second) {
             AnalysisCostEstimate estimate;
@@ -424,7 +422,7 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
         result.obligations.push_back({AnalysisStage::Form, "original region request is unavailable"});
         return result;
     }
-    if (failed(recognizeStructure())) {
+    if (!program && failed(recognizeStructure())) {
         result.obligations.push_back({AnalysisStage::Form, "original region request is unavailable"});
         return result;
     }
@@ -432,6 +430,25 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
         result.obligations.push_back({AnalysisStage::Form, "original region identity is invalid"});
         return result;
     }
+    const auto identity = std::make_tuple(request.region, analysisRequestKey(request), sessionState->certifying);
+    if (auto found = sessionState->selectedAnswers.find(identity); found != sessionState->selectedAnswers.end()) {
+        profile.cacheHit();
+        auto retained = found->second;
+        retained.ledger = sessionState->ledger;
+        retained.requestId = profile.requestId();
+        return retained;
+    }
+    auto finish = [&](AnalysisOutcome answer) {
+        answer.ledger = sessionState->ledger;
+        answer.requestId = profile.requestId();
+        // Later exact evidence can supersede a fallback. Cache positive exact
+        // selections only, never an exhausted walk or a conservative answer.
+        if (answer.status == AnalysisStatus::Ready && answer.mathematical && !answer.completion &&
+            !answer.mathematical->compactDemands) {
+            sessionState->selectedAnswers.emplace(identity, answer);
+        }
+        return answer;
+    };
     if (request.needs.evaluation == AnalysisEvaluation::Stateful) {
         auto uniform = request;
         uniform.needs.evaluation = AnalysisEvaluation::Uniform;
@@ -468,9 +485,7 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
     };
     // The straight-line fast path needs neither normalization nor arithmetic.
     if (attemptBackend(AnalysisBackend::Explicit)) {
-        result.ledger = sessionState->ledger;
-        result.requestId = profile.requestId();
-        return result;
+        return finish(std::move(result));
     }
     const auto forms = exactForms(request);
     const bool alternative = forms.size() > 1;
@@ -483,9 +498,7 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
     };
     for (auto form : forms) {
         if (attemptForm(form)) {
-            result.ledger = sessionState->ledger;
-            result.requestId = profile.requestId();
-            return result;
+            return finish(std::move(result));
         }
     }
     // A missing export can never authorize weakening an exact whole-region order.
@@ -494,7 +507,7 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
         llvm::append_range(conservative.obligations, result.obligations);
         conservative.ledger = sessionState->ledger;
         conservative.requestId = profile.requestId();
-        if (conservative.status == AnalysisStatus::Ready) { return conservative; }
+        if (conservative.status == AnalysisStatus::Ready) { return finish(std::move(conservative)); }
         if (!sessionState->completionAttempted) {
             sessionState->completionAttempted = true;
             sessionState->completion = CompletionRegion::build(function, storage, *structuralIndex,
@@ -515,14 +528,12 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
             }
             completion.ledger = sessionState->ledger;
             completion.requestId = profile.requestId();
-            return completion;
+            return finish(std::move(completion));
         }
         conservative.obligations.push_back({AnalysisStage::Synchronization, sessionState->completionError});
-        return conservative;
+        return finish(std::move(conservative));
     }
-    result.ledger = sessionState->ledger;
-    result.requestId = profile.requestId();
-    return result;
+    return finish(std::move(result));
 }
 namespace {
 bool scalarFreeFamilyTemplate(const PreparedLogicalPlan& plan)

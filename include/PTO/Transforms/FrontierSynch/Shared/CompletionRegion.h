@@ -24,6 +24,10 @@ public:
     // backend is constructed. This does not replace a retained exact result.
     static std::shared_ptr<const CompletionRegion> buildCoarse(
         func::FuncOp function, GMAliasPolicy policy, std::string& error);
+    // Qualify existing event-free code without inserting completion commands.
+    // No executable plan escapes: the summary may retain pending exit effects.
+    static FailureOr<CompletionSummary> summarizeEventFree(func::FuncOp function,
+        std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error);
     const CompletionTransferResult& transfer() const { return result; }
     std::shared_ptr<const SyncInput> inputOwner() const { return input; }
     // The parent publishes no events. Imported children own their closed IDs;
@@ -34,6 +38,8 @@ public:
     ArrayRef<func::FuncOp> importedFunctions() const { return childFunctions; }
 
 private:
+    static std::shared_ptr<const CompletionRegion> buildImpl(func::FuncOp function,
+        std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error, bool existingOnly);
     func::FuncOp original;
     std::shared_ptr<const SyncInput> input;
     CompletionTransferResult result;

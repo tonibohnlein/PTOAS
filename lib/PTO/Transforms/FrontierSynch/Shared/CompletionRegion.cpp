@@ -8,6 +8,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
+#include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "RecognitionInternal.h"
@@ -111,6 +112,26 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildCoarse(
 std::shared_ptr<const CompletionRegion> CompletionRegion::build(func::FuncOp function,
     std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error)
 {
+    return buildImpl(function, std::move(input), index, error, false);
+}
+FailureOr<CompletionSummary> CompletionRegion::summarizeEventFree(func::FuncOp function,
+    std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error)
+{
+    if (!function || hasManualOnCoreSynchronization(function) || function.walk([](Operation* op) {
+            return isa<func::CallOp, LogicalSetOp, LogicalWaitOp>(op) || getSyncMacroModel(op).has_value() ||
+                (isPreservedSyncProtocol(op) && !isa<BarrierOp>(op)) ?
+                WalkResult::interrupt() : WalkResult::advance();
+        }).wasInterrupted()) {
+        error = "event-free child has event resources or transitive calls";
+        return failure();
+    }
+    auto qualified = buildImpl(function, std::move(input), index, error, true);
+    if (!qualified) { return failure(); }
+    return qualified->result.summary;
+}
+std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp function,
+    std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error, bool existingOnly)
+{
     error.clear();
     const bool valid = function && input && !function.isDeclaration() &&
         function.getBody().hasOneBlock() && isa<ModuleOp>(function->getParentOp());
@@ -202,6 +223,13 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::build(func::FuncOp fun
     auto entry = builder.block(function.front(), exit);
     owner->result = buildCompletionTransfer(builder.graph, entry, exit, 1);
     if (!owner->result.error.empty()) { error = owner->result.error; return {}; }
+    if (existingOnly) {
+        if (llvm::any_of(owner->result.protectEntry, [](bool protect) { return protect; })) {
+            error = "event-free child requires additional internal completion";
+            return {};
+        }
+        return owner;
+    }
     for (std::size_t v = 0; v < builder.graph.size(); ++v) {
         if (!owner->result.protectEntry[v]) { continue; }
         if (!builder.anchors[v]) { error = "completion placement lacks an original command cut"; return {}; }

@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/NormalizedControl.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/PhaseNormalization.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Structured/NumericTemplatePlan.h"
@@ -1121,6 +1122,75 @@ LogicalResult checkUniformRelationCrossings(func::FuncOp function, pto::GMAliasP
 }
 
 namespace {
+mlir::LogicalResult checkSliceAllocation(mlir::func::FuncOp function,
+    mlir::pto::frontiersynch::FrontierAnalysis& session)
+{
+    using namespace mlir::pto::frontiersynch;
+    PhaseIndex index;
+    if (failed(index.build(function, *session.input()))) { return failure(); }
+    auto loop = *function.getOps<scf::ForOp>().begin();
+    auto recognized = recognizeGuardedRotating(loop, index, *session.input(), session.input()->accesses());
+    auto arena = std::make_shared<RegionExpressions>();
+    auto analysis = analyzeGuardedRotating(loop, *session.input(), recognized, index, arena);
+    if (!analysis.error.empty()) { return function.emitError(analysis.error); }
+    unsigned checked = 0;
+    for (uint64_t begin = 0; begin <= 5; ++begin) {
+        for (uint64_t end = begin; end <= 10; ++end) {
+            std::string error;
+            auto region = guardedRotatingRegionalResult(function, *session.input(), analysis, error,
+                PeriodicSlice{arena->constant(begin), arena->constant(end)});
+            if (failed(region)) { return function.emitError(error); }
+            auto plan = region->prepare();
+            if (failed(plan)) { return failure(); }
+            auto allocation = requestAllocationSummary(**plan, AllocationStrength::Shared);
+            if (!allocation || allocation->groups.empty()) { return failure(); }
+            using Point = std::pair<uint32_t, uint64_t>;
+            for (const auto& group : allocation->groups) {
+                if (group.lanes.size() != group.budget) { return failure(); }
+                for (uint64_t lane = 0; lane < group.budget; ++lane) {
+                    std::multiset<Point> first, last;
+                    // Independent finite enumeration uses the certified ID
+                    // formula, not the congruence/span extraction helper.
+                    for (const auto& member : group.members) {
+                        const auto& edge = analysis.generators[member.record];
+                        auto distance = arena->constantValue(edge.displacement);
+                        if (!distance) { return failure(); }
+                        std::vector<uint64_t> visits;
+                        for (uint64_t visit = begin; visit < end; ++visit) {
+                            if (*distance < end - visit &&
+                                (member.stride * visit + member.phase) % group.budget == lane) {
+                                visits.push_back(visit);
+                            }
+                        }
+                        if (!visits.empty()) {
+                            first.insert({edge.source, visits.front()});
+                            last.insert({edge.target, visits.back() + *distance});
+                        }
+                    }
+                    auto matches = [&](const auto& selectors, const auto& expected, PeriodicEventKind kind) {
+                        std::multiset<Point> actual;
+                        for (const auto& selector : selectors) {
+                            auto active = arena->constantValue(selector.present);
+                            if (!active) { return false; }
+                            if (!*active) { continue; }
+                            auto ordinal = arena->constantValue(selector.event.ordinal);
+                            if (!ordinal || selector.event.kind != kind) { return false; }
+                            actual.insert({selector.event.type, *ordinal});
+                        }
+                        return actual == expected;
+                    };
+                    if (!matches(group.lanes[lane].firstSources, first, PeriodicEventKind::Start) ||
+                        !matches(group.lanes[lane].lastTargets, last, PeriodicEventKind::Completion)) {
+                        return function.emitError("periodic slice lane extrema disagree with finite enumeration");
+                    }
+                }
+            }
+            ++checked;
+        }
+    }
+    llvm::outs() << "periodic-slice-allocation: " << checked << " finite intervals checked\n";
+    return success();
+}
 mlir::LogicalResult checkDeferredSlices(mlir::func::FuncOp function,
     mlir::pto::frontiersynch::FrontierAnalysis& session)
 {
@@ -1301,6 +1371,7 @@ LogicalResult checkDynamicUniformCrossings(func::FuncOp function, pto::GMAliasPo
     using I = BoundInteger;
     FrontierAnalysis session(function);
     if (failed(session.initialize(policy))) { return failure(); }
+    if (function->hasAttr("test.slice_allocation")) { return checkSliceAllocation(function, session); }
     if (function->hasAttr("test.disjoint_deferred")) { return checkDeferredSlices(function, session); }
     if (failed(checkUniformCircuit(function, session))) { return failure(); }
     if (function->hasAttr("test.nonuniform_deferred")) {

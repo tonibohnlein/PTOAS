@@ -29,6 +29,10 @@ RegionExpressions::Transaction::~Transaction()
         arena.evaluations.erase(arena.evaluationInsertions.back());
         arena.evaluationInsertions.pop_back();
     }
+    arena.thresholdPreparations.erase(arena.thresholdPreparations.lower_bound(count),
+                                      arena.thresholdPreparations.end());
+    arena.thresholdDependencies.erase(arena.thresholdDependencies.lower_bound({count, 0}),
+                                      arena.thresholdDependencies.end());
     while (arena.nodes.size() > count) {
         arena.interned.erase(arena.nodes.back());
         arena.nodes.pop_back();

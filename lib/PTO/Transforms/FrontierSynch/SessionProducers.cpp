@@ -32,6 +32,33 @@ namespace {
 void recordSequenceCosts(AnalysisSessionState& session, const SequenceAnalysis& sequence, std::size_t region)
 {
     if (!sequence.state) { return; }
+    if (session.ledger->profiling && !session.ledger->activeStages.empty()) {
+        const auto& work = sequence.state->crossingOrderWork;
+        const auto parent = session.ledger->stages[session.ledger->activeStages.back()];
+        AnalysisStageRecord record;
+        record.id = session.ledger->stages.size() + 1;
+        record.parent = parent.id;
+        record.request = record.parentRequest = parent.request;
+        record.region = region;
+        record.stage = "sequence-crossing-qualification";
+        record.method = "certified-child-order";
+        record.work = {{"groups", work.groups}, {"qualified", work.qualified},
+            {"dynamic-qualified", work.dynamicQualified}, {"residual", work.residual},
+            {"order-queries", work.orderQueries}};
+        session.ledger->stages.push_back(std::move(record));
+        const auto& queries = sequence.state->crossingQueryWork;
+        AnalysisStageRecord queryRecord;
+        queryRecord.id = session.ledger->stages.size() + 1;
+        queryRecord.parent = parent.id;
+        queryRecord.request = queryRecord.parentRequest = parent.request;
+        queryRecord.region = region;
+        queryRecord.stage = "sequence-crossing-queries";
+        queryRecord.method = "same-occurrence-tail-pruning";
+        queryRecord.work = {{"entries", queries.entries}, {"aliases", queries.aliases},
+            {"suffix-queries", queries.suffixQueries}, {"zero-tails", queries.zeroTails},
+            {"prefix-queries", queries.prefixQueries}};
+        session.ledger->stages.push_back(std::move(queryRecord));
+    }
     for (auto record : sequence.state->crossingMethods) {
         if (record.method.empty()) { continue; }
         record.region = region;

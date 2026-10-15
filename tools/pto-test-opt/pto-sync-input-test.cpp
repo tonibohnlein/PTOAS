@@ -201,7 +201,12 @@ LogicalResult checkStageProfileSession(func::FuncOp function, pto::GMAliasPolicy
     const auto attempts = profiled.constructionCounts().mathematicalAttempts;
     uint64_t previousRequest = first.requestId;
     for (unsigned repeat = 0; repeat < 64; ++repeat) {
+        const auto beforeStages = first.ledger->stages.size();
         const auto next = profiled.minimumDemands(0, {true, true});
+        if (repeat && (first.ledger->stages.size() != beforeStages + 1 ||
+                       first.ledger->stages.back().cacheHits != 1)) {
+            return function.emitError("identical successful request repeated a candidate walk");
+        }
         if (next.mathematical != first.mathematical || next.ledger != first.ledger ||
             next.requestId <= previousRequest || next.ledger->estimates.size() != estimateCount ||
             next.ledger->snapshotRecordsCopied || profiled.constructionCounts().mathematicalAttempts != attempts) {
@@ -228,6 +233,19 @@ LogicalResult checkStageProfileSession(func::FuncOp function, pto::GMAliasPolicy
     profiled.invalidate();
     if (profiled.diagnosticLedger() || first.ledger != ledger || ledger->estimates.size() != estimateCount) {
         return function.emitError("outcome did not retain its diagnostic owner across invalidation");
+    }
+    if (failed(profiled.initialize(policy))) { return failure(); }
+    const auto rebuilt = profiled.minimumDemands();
+    if (rebuilt.status != AnalysisStatus::Ready || !rebuilt.mathematical ||
+        rebuilt.mathematical == first.mathematical || rebuilt.ledger == first.ledger) {
+        return function.emitError("selection cache survived session invalidation");
+    }
+    (void)profiled.certifyRegions();
+    const auto beforeReturn = rebuilt.ledger->stages.size();
+    const auto returned = profiled.minimumDemands();
+    if (returned.mathematical != rebuilt.mathematical ||
+        rebuilt.ledger->stages.size() != beforeReturn + 1 || rebuilt.ledger->stages.back().cacheHits != 1) {
+        return function.emitError("certification replaced the retained production selection");
     }
     llvm::outs() << "stage-profile: shared ledger cached requests exclusive timing unchanged route audit reuse\n";
     return success();
@@ -2521,6 +2539,10 @@ int main(int argc, char **argv) {
               selectorCost["import_remap_requests"] = importCost.remapRequests;
               selectorCost["import_remap_hits"] = importCost.remapHits;
               selectorCost["import_remap_builds"] = importCost.remapBuilds;
+              selectorCost["import_identity_requests"] = importCost.identityRequests;
+              selectorCost["import_owned_identity_hits"] = importCost.ownedIdentityHits;
+              selectorCost["import_structural_hashes"] = importCost.structuralHashes;
+              selectorCost["import_structural_comparisons"] = importCost.structuralComparisons;
               selectorCost["import_projection_requests"] = importCost.projectionRequests;
               selectorCost["import_projection_hits"] = importCost.projectionHits;
               selectorCost["import_projection_builds"] = importCost.projectionBuilds;
@@ -2540,6 +2562,10 @@ int main(int argc, char **argv) {
               selectorCost["witness_hits"] = cost.witnessHits;
               selectorCost["witness_builds"] = cost.witnessBuilds;
               selectorCost["witness_pieces"] = cost.witnessPieces;
+              selectorCost["identity_requests"] = cost.identityRequests;
+              selectorCost["owned_identity_hits"] = cost.ownedIdentityHits;
+              selectorCost["structural_hashes"] = cost.structuralHashes;
+              selectorCost["structural_comparisons"] = cost.structuralComparisons;
               selectorCost["projection_requests"] = cost.projectionRequests;
               selectorCost["projection_hits"] = cost.projectionHits;
               selectorCost["projection_builds"] = cost.projectionBuilds;

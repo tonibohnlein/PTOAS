@@ -113,6 +113,13 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     std::string repeatedAttempt;
     uint64_t boundarySummaryVisits = 0;
     SequenceBridgeWork bridgeWork, nativeFrontierWork;
+    // Bounded structural attribution; no query IDs survive a speculative attempt.
+    struct CrossingOrderWork {
+        uint64_t groups = 0, qualified = 0, dynamicQualified = 0, residual = 0, orderQueries = 0;
+    } crossingOrderWork;
+    struct CrossingQueryWork {
+        uint64_t entries = 0, aliases = 0, suffixQueries = 0, zeroTails = 0, prefixQueries = 0;
+    } crossingQueryWork;
     void summarizeBoundaries(SequenceAnalysis& result);
     std::vector<Child> children;
     // A symbolic crossing relation cannot be represented as a sampled finite

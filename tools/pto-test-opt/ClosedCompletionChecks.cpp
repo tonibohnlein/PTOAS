@@ -111,7 +111,8 @@ bool eventfulImport(MLIRContext& context)
     }
     auto imported = fs::ClosedCompletionChild::import(first, error);
     if (!imported || imported->summary().all != fs::CompletionFacts{3} ||
-        imported->summary().suffix != fs::CompletionFacts{0} || imported->summary().transparent) {
+        imported->summary().suffix != fs::CompletionFacts{0} || imported->summary().transparent ||
+        imported->resourceClosure() != fs::ClosedCompletionChild::ResourceClosure::CompletedExit) {
         llvm::errs() << error << "\n";
         return failedAt(__LINE__);
     }
@@ -284,13 +285,108 @@ bool pendingPrimitive(MLIRContext& context)
     }
     return true;
 }
+bool pendingFragments(MLIRContext& context)
+{
+    const std::string write = "pto.texpands ins(%one : f32) outs(%tile : !tile)";
+    struct Case { std::string body; std::vector<std::vector<uint8_t>> traces; };
+    const Case cases[] = {
+        {write + "\npto.barrier <PIPE_ALL>\n" + write, {{2, 0, 2}}},
+        {"pto.barrier <PIPE_ALL>\n" + write, {{0, 2}}},
+        {write + "\nscf.if %take { pto.barrier <PIPE_ALL> }", {{2}, {2, 0}}},
+        {write + "\n" + write, {{2, 2}}},
+        {write + "\npto.barrier <PIPE_V>\n" + write, {{2, 2}}},
+        {write + "\nscf.if %take { pto.barrier <PIPE_ALL> }\n" + write,
+            {{2, 2}, {2, 0, 2}}},
+        {"%begin = arith.constant 0 : index\n%step = arith.constant 1 : index\n"
+            "scf.for %i = %begin to %n step %step { pto.barrier <PIPE_ALL>\n" + write + "\n}",
+            {{}, {0, 2}, {0, 2, 0, 2, 0, 2}}},
+    };
+    for (const auto& test : cases) {
+        // Independent finite pending-state simulation. Zero is an existing
+        // ALL command; each other token is a payload's coarse access modes.
+        uint8_t all = 0, exposed = 0, suffix = 0;
+        bool accepted = true, transparent = false;
+        for (const auto& trace : test.traces) {
+            uint8_t pending = 0;
+            bool completed = false;
+            for (auto mode : trace) {
+                if (!mode) { pending = 0; completed = true; continue; }
+                if ((pending & 2) || ((pending & 1) && (mode & 2))) { accepted = false; }
+                all |= mode;
+                if (!completed) { exposed |= mode; }
+                pending |= mode;
+            }
+            suffix |= pending;
+            transparent |= !completed;
+        }
+        std::string source(native);
+        for (const auto& replacement : {
+                 std::make_pair("func.func private @writer()", "func.func private @writer(%take: i1, %n: index)"),
+                 std::make_pair("func.func @parent()", "func.func @parent(%take: i1, %n: index)"),
+                 std::make_pair("func.call @writer() : () -> ()",
+                                "func.call @writer(%take, %n) : (i1, index) -> ()")}) {
+            const auto found = source.find(replacement.first);
+            if (found == std::string::npos) { return failedAt(__LINE__); }
+            source.replace(found, std::string(replacement.first).size(), replacement.second);
+        }
+        const auto position = source.find(write);
+        if (position == std::string::npos) { return failedAt(__LINE__); }
+        source.replace(position, write.size(), test.body);
+        auto module = parseSourceString<ModuleOp>(source, &context);
+        if (!module) { return failedAt(__LINE__); }
+        auto parent = module->lookupSymbol<func::FuncOp>("parent");
+        auto writer = module->lookupSymbol<func::FuncOp>("writer");
+        const auto before = render(module->getOperation());
+        const auto writerText = render(writer);
+        auto call = *parent.front().getOps<func::CallOp>().begin();
+        std::string error;
+        auto child = fs::ClosedCompletionChild::import(call, error);
+        if (bool(child) != accepted || before != render(module->getOperation())) {
+            llvm::errs() << error << "\n";
+            return failedAt(__LINE__);
+        }
+        if (!accepted) {
+            if (error != "event-free child requires additional internal completion") { return failedAt(__LINE__); }
+            continue;
+        }
+        if (child->summary().all != fs::CompletionFacts{all} ||
+            child->summary().exposed != fs::CompletionFacts{exposed} ||
+            child->summary().suffix != fs::CompletionFacts{suffix} ||
+            child->summary().transparent != transparent ||
+            child->resourceClosure() != fs::ClosedCompletionChild::ResourceClosure::Empty) {
+            return failedAt(__LINE__);
+        }
+        OpBuilder builder(call);
+        builder.create<func::CallOp>(call.getLoc(), writer.getSymName(), TypeRange{}, call.getOperands());
+        if (!compile(*module, true)) { return failedAt(__LINE__); }
+        writer = module->lookupSymbol<func::FuncOp>("writer");
+        parent = module->lookupSymbol<func::FuncOp>("parent");
+        std::vector<unsigned> commands;
+        for (auto& operation : parent.front()) {
+            if (auto invocation = dyn_cast<func::CallOp>(operation)) {
+                commands.push_back(invocation.getCallee() == "writer" ? 1 : 3);
+            } else if (auto barrier = dyn_cast<pto::BarrierOp>(operation)) {
+                if (barrier.getPipe().getPipe() != pto::PIPE::PIPE_ALL) { return failedAt(__LINE__); }
+                commands.push_back(2);
+            }
+            else if (isa<func::ReturnOp>(operation)) { commands.push_back(4); }
+        }
+        // The pending write acquires before the first read; no import boundary
+        // completion is added. The whole parent still completes before return.
+        std::vector<unsigned> expected{1};
+        if (exposed) { expected.push_back(2); }
+        expected.insert(expected.end(), {1, 2, 3, 3, 2, 4});
+        if (commands != expected || writerText != render(writer)) { return failedAt(__LINE__); }
+    }
+    return true;
+}
 } // namespace
 int runClosedCompletionChecks()
 {
     MLIRContext context;
     context.disableMultithreading();
     context.loadDialect<pto::PTODialect, func::FuncDialect, arith::ArithDialect, scf::SCFDialect>();
-    if (!eventfulImport(context) || !pendingPrimitive(context)) {
+    if (!eventfulImport(context) || !pendingPrimitive(context) || !pendingFragments(context)) {
         return 1;
     }
     llvm::outs()

@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticStorageSelectors.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/AffineExpr.h"
+#include <array>
 #include <set>
 #include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticByteCover.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/IntegerProjectionCache.h"
@@ -369,8 +370,67 @@ bool quotientImportCheck()
     }
     return true;
 }
+bool ownedProjectionIdentityChecks()
+{
+    using Row = fs::IntegerConstraint;
+    Integer large(1);
+    for (unsigned i = 0; i < 80; ++i) { large *= Integer(2); }
+    auto source = fs::IntegerSystem::create(2,
+        {Row{{large, Integer(1)}, large}, Row{{Integer(-1), Integer(0)}, Integer(0)},
+         Row{{Integer(1), Integer(0)}, Integer(1)}, Row{{Integer(0), Integer(-1)}, Integer(0)},
+         Row{{Integer(0), Integer(1)}, Integer(2)}},
+        {{{Integer(1), Integer(1)}, Integer(1), Integer(2)}});
+    if (failed(source)) { return false; }
+    fs::IntegerProjectionCache cache;
+    auto mapped = cache.remap(*source, 2, {0, 1});
+    if (failed(mapped)) { return false; }
+    auto joined = cache.intersect(**mapped, **mapped);
+    auto projected = cache.project(*source, {0, 1});
+    if (failed(joined) || failed(projected) || projected->empty()) { return false; }
+    const std::array<const fs::IntegerSystem*, 3> owned{*mapped, *joined, &projected->front()};
+    for (const auto* value : owned) { if (cache.isEmpty(*value)) { return false; } }
+    const auto before = cache.cost();
+    for (unsigned repeat = 0; repeat < 64; ++repeat) {
+        for (const auto* value : owned) { if (cache.isEmpty(*value)) { return false; } }
+    }
+    if (cache.cost().ownedIdentityHits != before.ownedIdentityHits + 192 ||
+        cache.cost().structuralHashes != before.structuralHashes ||
+        cache.cost().structuralComparisons != before.structuralComparisons) { return false; }
+    // Caller-owned values can change at an unchanged address. A new numerical
+    // context must be interned even when an old owned output has equal rows.
+    auto empty = fs::IntegerSystem::create(2,
+        {Row{{Integer(1), Integer(0)}, Integer(-1)}, Row{{Integer(-1), Integer(0)}, Integer(0)}});
+    if (failed(empty)) { return false; }
+    auto external = *source;
+    const auto externalHashes = cache.cost().structuralHashes;
+    if (cache.isEmpty(external)) { return false; }
+    external = *empty;
+    if (!cache.isEmpty(external) || cache.cost().structuralHashes != externalHashes + 2) { return false; }
+    // Other cache owners must not borrow this cache's registered addresses.
+    fs::IntegerProjectionCache independent;
+    if (independent.isEmpty(**mapped) || independent.cost().ownedIdentityHits != 0 ||
+        independent.cost().structuralHashes != 1) { return false; }
+    for (int64_t bound = 2; bound < 130; ++bound) {
+        auto value = fs::IntegerSystem::create(2,
+            {Row{{Integer(1), Integer(0)}, Integer(bound)}, Row{{Integer(0), Integer(1)}, Integer(bound)}});
+        if (failed(value) || failed(cache.remap(*value, 2, {1, 0})) ||
+            failed(cache.intersect(*value, *source)) || failed(cache.project(*value, {1}))) { return false; }
+    }
+    const auto hashesAfterGrowth = cache.cost().structuralHashes;
+    for (const auto* value : owned) { if (cache.isEmpty(*value)) { return false; } }
+    if (cache.cost().structuralHashes != hashesAfterGrowth) { return false; }
+    cache.clear(); // No previously returned pointer or view is used afterward.
+    if (cache.cost().identityRequests || cache.cost().ownedIdentityHits || cache.cost().structuralHashes ||
+        cache.cost().structuralComparisons || cache.cost().projectionBuilds || cache.cost().emptinessBuilds) {
+        return false;
+    }
+    auto rebuilt = cache.remap(*empty, 2, {0, 1});
+    if (failed(rebuilt) || !cache.isEmpty(**rebuilt) || cache.cost().remapBuilds != 1) { return false; }
+    return true;
+}
 bool projectionCacheChecks()
 {
+    if (!ownedProjectionIdentityChecks()) { return false; }
     using Row = fs::IntegerConstraint;
     auto system = fs::IntegerSystem::create(2,
         {Row{{Integer(1), Integer(-1)}, Integer(1)}, Row{{Integer(-1), Integer(1)}, Integer(-1)},

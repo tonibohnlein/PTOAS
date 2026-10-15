@@ -79,7 +79,7 @@ def check_stages(report):
         require(stage["first_dispatches"] == 0 and stage["cache_hits"] == 0,
                 "allocation operations counted as backend dispatches")
         aggregate_counts[stage["parent"]] = aggregate_counts.get(stage["parent"], 0) + 1
-    require(all(count <= 9 for count in aggregate_counts.values()), "per-query ledger growth")
+    require(all(count <= 17 for count in aggregate_counts.values()), "per-query ledger growth")
     for stage, elapsed in zip(stages, children):
         require(stage["exclusive_ns"] + elapsed == stage["elapsed_ns"], "nested time counted twice")
     require(report["contract_audit"]["materializations"] <= report["contract_audit"]["refresh_requests"],

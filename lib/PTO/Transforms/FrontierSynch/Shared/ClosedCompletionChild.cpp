@@ -7,9 +7,10 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Preserve selectively synchronized children through a closed matching and
 // coarse completion contract, without importing their reachability selectors.
+// Event-free children may retain pending effects; their empty resource ownership
+// is independent of the completed-exit contract used for eventful children.
 #include "ClosedCompletionChild.h"
 #include "ProtocolSeal.h"
-#include "RecognitionInternal.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
@@ -170,45 +171,21 @@ std::shared_ptr<const ClosedCompletionChild> ClosedCompletionChild::import(func:
             return {};
         }
         owner->effects = *summary;
+        owner->resources = ResourceClosure::CompletedExit;
     } else {
-        if (!callee.isPrivate() || hasManualOnCoreSynchronization(callee)) {
+        if (!callee.isPrivate()) {
             error = "completion child has unqualified event lifetimes";
             return {};
         }
         auto input = std::move(coarse);
         PhaseIndex index;
-        if (failed(index.build(callee, *input)) || input->instructions().size() > 1) {
-            error = "event-free completion child is not a qualified primitive fragment";
+        if (failed(index.build(callee, *input))) {
+            error = "event-free completion child lacks a qualified phase index";
             return {};
         }
-        const auto core = recoverSyncPhysicalCore(callee);
-        for (const auto* phase : input->instructions()) {
-            if (getSyncPipelinePresence("a3", core, static_cast<PIPE>(phase->kPipeValue)) !=
-                std::optional<bool>(true)) {
-                error = "event-free completion child uses an unavailable pipe";
-                return {};
-            }
-        }
-        RecognitionResult leaves;
-        callee.walk([&](Operation* op) {
-            if (op == callee.getOperation()) {
-                return;
-            }
-            if (op->getNumRegions() || index.needsValuePrerequisite(op) ||
-                llvm::any_of(index.prerequisitesFor(op), [](const auto& p) { return !p.native; })) {
-                error = "event-free child lacks an internal execution/readiness certificate";
-                return;
-            }
-            detail::inspectLeaf(*op, index, leaves);
-        });
-        if (!error.empty() || leaves.state != RecognitionState::Applicable) {
-            if (error.empty()) {
-                error = "event-free completion child has unmodeled effects";
-            }
-            return {};
-        }
-        const auto all = modes(*input);
-        owner->effects = {{all}, {all}, {all}, true};
+        auto summary = CompletionRegion::summarizeEventFree(callee, input, index, error);
+        if (failed(summary)) { return {}; }
+        owner->effects = *summary;
         owner->input = std::move(input);
     }
     owner->seal = closedCompletionSeal(callee);

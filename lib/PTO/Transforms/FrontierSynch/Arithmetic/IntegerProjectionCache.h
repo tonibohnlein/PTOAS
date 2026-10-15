@@ -11,15 +11,27 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticStorageSelectors.h"
 #include "llvm/ADT/Hashing.h"
 #include <map>
+#include <optional>
 #include <tuple>
 #include <unordered_map>
 namespace mlir::pto::frontiersynch {
 // Numerical queries in one unchanged builder context. Every assumption is in
 // the owned system; tags, physical bases and coordinate residues stay outside.
 // Structural equality needs no mathematical query. Map-owned operation values
-// remain stable while new systems are interned; failures are never cached.
+// remain stable until clear() or destruction; failures are never cached.
 class IntegerProjectionCache {
 public:
+    IntegerProjectionCache() = default;
+    IntegerProjectionCache(const IntegerProjectionCache&) = delete;
+    IntegerProjectionCache& operator=(const IntegerProjectionCache&) = delete;
+    // All returned views end here. Clear the borrowed address directory before
+    // destroying its immutable owners; no address from an earlier epoch remains.
+    void clear()
+    {
+        ownedIdentities.clear();
+        projected.clear(); remapped.clear(); intersected.clear(); witnessed.clear();
+        empty.clear(); buckets.clear(); systems.clear(); counts = {};
+    }
     bool isEmpty(const IntegerSystem& system)
     {
         accumulateCost(counts.emptinessRequests, 1);
@@ -46,6 +58,7 @@ public:
         if (failed(value)) { return failure(); }
         accumulateCost(counts.projectionPieces, value->size());
         auto position = projected.emplace(key, std::move(*value)).first;
+        for (const auto& piece : position->second) { ownedIdentities.emplace(&piece, std::nullopt); }
         return llvm::ArrayRef<IntegerSystem>(position->second);
     }
     FailureOr<const IntegerSystem*> remap(const IntegerSystem& system, unsigned dimensions,
@@ -59,7 +72,9 @@ public:
         accumulateCost(counts.remapBuilds, 1);
         auto value = system.remap(dimensions, columns);
         if (failed(value)) { return failure(); }
-        return &remapped.emplace(key, std::move(*value)).first->second;
+        auto* result = &remapped.emplace(key, std::move(*value)).first->second;
+        ownedIdentities.emplace(result, std::nullopt);
+        return result;
     }
     FailureOr<const IntegerSystem*> intersect(const IntegerSystem& left, const IntegerSystem& right)
     {
@@ -72,7 +87,9 @@ public:
         accumulateCost(counts.intersectionBuilds, 1);
         auto value = left.intersect(right);
         if (failed(value)) { return failure(); }
-        return &intersected.emplace(key, std::move(*value)).first->second;
+        auto* result = &intersected.emplace(key, std::move(*value)).first->second;
+        ownedIdentities.emplace(result, std::nullopt);
+        return result;
     }
     FailureOr<llvm::ArrayRef<IntegerTupleWitness>> witnesses(
         const IntegerSystem& system, unsigned inputs, llvm::ArrayRef<uint64_t> outputResidues)
@@ -92,6 +109,9 @@ public:
     const ArithmeticStorageSelectorCost& cost() const { return counts; }
 private:
     ArithmeticStorageSelectorCost counts;
+    // Only map-owned outputs are registered. Caller-owned systems can change
+    // at the same address, and interned vector elements can move during growth.
+    std::unordered_map<const IntegerSystem*, std::optional<std::size_t>> ownedIdentities;
     std::vector<IntegerSystem> systems;
     std::unordered_map<std::size_t, std::vector<std::size_t>> buckets;
     std::map<std::size_t, bool> empty;
@@ -116,6 +136,17 @@ private:
     }
     std::size_t identity(const IntegerSystem& system)
     {
+        accumulateCost(counts.identityRequests, 1);
+        auto owned = ownedIdentities.find(&system);
+        if (owned != ownedIdentities.end() && owned->second) {
+            accumulateCost(counts.ownedIdentityHits, 1);
+            return *owned->second;
+        }
+        auto retain = [&](std::size_t id) {
+            if (owned != ownedIdentities.end()) { owned->second = id; }
+            return id;
+        };
+        accumulateCost(counts.structuralHashes, 1);
         std::size_t hash = system.dimensions();
         for (const auto& row : system.constraints()) {
             hash = llvm::hash_combine(hash,
@@ -127,8 +158,11 @@ private:
                 llvm::hash_combine_range(row.coefficients.begin(), row.coefficients.end()), row.residue, row.modulus);
         }
         auto& bucket = buckets[hash];
-        for (auto id : bucket) { if (same(systems[id], system)) { return id; } }
-        const auto id = systems.size(); systems.push_back(system); bucket.push_back(id); return id;
+        for (auto id : bucket) {
+            accumulateCost(counts.structuralComparisons, 1);
+            if (same(systems[id], system)) { return retain(id); }
+        }
+        const auto id = systems.size(); systems.push_back(system); bucket.push_back(id); return retain(id);
     }
 };
 } // namespace mlir::pto::frontiersynch

@@ -51,7 +51,9 @@ VaryingBoundaryQuery::VaryingBoundaryQuery(const VaryingBoundaryFrame& frame)
     }
     auto shaped = [&](const auto& matrix) { return matrixShape(matrix, ports.size()); };
     if (!llvm::all_of(startup, shaped) || !llvm::all_of(suffix, shaped) ||
-        !llvm::all_of(powers, [&](const auto& phase) { return phase.size() == 64 && llvm::all_of(phase, shaped); })) {
+        !llvm::all_of(powers, [&](const auto& phase) {
+            return !phase.empty() && phase.size() <= 64 && llvm::all_of(phase, shaped);
+        })) {
         constructionError = "invalid varying boundary transfer dimensions";
     }
 }
@@ -136,7 +138,8 @@ std::optional<bool> VaryingBoundaryQuery::compute(
         const auto remaining = targetVisit - begin, tail = remaining % visits.period;
         auto cycles = remaining / visits.period;
         for (unsigned bit = 0; cycles; ++bit, cycles >>= 1) {
-            if ((cycles & 1) && !advance(row, powers[phase][bit])) { return std::nullopt; }
+            const auto level = std::min<std::size_t>(bit, powers[phase].size() - 1);
+            if ((cycles & 1) && !advance(row, powers[phase][level])) { return std::nullopt; }
         }
         for (uint64_t j = 0; j < tail; ++j) {
             if (!advance(row, suffix[(phase + j) % visits.period])) { return std::nullopt; }

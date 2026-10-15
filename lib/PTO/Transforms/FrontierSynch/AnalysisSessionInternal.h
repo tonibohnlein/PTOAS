@@ -17,8 +17,16 @@
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingAnalysis.h"
 #include <set>
+#include <tuple>
 #include <chrono>
 namespace mlir::pto::frontiersynch {
+// Full request capability/mode key, shared by selection and cost recipes.
+inline uint8_t analysisRequestKey(const AnalysisRequest& request)
+{
+    return unsigned(request.needs.queries) | (unsigned(request.needs.selectors) << 1) |
+        (unsigned(request.needs.synchronization) << 2) | (unsigned(request.mode == AnalysisMode::Fallback) << 3) |
+        (unsigned(request.needs.evaluation == AnalysisEvaluation::Stateful) << 4);
+}
 struct NormalizedControlTree;
 // LIFO scopes charge child elapsed time out of their parent exclusive time.
 // Disabled profiling neither reads a clock nor retains stage records.
@@ -141,6 +149,9 @@ struct AnalysisSessionState {
     uint64_t specializedArithmeticBuilds = 0;
     std::optional<DifferenceArithmeticGeneratorStage> differenceGenerators;
     uint64_t arithmeticGeneratorBuilds = 0;
+    // Completed exact answers only. Audit selection has different native-scalar
+    // admission rules. Mutable preparation/allocation plans are never cached here.
+    std::map<std::tuple<std::size_t, uint8_t, bool>, AnalysisOutcome> selectedAnswers;
     std::map<std::pair<std::size_t, uint8_t>, std::vector<AnalysisBackend>> arithmeticOrders;
     std::shared_ptr<AnalysisLedger> ledger = std::make_shared<AnalysisLedger>();
     std::map<std::pair<std::size_t, uint8_t>, std::vector<AnalysisForm>> formOrders;

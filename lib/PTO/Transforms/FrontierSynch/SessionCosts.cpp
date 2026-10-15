@@ -9,6 +9,7 @@
 #include "Shared/NormalizedControl.h"
 #include "Structured/NumericTemplatePlan.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticPeriodicConversion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicWork.h"
 #include "llvm/Support/JSON.h"
 #include <algorithm>
 #include <tuple>
@@ -156,12 +157,6 @@ void FrontierAnalysis::writeStageProfile(llvm::raw_ostream& stream, StringRef wo
         {"stages", std::move(stages)}}) << "\n";
 }
 namespace {
-uint8_t requestKey(const AnalysisRequest& request)
-{
-    return unsigned(request.needs.queries) | (unsigned(request.needs.selectors) << 1) |
-        (unsigned(request.needs.synchronization) << 2) | (unsigned(request.mode == AnalysisMode::Fallback) << 3) |
-        (unsigned(request.needs.evaluation == AnalysisEvaluation::Stateful) << 4);
-}
 struct GeneratorShape {
     EstimatedCount pieces = 0, native = 0, rows = 0, domains = 0;
     uint64_t dimensions = 0;
@@ -210,15 +205,22 @@ std::pair<AnalysisCostEstimate, AnalysisCostEstimate> estimates(
     const auto pipes = EstimatedCount(program.primitives.pipeCount);
     const auto generators = estimatedAdd(shape.pieces, shape.native);
     const auto phaseCopies = estimatedMultiply(program.primitives.period, program.primitives.period);
-    const auto liftedGenerators = estimatedMultiply(generators, phaseCopies);
+    const auto liftedDemands = estimatedMultiply(shape.pieces, phaseCopies);
+    const auto liftedNative = estimatedMultiply(shape.native, phaseCopies);
     const auto dimension = estimatedAdd(shape.dimensions, 1);
-    // Include every potential guarded native skip edge, not just active edges.
-    const auto edges = estimatedAdd(liftedGenerators, estimatedAdd(vertices, estimatedMultiply(types, types)));
+    const auto quotient = guardedPeriodicWork(types, pipes, liftedDemands, liftedNative);
     periodic.generatorPieces = arithmetic.generatorPieces = shape.pieces;
     periodic.ports = arithmetic.ports = vertices;
     periodic.numericalWindow = arithmetic.numericalWindow = 0;
-    periodic.circuitNodes = estimatedAdd(estimatedMultiply(shape.pieces, shape.pieces),
-        estimatedMultiply(estimatedMultiply(pipes, vertices), edges));
+    periodic.circuitNodes = estimatedAdd(liftedDemands,
+        estimatedAdd(quotient.relaxations, estimatedAdd(quotient.nativeScanVisits, quotient.exclusions)));
+    // Grouping/winner expressions are linear in raw records. Charge ordered
+    // map comparisons separately without building or deduplicating candidates.
+    EstimatedCount groupLevels;
+    if (liftedDemands) {
+        groupLevels = 0;
+        for (auto count = *liftedDemands; count; count >>= 1) { ++*groupLevels; }
+    }
     periodic.relationConversion = estimatedAdd(estimatedMultiply(shape.rows, dimension),
         estimatedMultiply(estimatedMultiply(generators, shape.domains), estimatedMultiply(dimension, dimension)));
     // DBM adaptation validates the sparse row description with one closure.
@@ -227,7 +229,8 @@ std::pair<AnalysisCostEstimate, AnalysisCostEstimate> estimates(
             estimatedMultiply(generators, estimatedPower(dimension, 3)));
     }
     periodic.relationConversion = estimatedMultiply(periodic.relationConversion, phaseCopies);
-    periodic.work = estimatedAdd(periodic.relationConversion, estimatedMultiply(periodic.circuitNodes, 2));
+    periodic.work = estimatedAdd(estimatedMultiply(liftedDemands, groupLevels),
+        estimatedAdd(periodic.relationConversion, estimatedMultiply(periodic.circuitNodes, 2)));
     periodic.representation = estimatedAdd(periodic.circuitNodes, estimatedMultiply(pipes, vertices));
     const auto arrangement = estimatedPower(estimatedAdd(shape.pieces, 1),
         estimatedMultiply(shape.dimensions, dimension));
@@ -252,7 +255,7 @@ std::vector<AnalysisForm> FrontierAnalysis::exactForms(const AnalysisRequest& re
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
     sessionState->requestsStarted = true;
     AnalysisProfileScope profile(sessionState->ledger, "selection", request.region, "exactForms");
-    const auto identity = std::make_pair(request.region, requestKey(request));
+    const auto identity = std::make_pair(request.region, analysisRequestKey(request));
     auto cached = sessionState->formOrders.find(identity);
     if (cached != sessionState->formOrders.end()) { profile.cacheHit(); return cached->second; }
     auto normalized = normalizedRegion(request.region);
@@ -335,7 +338,7 @@ std::vector<AnalysisBackend> FrontierAnalysis::arithmeticMethods(const AnalysisR
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
     sessionState->requestsStarted = true;
     AnalysisProfileScope profile(sessionState->ledger, "selection", request.region, "arithmeticMethods");
-    const auto key = requestKey(request);
+    const auto key = analysisRequestKey(request);
     const auto identity = std::make_pair(request.region, key);
     if (auto found = sessionState->arithmeticOrders.find(identity); found != sessionState->arithmeticOrders.end()) {
         return found->second;

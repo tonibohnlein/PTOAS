@@ -354,8 +354,12 @@ void SequenceAnalysisState::consolidateCrossings(bool incomingSources)
         groups[{incomingSources ? edge.target : edge.source, pipe(selectedPort(edge))}].push_back(id);
     }
     for (auto& [key, ids] : groups) {
+        ++crossingOrderWork.groups;
         using Order = std::tuple<uint32_t, std::vector<uint64_t>, uint32_t>;
         std::vector<std::pair<Order, std::size_t>> ordered;
+        std::map<uint32_t, unsigned> perChild;
+        for (auto id : ids) { ++perChild[ports[selectedPort(crossings[id])].child]; }
+        bool dynamic = false;
         for (auto id : ids) {
             const auto& source = ports[selectedPort(crossings[id])];
             std::vector<uint64_t> coordinates;
@@ -367,18 +371,25 @@ void SequenceAnalysisState::consolidateCrossings(bool incomingSources)
                 if (!number) { constant = false; break; }
                 coordinates.push_back(*number);
             }
-            if (!constant) { break; }
+            // Distinct children have certified reference order independently
+            // of their occurrence coordinates. Within a child retain the
+            // existing constant-coordinate sort and exact adjacent proof.
+            if (!constant && perChild.at(source.child) != 1) { break; }
+            if (!constant) { coordinates.clear(); dynamic = true; }
             ordered.push_back({{source.child, std::move(coordinates), source.type}, id});
         }
         bool chain = ordered.size() == ids.size();
         if (chain) {
             llvm::sort(ordered);
             for (std::size_t i = 1; i < ordered.size(); ++i) {
+                ++crossingOrderWork.orderQueries;
                 chain &= expressions.constantValue(before(selectedPort(crossings[ordered[i-1].second]),
                     selectedPort(crossings[ordered[i].second]))) == 1;
             }
         }
         if (chain) {
+            ++crossingOrderWork.qualified;
+            if (dynamic && ids.size() > 1) { ++crossingOrderWork.dynamicQualified; }
             // A verified ordering supports a suffix union for sources and a
             // prefix union for consumers, including differing presence guards.
             if (incomingSources) { std::reverse(ordered.begin(), ordered.end()); }
@@ -391,6 +402,7 @@ void SequenceAnalysisState::consolidateCrossings(bool incomingSources)
             }
             continue;
         }
+        ++crossingOrderWork.residual;
         std::vector<Crossing> original;
         for (auto id : ids) { original.push_back(crossings[id]); }
         for (auto id : ids) {
@@ -398,6 +410,7 @@ void SequenceAnalysisState::consolidateCrossings(bool incomingSources)
             auto covered = no();
             for (const auto& other : original) {
                 if (selectedPort(other) == selectedPort(edge)) { continue; }
+                ++crossingOrderWork.orderQueries;
                 auto order = incomingSources ? before(edge.source, other.source) : before(other.target, edge.target);
                 covered = either(covered, expressions.select(other.guard, order, no()));
             }
@@ -655,6 +668,7 @@ bool SequenceAnalysisState::closure()
 }
 bool SequenceAnalysisState::symbolicCrossingReduction()
 {
+    crossingQueryWork = {};
     auto reductionLinks = incoming;
     auto add = [&](std::size_t source, std::size_t target, Expr guard) {
         if (expressions.constantValue(guard) != 0) {
@@ -712,16 +726,26 @@ bool SequenceAnalysisState::symbolicCrossingReduction()
         const auto candidateGuard = edge.guard;
         Expr alternate = no();
         for (const auto& entry : reductionLinks[ports[edge.target].child]) {
+            ++crossingQueryWork.entries;
             if (incompatible(candidateGuard, entry.guard)) { continue; }
             auto distinct = yes();
             if (entry.source % 2 == 1 && entry.target % 2 == 0) {
                 distinct = negate(both(same(entry.source / 2, edge.source), same(entry.target / 2, edge.target)));
             }
-            if (expressions.constantValue(distinct) == 0) { continue; }
+            if (expressions.constantValue(distinct) == 0) { ++crossingQueryWork.aliases; continue; }
             if (ports[entry.source / 2].child < ports[edge.source].child) { continue; }
+            // Every modeled path advances original occurrence order. A
+            // completion cannot reach its own start. This exact certificate
+            // needs no child callback and avoids an unused cross-child prefix.
+            // Other tails retain prefix-first evaluation: unavailable child
+            // queries can record errors, even when a zero prefix would skip
+            // them, so speculative suffix callbacks are not interchangeable.
+            if (entry.target == 2 * edge.target + 1) { ++crossingQueryWork.zeroTails; continue; }
+            ++crossingQueryWork.prefixQueries;
             auto prefix = eventReachability(2*edge.source+1, entry.source);
             if (!prefix) { return fail("child all-event query unavailable"); }
             if (expressions.constantValue(*prefix) == 0) { continue; }
+            ++crossingQueryWork.suffixQueries;
             auto suffix = eventReachability(entry.target, 2*edge.target);
             if (!suffix) { return fail("child all-event query unavailable"); }
             auto tail = expressions.select(entry.guard, both(distinct, *suffix), no());
