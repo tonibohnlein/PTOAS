@@ -46,6 +46,8 @@ public:
             {"last_alternatives", cost.lastAlternatives}, {"matrix_pairs", cost.matrixPairs},
             {"ordered_attempts", cost.orderedAttempts}, {"ordered_phases", cost.orderedPhases},
             {"ordered_reuse_queries", cost.orderedReuseQueries}, {"ordered_accepted", cost.orderedAccepted},
+            {"ordered_over_capacity", cost.orderedOverCapacity}, {"ordered_unresolved", cost.orderedUnresolved},
+            {"ordered_witness_queries", cost.orderedWitnessQueries},
             {"candidate_gaps", cost.candidateGaps}, {"boundary_pairs", cost.boundaryPairs},
             {"coalescing_ns", cost.coalescingNanoseconds}, {"coalescing_cache_hits", coalescingHit ? 1U : 0U},
             {"activity_requests", cost.activityRequests}, {"activity_computations", cost.activityComputations},
@@ -381,7 +383,10 @@ std::shared_ptr<RegionalAllocationSummary> repeatedRegionalAllocation(
     work.coalesced(reused);
     if (!coalesced) { return {}; }
     if (strength == AllocationStrength::Shared) {
-        if (auto periodic = periodicLaneAllocation(state, *coalesced, crossings, work.counters())) { return periodic; }
+        auto periodic = periodicLaneAllocation(state, *coalesced, crossings, work.counters());
+        if (periodic.assignment) { return std::move(periodic.assignment); }
+        // A rejected whole-span assignment does not reject independent lifting
+        // or a parent's different reservation/decomposition contract.
     }
     auto result = std::make_shared<RegionalAllocationSummary>();
     for (const auto& group : coalesced->groups) {

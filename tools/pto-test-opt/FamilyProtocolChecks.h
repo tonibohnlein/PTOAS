@@ -102,7 +102,8 @@ bool evaluateProtocolBlock(mlir::Block& block, mlir::DenseMap<mlir::Value, uint6
     }
     return true;
 }
-bool checkFamilyProtocol(mlir::MLIRContext* context, unsigned count, unsigned mode, bool physical = false)
+bool checkFamilyProtocol(mlir::MLIRContext* context, unsigned count, unsigned mode,
+                         bool physical = false, bool batched = false)
 {
     using namespace mlir;
     namespace fs = protocol_fs;
@@ -155,12 +156,12 @@ bool checkFamilyProtocol(mlir::MLIRContext* context, unsigned count, unsigned mo
         plan.endpoints.push_back(std::move(endpoint));
     }
     std::vector<uint32_t> labels;
+    SmallVector<fs::ContextualEndpointFamily> endpoints;
     for (unsigned i = 0; i < count; ++i) {
         const auto label = uint32_t(10 + (37 * i) % count);
         const auto point = mode == 2 ? i % 2 : i;
         labels.push_back(label);
         family(label, point);
-        SmallVector<fs::ContextualEndpointFamily> endpoints;
         for (auto kind : {fs::EndpointKind::Set, fs::EndpointKind::Wait}) {
             fs::ContextualEndpointFamily endpoint;
             endpoint.piece.namespaceId = 0;
@@ -176,9 +177,14 @@ bool checkFamilyProtocol(mlir::MLIRContext* context, unsigned count, unsigned mo
             endpoint.ordinal = arena->constant(0);
             endpoints.push_back(std::move(endpoint));
         }
+        // Two already-grouped numerical leaves exercise normalization of
+        // pieces with many members, rather than only singleton input leaves.
+        if (batched && (i + 1) % (count / 2)) { continue; }
         fs::ContextualFamilyExpressions expressions(arena);
+        const SmallVector<uint8_t> numerical(endpoints.size(), mode != 4);
         auto leaf = fs::buildMixedFamilyEndpointRecipe(
-            expressions, endpoints, mode == 4 ? ArrayRef<uint8_t>({0, 0}) : ArrayRef<uint8_t>({1, 1}), {});
+            expressions, endpoints, numerical, {});
+        endpoints.clear();
         if (failed(leaf)) {
             return false;
         }
@@ -207,7 +213,8 @@ bool checkFamilyProtocol(mlir::MLIRContext* context, unsigned count, unsigned mo
     }
     const auto originalRecipe = plan.familyRecipe;
     if (failed(fs::normalizeLogicalFamilies(plan)) || plan.preparation.size() || plan.endpoints.size() != 2 ||
-        !plan.familyProtocol || plan.familyWork.materializations || plan.familyWork.normalizationInputs != 2 * count) {
+        !plan.familyProtocol || plan.familyWork.materializations ||
+        plan.familyWork.normalizationInputs != (batched ? 4 : 2 * count)) {
         return false;
     }
     if (mode == 0 && plan.familyWork.normalizedSites != 2) {
@@ -635,6 +642,12 @@ bool checkFamilyProtocols(mlir::MLIRContext* context)
                 llvm::errs() << "family protocol unfolding mismatch " << count << "," << mode << "\n";
                 return false;
             }
+        }
+    }
+    for (unsigned members : {128U, 512U, 2048U}) {
+        if (!checkFamilyProtocol(context, 2 * members, 0, false, true)) {
+            llvm::errs() << "grouped family normalization mismatch " << members << "\n";
+            return false;
         }
     }
     llvm::outs()

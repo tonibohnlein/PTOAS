@@ -318,7 +318,7 @@ bool allocationCheck(func::FuncOp function, Operation* anchor, scf::ForOp loop,
     if (!coalesced) { return false; }
     fs::RepeatedLaneProofCost proofCost;
     auto input = std::make_shared<fs::RegionalAllocationSummary>(child);
-    auto summary = cyclePolicy ? fs::periodicLaneAllocation(state, *coalesced, crossings, &proofCost) :
+    auto summary = cyclePolicy ? fs::periodicLaneAllocation(state, *coalesced, crossings, &proofCost).assignment :
                                  fs::repeatedRegionalAllocation(state, input, crossings);
     if (!summary) {
         llvm::errs() << "allocation producer rejected " << q << ":" << begin << ":" << end
@@ -692,7 +692,7 @@ bool checkReuseProofIsolation(func::FuncOp function, Operation* anchor, scf::For
             duplicate.members.front().record = 1;
             input.groups.push_back(std::move(duplicate));
             fs::RepeatedLaneProofCost cost;
-            if (fs::periodicLaneAllocation(state, input, {}, &cost) ||
+            if (fs::periodicLaneAllocation(state, input, {}, &cost).assignment ||
                 !cost.implicationComputations || cost.implicationComputations >= cost.implicationRequests ||
                 cost.constantComputations != 3 || cost.constantComputations >= cost.constantRequests ||
                 !cost.relativeComputations || cost.relativeComputations >= cost.relativeQueries ||
@@ -703,7 +703,7 @@ bool checkReuseProofIsolation(func::FuncOp function, Operation* anchor, scf::For
                 return std::optional<fs::RegionExpressions::Id>();
             };
             fs::RepeatedLaneProofCost unavailable;
-            if (fs::periodicLaneAllocation(state, input, {}, &unavailable) ||
+            if (fs::periodicLaneAllocation(state, input, {}, &unavailable).assignment ||
                 !unavailable.relativeComputations || unavailable.relativeComputations >= unavailable.relativeQueries) {
                 return false;
             }

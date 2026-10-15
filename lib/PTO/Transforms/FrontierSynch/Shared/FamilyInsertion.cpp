@@ -1043,9 +1043,11 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> mergeNumericalLeaves(
             const auto& piece = leaf.pieces[index];
             for (auto member : piece.members) {
                 member.record += part.recordBase;
-                EndpointPiece point = piece;
-                point.members = {std::move(member)};
-                point.namespaceId += part.recordBase;
+                // Copy fixed metadata only. Copying piece here duplicates its
+                // complete member inventory once for every singleton output.
+                EndpointPiece point{piece.namespaceId + part.recordBase, piece.sourcePipe, piece.targetPipe,
+                    piece.displacement, piece.kind, piece.cut, piece.order, {}};
+                point.members.push_back(std::move(member));
                 points.push_back(std::move(point));
                 numerical.push_back(1);
             }
