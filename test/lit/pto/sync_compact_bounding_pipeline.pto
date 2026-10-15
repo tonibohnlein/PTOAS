@@ -48,7 +48,7 @@ module {
     }
     return
   }
-  func.func @balanced_future_arms(%n: index) attributes {test.compact_direct} {
+  func.func @balanced_future_arms(%n: index) attributes {test.compact_direct, test.balanced_saved} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c2 = arith.constant 2 : index

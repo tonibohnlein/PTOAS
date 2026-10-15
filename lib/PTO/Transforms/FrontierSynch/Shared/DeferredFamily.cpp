@@ -364,7 +364,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> readDeferredFamilyOutput(func::F
 {
     if (!function) { return failure(); }
     auto data = function->getAttrOfType<DictionaryAttr>(recipeAttr);
-    if (integer(data, "version") == 2 || integer(data, "version") == 3) {
+    if (integer(data, "version") == 2 || integer(data, "version") == 3 || integer(data, "version") == 4) {
         return readContextualDeferredFamily(function, data);
     }
     const auto version = integer(data, "version"), planId = integer(data, "plan"), outer = integer(data, "outer"),

@@ -11,6 +11,13 @@
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompactBoundingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/BalancedCompactBody.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactBoundingAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/DeferredFamily.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
+#include "mlir/Parser/Parser.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/SHA256.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "SyncLogicalInsertionChecks.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/BoundarySlices.h"
@@ -190,6 +197,7 @@ std::vector<Execution> traces(func::FuncOp function, const pto::SyncInput& input
     }
     return result;
 }
+#include "BalancedDeferredChecks.h"
 bool retainedQueries(const fs::PreparedLogicalPlan& plan)
 {
     const auto& owner = plan.compactBoundingOwner;
@@ -320,24 +328,37 @@ bool checkMachineBoundary(func::FuncOp function, const pto::SyncInput& input)
 // realize the existing exact result without changing the selected demands.
 bool checkLateGuard(func::FuncOp function, const pto::SyncInput& input)
 {
+    auto fail = [](StringRef stage) {
+        llvm::errs() << "late guard stage: " << stage << "\n"; return false;
+    };
     const auto before = render(function);
     fs::FrontierAnalysis analysis(function);
     if (analysis.hasWholeFunctionMinimumDemands() || failed(analysis.initialize(input.memory().gmPolicy()))) {
-        return false;
+        return fail("initialize");
     }
     auto* demands = analysis.auditSequenceFunction();
-    if (!demands || !demands->error.empty() || !analysis.hasWholeFunctionMinimumDemands()) { return false; }
+    if (!demands || !demands->error.empty() || !analysis.hasWholeFunctionMinimumDemands()) {
+        return fail("retained exact demands");
+    }
     auto region = fs::sequenceRegionalResult(*demands);
-    if (region.anchors.size() != 2) { return false; }
+    if (region.anchors.size() != 2) { return fail("original anchor count"); }
     fs::RegionalEvent writer{0, region.expressions->constant(0), fs::PeriodicEventKind::Completion};
     fs::RegionalEvent reader{1, region.expressions->constant(0), fs::PeriodicEventKind::Start};
     const auto query = fs::regionalReachability(region, writer, reader);
     if (!query || region.expressions->constantValue(*query) == 0 ||
         failed(fs::prepareSequenceInsertion(*demands)) ||
         !analysis.hasWholeFunctionMinimumDemands() || analysis.auditSequenceFunction() != demands ||
-        fs::regionalReachability(region, writer, reader) != query) { return false; }
+        fs::regionalReachability(region, writer, reader) != query) { return fail("exact query and preparation retry"); }
     auto prepared = fs::prepareFunctionSynchronization(function, input.memory().gmPolicy());
-    if (failed(prepared) || before != render(function) || (*prepared)->compactBoundingOwner) { return false; }
+    if (failed(prepared) || before != render(function) || (*prepared)->compactBoundingOwner) {
+        return fail("exact function preparation");
+    }
+    // Owned endpoint recipes defer scalar construction. Inspect the same exact
+    // command protocol only after the common materializer, while checking that
+    // the original late division remains unchanged before insertion.
+    if (failed(fs::materializeLogicalFamilies(**prepared)) || before != render(function)) {
+        return fail("detached family materialization");
+    }
     unsigned sets = 0, waits = 0, terminalWaits = 0;
     for (const auto& endpoint : (*prepared)->endpoints) {
         sets += endpoint.kind == fs::LogicalCommandKind::Set;
@@ -345,11 +366,15 @@ bool checkLateGuard(func::FuncOp function, const pto::SyncInput& input)
         terminalWaits += endpoint.kind == fs::LogicalCommandKind::Wait &&
                          endpoint.before == function.front().getTerminator();
     }
-    return sets == 1 && waits == 2 && terminalWaits == 1 &&
-           succeeded(fs::insertLogicalSynchronization(function, **prepared)) && succeeded(verify(function));
+    if (sets != 1 || waits != 2 || terminalWaits != 1) { return fail("terminal cleanup command counts"); }
+    if (failed(fs::insertLogicalSynchronization(function, **prepared)) || failed(verify(function))) {
+        return fail("exact synchronization insertion");
+    }
+    return true;
 }
 bool check(func::FuncOp function, const pto::SyncInput& input)
 {
+    if (function->hasAttr("test.balanced_saved") && !checkBalancedDeferred(function)) { return false; }
     if (function->hasAttr("test.machine_boundary")) { return checkMachineBoundary(function, input); }
     if (function->hasAttr("test.late_guard")) { return checkLateGuard(function, input); }
     if (function->hasAttr("test.exact_priority")) {

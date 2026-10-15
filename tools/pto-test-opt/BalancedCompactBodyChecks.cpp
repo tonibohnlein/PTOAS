@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Execute prepared endpoint copies through original, independently chosen arms.
 #include "PTO/Transforms/FrontierSynch/Shared/BalancedCompactBody.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "SyncLogicalInsertionChecks.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Verifier.h"
@@ -103,7 +104,9 @@ bool check(func::FuncOp function, const pto::SyncInput& input)
     std::string error;
     const auto before = render(function);
     auto prepared = fs::prepareBalancedCompactInsertion(function, body, analysis, 73, error);
-    if (failed(prepared) || !error.empty() || render(function) != before ||
+    if (failed(prepared) || !error.empty() || render(function) != before || !(*prepared)->familyRecipe ||
+        !(*prepared)->endpoints.empty() || !(*prepared)->preparation.empty() ||
+        failed(fs::materializeLogicalFamilies(**prepared)) || render(function) != before ||
         (*prepared)->endpoints.size() != 4 * static_cast<uint64_t>(alternatives.getInt()) ||
         (*prepared)->families.size() != analysis.retained.size() || !(*prepared)->groupedFamilies ||
         !(*prepared)->independentPieces) { return false; }

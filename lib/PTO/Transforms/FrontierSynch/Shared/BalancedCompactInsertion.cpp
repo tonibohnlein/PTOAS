@@ -9,7 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/BalancedCompactBody.h"
 #include "PTO/IR/PTO.h"
 #include "CountedLoop.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/DenseSet.h"
 #include <map>
@@ -66,83 +66,49 @@ class Preparer {
 public:
     Preparer(const BalancedCompactBody& body, const LogicalEndpointPlan& logical, const CountedLoop& domain,
              int64_t planId)
-        : body(body), logical(logical), domain(domain), builder(body.loop->getContext()),
+        : body(body), logical(logical), domain(domain),
           plan(std::make_unique<PreparedLogicalPlan>(planId))
     {}
     std::unique_ptr<PreparedLogicalPlan> run();
 private:
-    Value number(uint64_t value)
-    {
-        auto type = builder.getIndexType();
-        return builder.create<arith::ConstantOp>(body.loop->getLoc(), type, IntegerAttr::get(type, APInt(64, value)));
-    }
-    Value compare(arith::CmpIPredicate predicate, Value left, Value right)
-    {
-        return builder.create<arith::CmpIOp>(body.loop->getLoc(), predicate, left, right);
-    }
-    bool initialize();
     bool families();
     void endpoint(const EndpointRecipe& recipe, const BalancedCompactAlternative& alternative);
     const BalancedCompactBody& body;
     const LogicalEndpointPlan& logical;
     const CountedLoop& domain;
-    OpBuilder builder;
     std::unique_ptr<PreparedLogicalPlan> plan;
-    Value trips, ordinal;
+    std::shared_ptr<RegionExpressions> expressions = std::make_shared<RegionExpressions>();
+    RegionExpressions::Id trips = RegionExpressions::invalid, ordinal = RegionExpressions::invalid;
+    SmallVector<ContextualEndpointFamily> endpoints;
     using Namespace = std::tuple<uint32_t, uint32_t, uint64_t>;
     std::map<Namespace, uint32_t> namespaces;
-    std::map<Operation*, Block*> blocks;
+    std::map<Operation*, uint64_t> orders;
 };
-bool Preparer::initialize()
-{
-    RegionExpressions expressions;
-    const auto count = domain.trips(expressions), visit = domain.ordinal(expressions);
-    auto loop = body.loop;
-    builder.setInsertionPointToEnd(&plan->addPreparation(loop));
-    llvm::DenseMap<RegionExpressions::Id, Value> memo;
-    auto emittedTrips = expressions.emit(count, builder, loop, memo);
-    if (failed(emittedTrips)) { return false; }
-    trips = *emittedTrips;
-    auto* bodyCut = &loop.getBody()->front();
-    builder.setInsertionPointToEnd(&plan->addPreparation(bodyCut));
-    memo.clear();
-    auto emittedOrdinal = expressions.emit(visit, builder, bodyCut, memo);
-    if (failed(emittedOrdinal)) { return false; }
-    ordinal = *emittedOrdinal;
-    return true;
-}
 void Preparer::endpoint(const EndpointRecipe& recipe, const BalancedCompactAlternative& alternative)
 {
     const bool publish = recipe.kind == EndpointKind::Set, local = recipe.kind == EndpointKind::Barrier;
-    auto* cut = publish ? alternative.after.before : alternative.before.before;
-    auto [block, added] = blocks.try_emplace(cut);
-    if (added) { block->second = &plan->addPreparation(cut); }
-    builder.setInsertionPointToEnd(block->second);
-    auto location = cut->getLoc();
-    auto delay = number(recipe.displacement);
-    Value guard, identity;
+    const auto cut = publish ? alternative.after : alternative.before;
+    auto& arena = *expressions;
+    const auto delay = arena.constant(recipe.displacement);
+    ContextualEndpointFamily endpoint;
+    endpoint.piece.cut = cut;
+    endpoint.piece.kind = recipe.kind;
+    endpoint.piece.sourcePipe = body.slots[recipe.source].pipe;
+    endpoint.piece.targetPipe = body.slots[recipe.target].pipe;
+    endpoint.piece.displacement = recipe.displacement;
+    endpoint.piece.namespaceId = namespaces.at({endpoint.piece.sourcePipe, endpoint.piece.targetPipe,
+                                               recipe.displacement});
+    endpoint.piece.order = orders[cut.before]++;
+    endpoint.piece.members.push_back({recipe.record, {}});
     if (publish) {
-        auto remaining = builder.create<arith::SubIOp>(location, trips, delay);
-        auto hasTarget = compare(arith::CmpIPredicate::ult, delay, trips);
-        auto beforeEnd = compare(arith::CmpIPredicate::ult, ordinal, remaining);
-        guard = builder.create<arith::AndIOp>(location, hasTarget, beforeEnd);
-        identity = ordinal;
+        endpoint.activity = arena.land(arena.lt(delay, trips), arena.lt(ordinal, arena.sub(trips, delay)));
+        endpoint.ordinal = ordinal;
     } else {
-        guard = compare(arith::CmpIPredicate::uge, ordinal, delay);
-        if (!local) { identity = builder.create<arith::SubIOp>(location, ordinal, delay); }
+        endpoint.activity = arena.le(delay, ordinal);
+        if (!local) { endpoint.ordinal = arena.sub(ordinal, delay); }
     }
-    const auto kind = local ? LogicalCommandKind::Barrier :
-        publish ? LogicalCommandKind::Set : LogicalCommandKind::Wait;
-    // No source/target alternative pair is formed. The slot record, source
-    // coordinate and pipes are identical at every copy of this one side.
-    plan->endpoints.push_back({cut, kind, body.slots[recipe.source].pipe,
-                              body.slots[recipe.target].pipe,
-                              namespaces.at({body.slots[recipe.source].pipe, body.slots[recipe.target].pipe,
-                                             recipe.displacement}), guard, identity});
-    auto& endpoint = plan->endpoints.back();
-    if (!local) { endpoint.memberCoordinates.push_back(number(recipe.record)); }
-    endpoint.records.push_back(recipe.record);
-    endpoint.piece = static_cast<int64_t>(plan->endpoints.size() - 1);
+    // One owned side recipe per original alternative; never form source/target pairs.
+    endpoints.push_back(std::move(endpoint));
 }
 bool Preparer::families()
 {
@@ -180,11 +146,17 @@ std::unique_ptr<PreparedLogicalPlan> Preparer::run()
 {
     if (!families()) { return nullptr; }
     if (logical.recipes.empty()) { return std::move(plan); }
-    if (!initialize()) { return nullptr; }
+    trips = domain.trips(*expressions);
+    ordinal = domain.ordinal(*expressions);
     for (const auto& recipe : logical.recipes) {
         const auto slot = recipe.kind == EndpointKind::Set ? recipe.source : recipe.target;
         for (const auto& alternative : body.slots[slot].alternatives) { endpoint(recipe, alternative); }
     }
+    auto loop = body.loop;
+    auto recipe = buildContextualFamilyEndpointRecipe(expressions, endpoints,
+        {{trips, loop}, {ordinal, &loop.getBody()->front()}});
+    if (failed(recipe)) { return nullptr; }
+    plan->familyRecipe = std::move(*recipe);
     return std::move(plan);
 }
 } // namespace
