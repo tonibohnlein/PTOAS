@@ -13,7 +13,8 @@ implementation from executed validation and unresolved protocol work.
 
 | Work | Implementation acceptance | Kernel compilation | Fixed-protocol capacity investigation |
 |---|---|---|---|
-| M1 normalization and outcome distinctions | Accepted and committed | Separate historical receipts; not re-established here | Does not close remaining protocols |
+| M1 normalization and outcome distinctions | Accepted and committed; further construction optimization under validation | Separate historical receipts; not re-established here | Does not close remaining protocols |
+| M2 selection and capability ownership | Accepted implementation; [pinned acceptance matrix](frontier-selection-ownership.md#m2-implementation-acceptance) | Separate outcome | Does not certify protocol allocation |
 | GroupNorm lane spans | Accepted partial allocation checkpoint; fresh combined/split/restored trace checks pass | Device compilation not established | Preserved six-ID assignment checked in 24 physical traces across those three routes; tested protocol scope only |
 | Prefill coordinate allocation | Experimental candidate retained in the checkpoint; construction investigation open | Not established | Historical diagnostic: four families reached two-ID proofs; `11 → 56` stopped during composition. Current default-policy logical construction succeeds; allocation export remains unavailable. The opt-in candidate requires fresh family-stage attribution. |
 | Decode witness | Retained evidence for the admitted execution | Not established by the witness | Nine-ID witness applies to its fixed protocol, not a universal hardware lower bound |
