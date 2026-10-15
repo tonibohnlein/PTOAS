@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionConstruction.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
@@ -27,6 +28,108 @@ std::string render(func::FuncOp function)
     llvm::raw_string_ostream stream(result);
     function.print(stream);
     return result;
+}
+bool checkCountedRoots(fs::RegionExpressions& arena, ArrayRef<fs::RegionExpressions::Id> roots, Operation* cut)
+{
+    fs::detail::ScalarConstruction construction;
+    fs::detail::RegionConstructionContext counted;
+    fs::RegionExpressions::CutEmission actual;
+    Block code;
+    OpBuilder builder(cut->getContext()); builder.setInsertionPointToEnd(&code);
+    for (auto root : roots) {
+        auto recipe = arena.prepareContextual(root, cut, actual);
+        if (failed(recipe)) { return false; }
+        auto count = fs::detail::RegionConstructionAccess::construct(arena, **recipe, construction, cut, counted);
+        auto value = arena.emitPreparedContextual(**recipe, builder, cut, actual);
+        if (failed(count) || failed(value) || construction.operations() != code.getOperations().size()) {
+            return false;
+        }
+        const auto cost = construction.operations();
+        auto again = fs::detail::RegionConstructionAccess::construct(arena, **recipe, construction, cut, counted);
+        if (failed(again) || *again != *count || construction.operations() != cost) { return false; }
+    }
+    return true;
+}
+bool checkCountedReplay(MLIRContext* context)
+{
+    OpBuilder builder(context);
+    const auto loc = builder.getUnknownLoc();
+    OwningOpRef<func::FuncOp> function(func::FuncOp::create(loc, "counted_multiresult",
+        builder.getFunctionType({builder.getI64Type(), builder.getI64Type()}, {})));
+    auto* body = function->addEntryBlock();
+    builder.setInsertionPointToEnd(body);
+    auto product = builder.create<arith::MulUIExtendedOp>(loc, body->getArgument(0), body->getArgument(1));
+    auto* cut = product.getOperation();
+    auto* later = builder.create<func::ReturnOp>(loc).getOperation();
+    fs::RegionExpressions arena;
+    const auto low = arena.input(product.getResult(0)), high = arena.input(product.getResult(1));
+    const auto root = arena.add(low, high);
+    fs::RegionExpressions::CutEmission planning;
+    auto recipe = arena.prepareContextual(root, cut, planning);
+    if (failed(recipe)) { return false; }
+    for (bool complete : {false, true}) {
+        fs::detail::ScalarConstruction construction;
+        fs::detail::RegionConstructionContext counted;
+        fs::RegionExpressions::CutEmission actual;
+        const auto oldLow = construction.input(body->getArgument(0));
+        counted.inputs[product.getResult(0)] = oldLow;
+        actual.inputs[product.getResult(0)] = body->getArgument(0);
+        if (complete) {
+            counted.inputs[product.getResult(1)] = construction.input(body->getArgument(1));
+            actual.inputs[product.getResult(1)] = body->getArgument(1);
+        }
+        auto predicted = fs::detail::RegionConstructionAccess::construct(arena, **recipe, construction, cut, counted);
+        Block code;
+        builder.setInsertionPointToEnd(&code);
+        auto emitted = arena.emitPreparedContextual(**recipe, builder, cut, actual);
+        if (failed(predicted) || failed(emitted) || construction.operations() != code.getOperations().size() ||
+            construction.operations() != (complete ? 3U : 4U) ||
+            (counted.inputs.lookup(product.getResult(0)) == oldLow) != complete ||
+            (actual.inputs.lookup(product.getResult(0)) == body->getArgument(0)) != complete) { return false; }
+        if (!complete && counted.inputs.lookup(product.getResult(0)) ==
+            counted.inputs.lookup(product.getResult(1))) { return false; }
+        // A cached root must still validate every required binding, and tokens
+        // belonging to another counting run cannot enter this run's memo.
+        fs::detail::ScalarConstruction otherOwner;
+        const auto currentRoot = counted.values.lookup(root);
+        const auto ownedCost = construction.operations();
+        counted.values[root] = otherOwner.external();
+        if (succeeded(fs::detail::RegionConstructionAccess::construct(
+                arena, **recipe, construction, cut, counted)) || construction.operations() != ownedCost) {
+            return false;
+        }
+        counted.values[root] = currentRoot;
+        fs::RegionExpressions::CutEmission boundPlanning;
+        boundPlanning.plannedValues.insert(low);
+        auto bound = arena.prepareContextual(root, cut, boundPlanning);
+        if (failed(bound)) { return false; }
+        counted.values.erase(low);
+        const auto before = construction.operations();
+        if (succeeded(fs::detail::RegionConstructionAccess::construct(
+                arena, **bound, construction, cut, counted)) || construction.operations() != before) { return false; }
+        fs::detail::ScalarConstruction foreign;
+        counted.values[low] = foreign.external();
+        if (succeeded(fs::detail::RegionConstructionAccess::construct(
+                arena, **bound, construction, cut, counted)) || construction.operations() != before) { return false; }
+    }
+    // The same root at a later original cut uses its actual dominating values,
+    // with a separate cut memo and no invented cross-cut replay reuse.
+    return checkCountedRoots(arena, {root, low, high}, cut) && checkCountedRoots(arena, {root, low, high}, later);
+}
+bool checkReadOnlyReachability(Value index, Value predicate)
+{
+    fs::RegionExpressions e;
+    const auto x = e.input(index), p = e.input(predicate), one = e.constant(1);
+    const auto sum = e.add(x, one), root = e.select(p, sum, x);
+    const auto unrelated = e.div(x, e.constant(17));
+    const auto before = e.size();
+    std::set<fs::Expr> visited;
+    bool repeated = false;
+    const auto count = e.visitReferenced({root, sum, root, fs::RegionExpressions::invalid}, [&](fs::Expr id) {
+        repeated |= !visited.insert(id).second;
+    });
+    return count == 5 && visited == std::set<fs::Expr>{x, p, one, sum, root} &&
+        !visited.count(unrelated) && !repeated && e.size() == before && e.constructionError().empty();
 }
 bool checkLiteralChoiceComparisons(Value index, Value predicate)
 {
@@ -1344,7 +1447,7 @@ bool checkMappedIntegerAdapters(func::FuncOp function, ArrayRef<Operation*> cuts
         OpBuilder builder(context); builder.setInsertionPointToEnd(&code);
         fs::RegionExpressions::CutEmission emission;
         auto emitted = arena.emitContextual(*query, builder, cuts[0], emission);
-        if (failed(emitted)) { return false; }
+        if (failed(emitted) || !checkCountedRoots(arena, {*query}, cuts[0])) { return false; }
         for (auto& operation : code) { if (failed(verify(&operation))) { return false; } }
         for (int64_t sample : {INT64_MIN, INT64_MAX, int64_t(-11), int64_t(-9), int64_t(-3), int64_t(-1),
                                int64_t(0), int64_t(1), int64_t(2), int64_t(9), int64_t(11)}) {
@@ -1426,6 +1529,7 @@ bool checkIntegerEmission(func::FuncOp function, ArrayRef<Operation*> cuts, Valu
     OpBuilder builder(function.getContext());
     builder.setInsertionPointToEnd(&code);
     fs::RegionExpressions::CutEmission context;
+    if (!checkCountedRoots(expressions, {query, witness}, cuts[0])) { return false; }
     auto emittedQuery = expressions.emitContextual(query, builder, cuts[0], context);
     auto emittedWitness = expressions.emitContextual(witness, builder, cuts[0], context);
     if (failed(emittedQuery) || failed(emittedWitness)) { return false; }
@@ -1633,7 +1737,9 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         if (!result) { llvm::errs() << "regional expression subcheck failed: " << name << "\n"; }
         return result;
     };
-    if (!checked("checkEmission", checkEmission(function, cuts)) ||
+    if (!checked("checkReadOnlyReachability",
+                 checkReadOnlyReachability(function.getArgument(0), function.getArgument(1))) ||
+        !checked("checkEmission", checkEmission(function, cuts)) ||
         !checked("checkTransaction", checkTransaction(function.getArgument(0))) ||
         !checked("checkPortProvenance", checkPortProvenance(function)) ||
         !checked("checkIncompatibleCrossings", checkIncompatibleCrossings(function)) ||
@@ -1664,6 +1770,7 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         !checked("checkImportOwners", checkImportOwners(function.getArgument(0))) ||
         !checked("checkImportReplay", checkImportReplay(cuts[0])) ||
         !checked("checkPreparedContextual", checkPreparedContextual(cuts[0])) ||
+        !checked("checkCountedReplay", checkCountedReplay(function.getContext())) ||
         !checked("checkSparseSharedBindings", runSparseSharedBindingChecks(cuts[0])) ||
         !checked("checkSparseReplayBindings", checkSparseReplayBindings(cuts[0])) ||
         !checked("runNestedRegionalChecks", runNestedRegionalChecks(function)) ||

@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Shared/EndpointCutChoices.h"
-#include "CountedLoop.h"
+#include "CleanupSelectionProof.h"
 #include "../../InsertSync/SyncScalarReplay.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "llvm/ADT/DenseSet.h"
@@ -21,7 +21,7 @@ class CutPredicate {
 public:
     using Id = RegionExpressions::Id;
     using Ref = std::pair<Id, Value>;
-    enum class Binary { And, Equal, Subtract, Divide };
+    using Binary = detail::CleanupPredicateBinary;
     explicit CutPredicate(const RegionExpressions* arena = nullptr) : arena(arena) {}
     Ref get(Value value) const { return {RegionExpressions::invalid, value}; }
     Ref get(Id id) const
@@ -80,67 +80,25 @@ public:
         if (!select || number(get(select.getFalseValue())) != 0) { return std::nullopt; }
         return std::make_pair(get(select.getCondition()), get(select.getTrueValue()));
     }
-    void conjuncts(Ref root, SmallVectorImpl<Ref>& atoms) const
+    Value original(Ref ref) const { return ref.second; }
+    bool appendOperands(Ref ref, SmallVectorImpl<Ref>& operands) const
     {
-        SmallVector<Ref> work{root};
-        llvm::DenseSet<Ref> seen;
-        while (!work.empty()) {
-            auto ref = work.pop_back_val();
-            if (!valid(ref) || !seen.insert(ref).second) { continue; }
-            auto both = binary(ref, Binary::And);
-            if (!both) { both = masked(ref); }
-            if (both) { work.push_back(both->first); work.push_back(both->second); }
-            else { atoms.push_back(ref); }
-        }
-    }
-    bool ordinal(Ref ref, scf::ForOp loop) const
-    {
-        // Unsigned distance/positive step is the exact visit coordinate,
-        // including a signed counted-loop interval crossing zero.
-        auto iv = get(loop.getInductionVar());
-        if (ref == iv) { return true; }
-        if (auto division = binary(ref, Binary::Divide)) {
-            auto domain = CountedLoop::get(loop);
-            if (!domain || number(division->second) != static_cast<uint64_t>(domain->step)) { return false; }
-            ref = division->first;
-            if (ref == iv && number(get(loop.getLowerBound())) == 0) { return true; }
-        }
-        auto difference = binary(ref, Binary::Subtract);
-        if (!difference || difference->first != iv) { return false; }
-        auto lower = get(loop.getLowerBound());
-        return difference->second == lower ||
-            (number(difference->second) && number(difference->second) == number(lower));
-    }
-    bool invariant(Ref root, Operation* outer, DominanceInfo& dominance) const
-    {
-        SmallVector<Ref> work{root};
-        llvm::DenseSet<Ref> seen;
-        while (!work.empty()) {
-            auto ref = work.pop_back_val();
-            if (!valid(ref)) { return false; }
-            if (!seen.insert(ref).second) { continue; }
-            if (ref.second) {
-                auto* region = ref.second.getParentRegion();
-                if (region && region->getParentOp() && dominance.properlyDominates(ref.second, outer)) {
-                    continue;
-                }
-                auto* op = ref.second.getDefiningOp();
-                if (!mlir::pto::detail::canReplayScalar(op)) { return false; }
-                for (auto operand : op->getOperands()) { work.push_back(get(operand)); }
-            } else {
-                SmallVector<Id> operands;
-                arena->appendOperands(arena->nodes[ref.first], operands);
-                for (Id operand : operands) { work.push_back(get(operand)); }
-            }
+        if (ref.second) {
+            auto* op = ref.second.getDefiningOp();
+            if (!mlir::pto::detail::canReplayScalar(op)) { return false; }
+            for (auto operand : op->getOperands()) { operands.push_back(get(operand)); }
+        } else {
+            if (!arena || !arena->valid(ref.first)) { return false; }
+            SmallVector<Id> inputs;
+            arena->appendOperands(arena->nodes[ref.first], inputs);
+            for (Id input : inputs) { operands.push_back(get(input)); }
         }
         return true;
     }
 private:
     const RegionExpressions* arena;
 };
-namespace {
-using Path = SmallVector<Region*>;
-bool transparentSection(Operation* operation)
+bool isEndpointSelectionContainer(Operation* operation)
 {
     // Physical-context projection materializes implicit section predicates
     // before transferring a proof. Raw implicitly guarded sections must first
@@ -149,38 +107,11 @@ bool transparentSection(Operation* operation)
         (isa<SectionVectorOp>(operation) &&
          (operation->hasAttr("pto.sync_context_only") || !needsA5NoSplitVectorGuard(operation)));
 }
+namespace {
+using Path = SmallVector<Region*>;
 bool singletonConsumer(Operation* cut, const CutPredicate& view, CutPredicate::Ref predicate, func::FuncOp function)
 {
-    if (view.valid(predicate) && !view.boolean(predicate)) { return false; }
-    SmallVector<scf::ForOp> loops;
-    SmallVector<CutPredicate::Ref> atoms;
-    view.conjuncts(predicate, atoms);
-    auto* descendant = cut;
-    for (auto* parent = cut->getParentOp(); parent != function; parent = parent->getParentOp()) {
-        if (auto loop = dyn_cast<scf::ForOp>(parent)) {
-            if (!CountedLoop::get(loop)) { return false; }
-            loops.push_back(loop);
-        } else if (auto branch = dyn_cast<scf::IfOp>(parent)) {
-            if (descendant->getParentRegion() == &branch.getThenRegion()) {
-                view.conjuncts(view.get(branch.getCondition()), atoms);
-            }
-        } else if (!transparentSection(parent)) { return false; }
-        descendant = parent;
-    }
-    if (loops.empty()) { return true; }
-    if (!view.valid(predicate)) { return false; }
-    if (view.number(predicate) == 0) { return true; }
-    DominanceInfo dominance(function);
-    for (auto loop : loops) {
-        bool selected = llvm::any_of(atoms, [&](CutPredicate::Ref atom) {
-            auto equality = view.binary(atom, CutPredicate::Binary::Equal);
-            if (!equality) { return false; }
-            return (view.ordinal(equality->first, loop) && view.invariant(equality->second, loops.back(), dominance)) ||
-                (view.ordinal(equality->second, loop) && view.invariant(equality->first, loops.back(), dominance));
-        });
-        if (!selected) { return false; }
-    }
-    return true;
+    return detail::singletonCleanupConsumer(cut, view, predicate, function);
 }
 bool partitionsBranches(ArrayRef<Path> paths, std::size_t depth)
 {
@@ -211,7 +142,7 @@ bool validate(scf::ForOp loop, ArrayRef<Operation*> cuts, bool commands)
             region = wrapper->getParentRegion();
         }
         while (region && region != &loop.getRegion()) {
-            if (transparentSection(region->getParentOp())) {
+            if (isEndpointSelectionContainer(region->getParentOp())) {
                 region = region->getParentOp()->getParentRegion();
                 continue;
             }
@@ -235,14 +166,16 @@ bool terminalSuffix(Operation* command, func::FuncOp function)
             // no publication or original payload may follow cleanup.
             bool harmless = true;
             next->walk([&](Operation* op) {
-                if (isa<scf::IfOp, scf::YieldOp>(op) || transparentSection(op) || isMemoryEffectFree(op)) { return; }
+                if (isa<scf::IfOp, scf::YieldOp>(op) || isEndpointSelectionContainer(op) || isMemoryEffectFree(op)) {
+                    return;
+                }
                 auto name = op->getName().getStringRef();
                 harmless &= name == "pto.logical_wait" || name == "pto.barrier";
             });
             if (!harmless) { return false; }
         }
         if (current->getParentOp() == function) { return current->getBlock() == &function.front(); }
-        if (!transparentSection(current->getParentOp())) { return false; }
+        if (!isEndpointSelectionContainer(current->getParentOp())) { return false; }
     }
     return false;
 }

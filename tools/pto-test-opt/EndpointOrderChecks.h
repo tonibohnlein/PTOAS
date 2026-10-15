@@ -408,6 +408,10 @@ bool finiteEndpointRecipeChecks(mlir::pto::frontiersynch::NumericTemplateEndpoin
 bool endpointOrderFamilyChecks(mlir::MLIRContext* context)
 {
     using namespace mlir;
+    auto check = [](bool passed, llvm::StringRef stage) {
+        if (!passed) { llvm::errs() << "endpoint order check failed: " << stage << "\n"; }
+        return passed;
+    };
     namespace fs = mlir::pto::frontiersynch;
     context->getOrLoadDialect<scf::SCFDialect>();
     OpBuilder builder(context);
@@ -421,8 +425,10 @@ bool endpointOrderFamilyChecks(mlir::MLIRContext* context)
     auto end = builder.create<arith::ConstantIndexOp>(loc, 16);
     auto loop = builder.create<scf::ForOp>(loc, zero, end, one);
     builder.create<func::ReturnOp>(loc);
-    if (!familyRequestedOutputChecks(loop) || !runFamilyMaterializationChecks(context) ||
-        !runMixedFamilyChecks(context) || !runAllocationPreparationChecks()) { return false; }
+    if (!check(familyRequestedOutputChecks(loop), "requested outputs") ||
+        !check(runFamilyMaterializationChecks(context), "family materialization") ||
+        !check(runMixedFamilyChecks(context), "mixed families") ||
+        !check(runAllocationPreparationChecks(), "allocation preparation")) { return false; }
     builder.setInsertionPoint(loop.getBody()->getTerminator());
     auto cut = builder.create<arith::AddIOp>(loc, zero, one).getOperation();
     pto::CompoundInstanceElement source(0, {}, {}, pto::PipelineType::PIPE_MTE2, cut->getName());
@@ -454,12 +460,12 @@ bool endpointOrderFamilyChecks(mlir::MLIRContext* context)
             if (!families.error.empty() || !pieces.error.empty() || failed(recipe) ||
                 families.families.size() != 5 || pieces.pieces.size() != 10 ||
                 fs::familyEndpointPieceCount(**recipe) != 10 ||
-                !endpointRecipeCompositionChecks(input, *recipe, families.families) ||
-                !endpointInvocationRecipeChecks(input, *recipe, families.families) ||
-                !finiteEndpointRecipeChecks(input) ||
-                !endpointActivityRecipeChecks(input, *recipe, families.families) ||
-                !contextualEndpointRecipeChecks(input) ||
-                !endpointActivityBarrierChecks(input)) { return false; }
+                !check(endpointRecipeCompositionChecks(input, *recipe, families.families), "recipe composition") ||
+                !check(endpointInvocationRecipeChecks(input, *recipe, families.families), "invocation recipe") ||
+                !check(finiteEndpointRecipeChecks(input), "finite recipe") ||
+                !check(endpointActivityRecipeChecks(input, *recipe, families.families), "activity recipe") ||
+                !check(contextualEndpointRecipeChecks(input), "contextual recipe") ||
+                !check(endpointActivityBarrierChecks(input), "activity barrier")) { return false; }
             auto downstream = llvm::find_if(families.families, [](const auto& f) { return f.displacement == 2; });
             if (downstream == families.families.end() || downstream->members.size() != count) { return false; }
             llvm::sort(pieces.pieces, [](const auto& a, const auto& b) { return a.order < b.order; });

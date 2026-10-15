@@ -94,14 +94,16 @@ bool SequenceAnalysisState::singletonBoundaryChild(const StructureNode& node, Ex
     SmallVector<scf::ForOp> context(node.loops.begin(), node.loops.end());
     context.push_back(loop);
     auto composed = composeRegionalSequenceWithin(
-                function, arena, std::move(parts), true, false, context, index.sourceFacts());
+                function, arena, std::move(parts), true, false, context, index.sourceFacts(), allocationPolicy);
     if (!composed.error.empty()) { return unavailable(composed.error); }
+    composed.state->constructionOrigin = "singleton-body";
+    composed.state->constructionAnchor = loop.getOperation();
     composed.state->completeInvocation = false;
     composed.state->requiredOuterLoops = context;
     auto body = sequenceRegionalResult(composed);
     const auto prefixBody = body;
     auto lifted = repeatPhasedRegions(function, loop, {std::move(body)}, active->interval.end,
-        node.loops, active->interval.begin, uint64_t{1});
+        node.loops, active->interval.begin, uint64_t{1}, {}, allocationPolicy);
     if (!lifted.error.empty()) { return unavailable(lifted.error); }
     // This proof covers every payload-bearing execution of the original loop,
     // unlike an arbitrary clipped one-visit regional view. Original cuts retain

@@ -61,6 +61,72 @@ bool freshPlans(const fs::PreparedLogicalPlan& a, const fs::PreparedLogicalPlan&
     }
     return independent;
 }
+bool retainedContinuationOwnership()
+{
+    fs::AnalysisSessionState state;
+    fs::AnalysisRequest request;
+    request.region = 7;
+    auto first = std::make_shared<fs::MathematicalResult>();
+    auto second = std::make_shared<fs::MathematicalResult>();
+    const std::vector<fs::AnalysisBackend> eligible{fs::AnalysisBackend::VaryingBoundary,
+        fs::AnalysisBackend::Arithmetic};
+    state.attempts[7][eligible[0]].mathematical = first;
+    state.attempts[7][eligible[1]].mathematical = second;
+    fs::AnalysisOutcome answer;
+    answer.status = fs::AnalysisStatus::Ready;
+    answer.mathematical = second;
+    answer.available.queries = answer.available.selectors = true;
+    state.selectedAnswers[{7, uint8_t{1}, false}] = answer;
+    answer.mathematical = first;
+    state.selectedAnswers[{7, uint8_t{3}, false}] = answer;
+    // Compatible zero-work answers tie in canonical eligible order, rather
+    // than the capability-key order used to store the answers.
+    auto retained = fs::retainedIdentityAnswer(state, request, eligible);
+    if (!retained || retained->second != eligible[0] || retained->first.mathematical != first) { return false; }
+    request.needs.queries = true;
+    retained = fs::retainedIdentityAnswer(state, request, eligible);
+    if (!retained || retained->second != eligible[1]) { return false; } // Exact key has precedence.
+    request.needs.synchronization = true;
+    if (fs::retainedIdentityAnswer(state, request, eligible)) { return false; }
+    request.needs = {};
+    request.needs.evaluation = fs::AnalysisEvaluation::Stateful;
+    if (fs::retainedIdentityAnswer(state, request, eligible)) { return false; }
+    request.needs.evaluation = fs::AnalysisEvaluation::Uniform;
+    request.mode = fs::AnalysisMode::Fallback;
+    if (fs::retainedIdentityAnswer(state, request, eligible)) { return false; }
+    request.mode = fs::AnalysisMode::MinimumExact;
+    state.certifying = true;
+    if (fs::retainedIdentityAnswer(state, request, eligible)) { return false; }
+    state.certifying = false;
+    state.attempts[7][eligible[0]].mathematical.reset();
+    state.attempts[7][eligible[1]].mathematical.reset();
+    // An active Sequence or a pre-Sequence backend cannot authorize a same-node
+    // cache hit even if it owns the identical mathematical pointer.
+    state.attempts[7][fs::AnalysisBackend::Sequence].mathematical = first;
+    state.attempts[7][fs::AnalysisBackend::BoundedLifetime].mathematical = second;
+    if (fs::retainedIdentityAnswer(state, request, eligible)) { return false; }
+    state.attempts[7][eligible[0]].mathematical = first;
+    first->identityComposition = std::make_shared<fs::WholeInvocationIdentity>();
+    return !fs::retainedIdentityAnswer(state, request, eligible) && state.identityAnswers.empty() &&
+        state.selectedAnswers.size() == 2;
+}
+bool continuationSelectionProfile(const fs::AnalysisLedger& ledger)
+{
+    bool observed = false;
+    for (const auto& stage : ledger.stages) {
+        if (stage.method != "identity-continuation") { continue; }
+        observed = true;
+        bool attempted = false;
+        for (const auto& selection : ledger.selections) {
+            if (selection.request != stage.request || selection.region != stage.region) { continue; }
+            if (selection.method == "sequence" || selection.method == "sequence-endpoints" ||
+                selection.method == "bounded-lifetime" || selection.method == "explicit") { return false; }
+            attempted |= selection.attempted;
+        }
+        if (!attempted && !stage.cacheHits) { return false; }
+    }
+    return observed;
+}
 bool coldQueries(func::FuncOp function, pto::GMAliasPolicy policy, fs::AnalysisNeeds queries)
 {
     fs::FrontierAnalysis cold(function);
@@ -89,9 +155,13 @@ bool retainedRequests(fs::FrontierAnalysis& session, const fs::AnalysisOutcome& 
 bool checkPositive(func::FuncOp function, fs::FrontierAnalysis& session, pto::GMAliasPolicy policy)
 {
     const auto before = printIR(function);
+    session.enableStageProfiling();
     auto weak = session.minimumDemands(0);
     if (weak.status != fs::AnalysisStatus::Ready || !weak.mathematical ||
         !weak.mathematical->identityComposition) { return false; }
+    if (!retainedContinuationOwnership() || !continuationSelectionProfile(*session.diagnosticLedger())) {
+        return false;
+    }
     const auto& proof = *weak.mathematical->identityComposition;
     if (!proof.child || proof.region || !proof.childRegion ||
         !proof.applies(session.input(), proof.index.get(), session.result(), function)) { return false; }
@@ -99,9 +169,18 @@ bool checkPositive(func::FuncOp function, fs::FrontierAnalysis& session, pto::GM
     queries.queries = true;
     if (!retainedRequests(session, weak) || !coldQueries(function, policy, queries)) { return false; }
     auto first = session.prepareLogical(weak), second = session.prepareLogical(weak);
-    if (failed(first) || failed(second) || (*first)->preparation.empty() || (*second)->preparation.empty() ||
+    if (failed(first) || failed(second) || !(*first)->preparation.empty() || !(*second)->preparation.empty() ||
+        !(*first)->endpoints.empty() || !(*second)->endpoints.empty() ||
+        !(*first)->familyRecipe || !(*second)->familyRecipe || first->get() == second->get() ||
         !(*first)->completeInvocation || !(*second)->completeInvocation ||
-        (*first)->mathematicalOwner != weak.mathematical || !freshPlans(**first, **second) ||
+        (*first)->mathematicalOwner != weak.mathematical || (*second)->mathematicalOwner != weak.mathematical) {
+        return false;
+    }
+    // Immutable recipes may be shared; each consumer must construct its own
+    // detached SSA before checking lifetime and allocation independence.
+    if (failed(fs::materializeLogicalFamilies(**first)) || failed(fs::materializeLogicalFamilies(**second)) ||
+        (*first)->preparation.empty() || (*second)->preparation.empty() ||
+        (*first)->endpoints.empty() || (*second)->endpoints.empty() || !freshPlans(**first, **second) ||
         failed(session.attachAllocation(weak, **first)) || !(*first)->allocationCertificate ||
         session.constructionCounts().arithmeticSelectorBuilds || printIR(function) != before) { return false; }
     fs::AnalysisRequest childLogical;

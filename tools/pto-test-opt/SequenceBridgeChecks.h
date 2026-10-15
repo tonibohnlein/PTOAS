@@ -9,6 +9,8 @@
 #define PTO_FRONTIER_SEQUENCE_BRIDGE_CHECKS_H
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceStorageIndex.h"
+#include "SequenceChoiceQueryChecks.h"
+#include "SequenceIncomingQueryChecks.h"
 namespace mlir::pto::test {
 inline bool bridgeCheckFailure(unsigned line)
 {
@@ -639,7 +641,9 @@ inline bool checkSequenceBridgeWork(func::FuncOp function, const SyncInput& inpu
     }
     return checkSparseBoundaryImport(function, phases) && checkSequenceNativeFrontier(function) &&
         checkSelectedNativeQueries(function, phases.front()) && checkCrossingQueryPruning(function, phases.front()) &&
-        checkDynamicChildConsolidation(function, phases.front());
+        checkDynamicChildConsolidation(function, phases.front()) &&
+        checkCorrelatedSequenceQueries(function, phases.front()) &&
+        checkIncomingSequenceQueries(function, phases.front());
 }
 } // namespace mlir::pto::test
 #endif

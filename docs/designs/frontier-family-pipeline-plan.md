@@ -6,7 +6,7 @@ The implementation owner maintains source, tests and receipts. Correctness and
 architecture reviewers independently assess each batch before its milestone
 commit. Earlier plans and measurements remain in the
 [historical evidence log](frontier-family-pipeline-history.md). The
-[checkpoint receipt](frontier-construction-checkpoint.md) separates reviewed
+[current checkpoint receipt](frontier-reviewed-construction-checkpoint.md) separates reviewed
 implementation from executed validation and unresolved protocol work.
 
 ## Current status
@@ -17,57 +17,31 @@ implementation from executed validation and unresolved protocol work.
 | GroupNorm lane spans | Both reviews accept a partial allocation checkpoint | Not established; combined output open | Six-ID split allocation and existing interval/trace checks support the split assignment only |
 | Prefill coordinate allocation | Experimental candidate retained in the checkpoint; construction investigation open | Not established | Historical diagnostic: four families reached two-ID proofs; `11 → 56` stopped during composition. S6 reaches its watchdog without this family-stage observation. |
 | Decode witness | Retained evidence for the admitted execution | Not established by the witness | Nine-ID witness applies to its fixed protocol, not a universal hardware lower bound |
-| Delta prefix protocol | Logical support retained; construction and reuse work open | Not established | Actual prefix publication/acquisition reuse unresolved |
+| Delta prefix protocol | Logical support retained; construction work continues | Not established | Checked one-token command graph: 46 mutually non-reusable V→MTE3 handoffs under the unchanged prefix protocol; other realizations remain separate |
 
-Local checkpoint receipts are in `.local/production-closure-m1/` and
-`.local/production-closure-m2/`; new construction receipts are in
-`.local/construction-first/`. Accepted implementation, successful kernel
-compilation and resolved capacity are independent outcomes. GroupNorm reviews
-read existing evidence; the old receipts do not pin the current changing source.
-
-The construction checkpoint now includes immutable threshold preparation within
-unchanged root, lazy branch specialization, ordered cycle products and exact
-fixed-point power truncation. Threshold specialization node visits are independent
-of an unaffected branch's size in the 4/16/32-threshold fixtures. The newest source caches
-immutable topology and reached-family dependencies across calls, evicting removed
-roots on rollback. Its refreshed build, 18 focused checks and ordered 49/22/11
-campaigns pass at the previously reached stages. A packed-storage follow-up is
-validated because the cache increased Delta peak memory; its paired run still
-shows additional memory and no timing improvement. Exact same-occurrence tail
-pruning also passes focused checks. A further immutable projection-cache identity
-change passes its build, 19 focused checks and the ordered production campaigns
-after a prefill stack capture identified storage-selector construction. Its
-paired Delta timings show no improvement, and prefill remains unfinished at the
-watchdog. Prefill has
-exclusive relational-work profiling, factored source-order construction and exact
-lifted containment. Both retained/new containment runs hit the 120-second
-watchdog, so no timing or capacity improvement is claimed.
-
-Sequence crossing consolidation now qualifies dynamic coordinates for singleton
-children using certified child order, preserving the exact residual path for
-unqualified groups. Identical successful requests retain their exact selection
-before candidate traversal; mutable preparation remains fresh. Periodic ranking
-uses shared core-scan/generic-graph structural counts. Full unbuilt-capability
-ranking and changed-coordinate sequence upgrades remain open.
-
-Decode has a checked fixed-protocol trace fixture and an optional replay against
-current logical output. The bound explicitly excludes an automatic textual
-SET-to-WAIT edge. Event-free child qualification now separates empty event-resource
-ownership from completed payloads and uses summary-only SCC transfer to retain
-pending effects. It refuses any additional internal completion requirement;
-pending eventful children still require a broader resource contract.
-
-Validation receipts before the forced compilation-input refresh are historical
-binary observations: a preserved source timestamp left one object stale. They
-cannot establish final-source acceptance or speedup. The refreshed S1/S2 builds and
-18 focused checks passed; S1 ordered campaigns passed 49+22 modules at logical
-and allocation stages and generated C++ for 8/11 prepared kernels. S3 and S4 repeat
-those outcomes; S6 repeats them with 19 focused checks. Broad synchronization
-coverage finishes with 198 passes, 28 failures and two watchdogs. Baseline probes
-attribute reached failure stages; later skipped checks, the standalone recognizer's
-pre-S1 baseline and historical guard-equivalence gaps remain open. Harness failures
-are recorded separately from test results. No full
-milestone is marked complete.
+The first construction checkpoint is `6ff80f2d3`, following M1 `629371af1`.
+The next reviewed construction, selection and lowering checkpoint is described in
+the [current checkpoint receipt](frontier-reviewed-construction-checkpoint.md).
+The qualified pending-child interface is accepted and committed as `d8024255a`;
+its [receipt](frontier-qualified-child-receipt.md) states the supported subclass
+and three passing completion tests. The active reviewer loop continues with
+construction, retained-work selection, allocation export and common lowering.
+The receipt distinguishes its source and execution gates from open production
+campaigns and allocation investigations.
+Source review found that checkpoint `6ff80f2d3` already invokes the coordinate
+candidate on regional allocation requests. That differs from the planned
+experimental scope. The corrective checkpoint preserves the proof/export code
+and restores the historical single-ID regional proof as the default. The pass
+option `experimental-coordinate-allocation=true` explicitly selects the wider
+coordinate construction investigation through an immutable session policy,
+including adapted exports and synthetic crossings. Both reviewers accept this
+correction, and the executed-counter gate validates policy isolation and real
+coordinate export/access on the ownership and recipe snapshots. These focused
+results do not close prefill. Earlier receipts describe the historical checkpoint
+policy. Ordinary logical-only analysis does not invoke the candidate.
+The six milestones are not yet complete. Current receipts live in `.local/milestone-loop/`; the
+[prior checkpoint receipt](frontier-construction-checkpoint.md) and
+[historical log](frontier-family-pipeline-history.md) retain earlier measurements.
 
 ## Fixed contract
 

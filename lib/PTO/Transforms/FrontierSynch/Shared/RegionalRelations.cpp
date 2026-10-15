@@ -37,7 +37,7 @@ FailureOr<RegionalRelationData> composeBalancedRegionalRelations(std::vector<Reg
 }
 FailureOr<RegionalAnalysis> composeSymbolicRegionalSequence(
     ArrayRef<RegionalAnalysis> children, func::FuncOp function, const SyncInput& input,
-    const PhaseIndex& index, std::string& error)
+    const PhaseIndex& index, std::string& error, ArithmeticRegionalAllocationPolicy allocationPolicy)
 {
     if (children.empty() || !children.front().expressions) {
         error = "symbolic sequence requires owned child expression interfaces"; return failure();
@@ -126,7 +126,7 @@ FailureOr<RegionalAnalysis> composeSymbolicRegionalSequence(
             }
         }
     }
-    auto carrier = std::make_shared<RegionalRelations>();
+    auto carrier = std::make_shared<RegionalRelations>(allocationPolicy);
     carrier->children.assign(children.begin(), children.end());
     for (unsigned i = 0; i < children.size(); ++i) {
         if (requests[i]) {

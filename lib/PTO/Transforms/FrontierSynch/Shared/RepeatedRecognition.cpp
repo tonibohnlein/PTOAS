@@ -132,7 +132,7 @@ bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
             const auto id = static_cast<std::size_t>(&node - program->nodes.data());
             auto finite = resolveOriginal.finiteArithmetic ? resolveOriginal.finiteArithmetic(id, diagnostic) :
                 analyzeFiniteArithmeticRegionWithProfiles({function, loop}, index, *input, arena, diagnostic,
-                    program->regionalArithmeticProfiles);
+                    program->regionalArithmeticProfiles, program->allocationPolicy);
             if (succeeded(finite)) {
                 Child child;
                 child.regional = std::move(*finite);

@@ -34,38 +34,128 @@ std::pair<AnalysisOutcome, AnalysisBackend> FrontierAnalysis::selectIdentityChil
         });
         if (found == attempts.end()) { return {std::move(selected), selectedBackend}; }
         selectedBackend = found->first;
-    } else {
-        // Sequence is an identity on this complete original loop. Consume that
-        // adapter once, then continue its canonical family order on this node.
-        const bool alternative = exactForms(request).size() > 1;
-        const auto order = exactAttemptFamilies(request, AnalysisForm::Original, alternative);
-        auto sequence = llvm::find(order, AnalysisBackend::Sequence);
-        if (sequence == order.end()) { return {std::move(selected), selectedBackend}; }
-        for (auto method = std::next(sequence); method != order.end(); ++method) {
-            if (*method == AnalysisBackend::SequenceEndpoints) { continue; }
-            const bool ready = visitExactFamily(request, *method, [&](AnalysisBackend backend) {
-                auto candidate = requestBackend(backend, request, true);
-                if (candidate.status != AnalysisStatus::Ready) { return false; }
-                selected = std::move(candidate);
-                selectedBackend = backend;
-                return true;
-            });
-            if (ready) { break; }
-        }
-    }
+    } else { return continueIdentityChild(request); }
     return {std::move(selected), selectedBackend};
 }
-std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceIdentitySequence(
-    std::size_t region, bool endpoints, std::string& error)
+std::optional<std::pair<AnalysisOutcome, AnalysisBackend>> retainedIdentityAnswer(
+    const AnalysisSessionState& session, const AnalysisRequest& request, ArrayRef<AnalysisBackend> eligible)
 {
+    const auto region = session.attempts.find(request.region);
+    if (region == session.attempts.end() || request.needs.evaluation != AnalysisEvaluation::Uniform) { return {}; }
+    auto match = [&](const AnalysisOutcome& answer) -> std::optional<AnalysisBackend> {
+        if (answer.status != AnalysisStatus::Ready || !answer.mathematical || answer.completion ||
+            answer.mathematical->identityComposition || answer.mathematical->compactDemands ||
+            (request.needs.queries && !answer.available.queries) ||
+            (request.needs.selectors && !answer.available.selectors) ||
+            (request.needs.synchronization && !answer.available.synchronization)) { return {}; }
+        for (const auto backend : eligible) {
+            auto attempt = region->second.find(backend);
+            if (attempt != region->second.end() && attempt->second.mathematical == answer.mathematical) {
+                return backend;
+            }
+        }
+        return {};
+    };
+    const auto key = analysisRequestKey(request);
+    const auto identity = std::make_tuple(request.region, key, session.certifying);
+    auto exact = session.selectedAnswers.find(identity);
+    if (exact != session.selectedAnswers.end()) {
+        if (auto backend = match(exact->second)) { return std::make_pair(exact->second, *backend); }
+    }
+    std::optional<std::pair<AnalysisOutcome, AnalysisBackend>> retained;
+    auto begin = session.selectedAnswers.lower_bound({request.region, uint8_t{0}, false});
+    for (auto it = begin; it != session.selectedAnswers.end() && std::get<0>(it->first) == request.region; ++it) {
+        if ((std::get<1>(it->first) & ~uint8_t{7}) != (key & ~uint8_t{7}) ||
+            std::get<2>(it->first) != session.certifying) { continue; }
+        if (auto backend = match(it->second)) {
+            if (!retained || llvm::find(eligible, *backend) < llvm::find(eligible, retained->second)) {
+                retained = std::make_pair(it->second, *backend);
+            }
+        }
+    }
+    return retained;
+}
+std::pair<AnalysisOutcome, AnalysisBackend> FrontierAnalysis::continueIdentityChild(const AnalysisRequest& request)
+{
+    AnalysisProfileScope profile(sessionState->ledger, "request", request.region, "identity-continuation", true);
+    const auto identity = std::make_tuple(request.region, analysisRequestKey(request), sessionState->certifying);
+    const auto exhaustedKey = sessionState->exhaustedKey(request, true);
+    bool exhaustedWalk = false;
+    auto finish = [&](std::pair<AnalysisOutcome, AnalysisBackend> answer) {
+        answer.first.ledger = sessionState->ledger;
+        answer.first.requestId = profile.requestId();
+        if (answer.first.status == AnalysisStatus::Ready && answer.first.mathematical &&
+            !answer.first.completion && !answer.first.mathematical->compactDemands &&
+            !answer.first.mathematical->identityComposition) {
+            sessionState->identityAnswers.emplace(identity, answer);
+        } else if (exhaustedWalk) {
+            sessionState->retainExhausted(exhaustedKey, answer.first, answer.second);
+        }
+        return answer;
+    };
+    if (auto found = sessionState->identityAnswers.find(identity); found != sessionState->identityAnswers.end()) {
+        profile.cacheHit(); return finish(found->second);
+    }
+    if (const auto* cached = sessionState->exhausted(exhaustedKey)) {
+        profile.cacheHit();
+        if (construction.exhaustedWalkHits != UINT64_MAX) { ++construction.exhaustedWalkHits; }
+        return finish({cached->outcome, cached->backend});
+    }
+    if (construction.requestWalks != UINT64_MAX) { ++construction.requestWalks; }
+    // Consume the unary Sequence adapter once. Ranking may reorder only the
+    // original eligible suffix; it cannot revisit this adapter or earlier forms.
+    const auto canonical = exactAttemptFamilies(request, AnalysisForm::Original, exactForms(request).size() > 1);
+    const auto sequence = llvm::find(canonical, AnalysisBackend::Sequence);
+    std::vector<AnalysisBackend> candidates;
+    if (sequence != canonical.end()) {
+        for (auto family = std::next(sequence); family != canonical.end(); ++family) {
+            if (*family == AnalysisBackend::SequenceEndpoints) { continue; }
+            const auto methods = *family == AnalysisBackend::ArithmeticPeriodic ? arithmeticMethods(request) :
+                std::vector<AnalysisBackend>{*family};
+            for (const auto backend : methods) {
+                if (!llvm::is_contained(candidates, backend)) { candidates.push_back(backend); }
+            }
+        }
+    }
+    if (auto retained = retainedIdentityAnswer(*sessionState, request, candidates)) {
+        profile.cacheHit(); return finish(*retained);
+    }
+    while (!candidates.empty()) {
+        const auto backend = rankExactCandidates(request, candidates).front();
+        sessionState->formAttempts[{request.region, AnalysisForm::Original}] = 1;
+        auto answer = requestBackend(backend, request, true);
+        if (sessionState->ledger->profiling) {
+            for (auto& record : sessionState->ledger->selections) {
+                if (record.request == profile.requestId() && record.region == request.region &&
+                    record.method == analysisBackendName(backend)) {
+                    record.attempted = true;
+                    record.failureStage = answer.status == AnalysisStatus::Ready ? 0 : unsigned(answer.stage);
+                }
+            }
+        }
+        if (answer.status == AnalysisStatus::Ready) { return finish({std::move(answer), backend}); }
+        candidates.erase(llvm::find(candidates, backend));
+    }
+    exhaustedWalk = true;
+    return finish({AnalysisOutcome{}, AnalysisBackend::Explicit});
+}
+std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceIdentitySequence(
+    const AnalysisRequest& request, bool endpoints, std::string& error)
+{
+    const auto region = request.region;
     const auto* loop = wholeInvocationLoop(function, *storage, *program, *structuralIndex);
     if (!loop) { return {}; }
     const auto childRegion = static_cast<std::size_t>(loop - program->nodes.data());
     if (region != 0 && region != childRegion) { return {}; }
-    AnalysisRequest request;
-    request.region = childRegion;
-    request.needs.synchronization = endpoints;
-    auto selection = selectIdentityChild(request, region != 0);
+    // Select a new immutable child for the capabilities actually requested.
+    // A weak cached answer must not pin a fresh strong owner to an unavailable
+    // export. Identity composition still requires an exact child even when its
+    // caller permits a fallback; existing owners never replace their child.
+    auto childRequest = request;
+    childRequest.region = childRegion;
+    childRequest.mode = AnalysisMode::MinimumExact;
+    childRequest.needs.synchronization |= endpoints;
+    auto selection = selectIdentityChild(childRequest, region != 0);
     auto& selected = selection.first;
     const auto selectedBackend = selection.second;
     if (selected.status != AnalysisStatus::Ready || !selected.mathematical) {

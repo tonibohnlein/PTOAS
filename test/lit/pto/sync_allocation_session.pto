@@ -9,8 +9,8 @@
 // EXPLICIT: allocation-session: explicit available=1 retained-demands cached-export
 // RUN: pto-sync-input-test --allocation-session-checks %S/sync_loop_session_cache.pto | FileCheck %s --check-prefix=GUARDED
 // GUARDED: allocation-session: guarded-rotating available=0 retained-demands cached-export
-// RUN: pto-sync-input-test --allocation-session-checks %S/sync_arithmetic_periodic_conversion.pto | FileCheck %s --check-prefix=NUMERICAL
-// NUMERICAL: allocation-session: numerical-periodic available=1 retained-demands cached-export
+// RUN: pto-sync-input-test --allocation-session-checks %S/sync_arithmetic_periodic_conversion.pto | FileCheck %s --check-prefix=ORDERED
+// ORDERED: allocation-session: order-covered-periodic available=1 retained-demands cached-export
 // RUN: pto-sync-input-test --allocation-session-checks %S/sync_arithmetic_insertion.pto | FileCheck %s --check-prefix=SEQUENCE
 // SEQUENCE: allocation-session: {{(identity-)?}}sequence available=1 retained-demands cached-export
 // RUN: pto-sync-input-test --allocation-session-checks %S/sync_rotating_analysis.pto | FileCheck %s --check-prefix=ROTATING

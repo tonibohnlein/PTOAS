@@ -145,6 +145,27 @@ def bind_decode(logical, bindings):
     return result
 
 
+def same_fixed_protocol(left, right):
+    """Compare protocol evidence while allowing measured scalar work to change."""
+    counters = {"visits", "arithmetic_visits", "select_visits"}
+    return ({key: value for key, value in left.items() if key not in counters}
+            == {key: value for key, value in right.items() if key not in counters})
+
+
+def check_protocol_comparison():
+    original = feedback_case(False)["trace"]
+    measured = dict(original, visits=100, arithmetic_visits=80, select_visits=20)
+    assert same_fixed_protocol(original, measured)
+    for changed in (dict(measured, error="invalid"), dict(measured, payloads=1),
+                    dict(measured, events=list(reversed(original["events"]))),
+                    dict(measured, unknown_evidence=1)):
+        assert not same_fixed_protocol(original, changed)
+    for field in ("gap", "record", "source_ordinal", "source_pipe", "target_pipe"):
+        events = [dict(event) for event in original["events"]]
+        events[0][field] += 1
+        assert not same_fixed_protocol(original, dict(measured, events=events))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("fixture", type=Path)
@@ -163,6 +184,7 @@ def main():
     assert selected["handoffs"] == 9 and selected["reuse_edges"] == 0
     feedback_case(False)
     feedback_case(True)
+    check_protocol_comparison()
     # Reject malformed evidence rather than silently dropping commands.
     for damage in ("gap", "kind", "pipe", "unmatched", "duplicate", "cycle"):
         bad = feedback_case(False)
@@ -201,7 +223,8 @@ def main():
             run = subprocess.run([executable, "--structured-trace", str(path)], capture_output=True,
                                  text=True, check=True, timeout=30)
         replay = json.loads(run.stdout)
-        assert replay["trace"] == fixture["report"]["trace"], "fixed protocol changed; investigate before refreshing"
+        assert same_fixed_protocol(replay["trace"], fixture["report"]["trace"]), \
+            "fixed protocol changed; investigate before refreshing"
         assert capacity(replay) == result
     print(json.dumps(result, sort_keys=True))
 

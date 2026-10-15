@@ -61,6 +61,7 @@ LogicalResult checkProducerFailureStages(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkCrossingCostSelection(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkPiecewiseAccessCache(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSequenceEndpointRetry(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkConditionalEndpointUpgrade(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkNaturalRotatingExportRetry(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkFiniteArithmeticSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedArithmeticSession(func::FuncOp function, pto::GMAliasPolicy policy);
@@ -169,6 +170,41 @@ bool verifyStageProfile(const pto::frontiersynch::AnalysisLedger& ledger, uint64
     }
     return dispatches == attempts && hits >= 64 && originatingPreparations == 2 && ledger.activeStages.empty();
 }
+bool checkRetainedCapabilityReuse(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    FrontierAnalysis session(function);
+    session.enableStageProfiling();
+    if (failed(session.initialize(policy))) { return false; }
+    AnalysisRequest strong;
+    strong.needs = {true, true, true};
+    const auto first = session.analyze(strong);
+    if (first.status != AnalysisStatus::Ready || !first.mathematical || !first.mathematical->explicitDemands) {
+        return false;
+    }
+    const auto attempts = session.constructionCounts().mathematicalAttempts;
+    for (unsigned capabilities : {0U, 1U, 2U, 3U, 4U, 5U, 6U}) {
+        AnalysisRequest weaker;
+        weaker.needs = {bool(capabilities & 1), bool(capabilities & 2), bool(capabilities & 4)};
+        const auto before = first.ledger->stages.size();
+        auto answer = session.analyze(weaker);
+        if (answer.status != AnalysisStatus::Ready || answer.mathematical != first.mathematical ||
+            answer.requestId <= first.requestId || first.ledger->stages.size() != before + 1 ||
+            first.ledger->stages.back().cacheHits != 1 ||
+            session.constructionCounts().mathematicalAttempts != attempts) { return false; }
+    }
+    auto left = session.prepareLogical(first), right = session.prepareLogical(first);
+    if (failed(left) || failed(right) || left->get() == right->get()) { return false; }
+    AnalysisRequest fallback;
+    fallback.mode = AnalysisMode::Fallback;
+    const auto beforeFallback = first.ledger->stages.size();
+    if (session.analyze(fallback).status != AnalysisStatus::Ready ||
+        first.ledger->stages.size() <= beforeFallback + 1) { return false; }
+    AnalysisRequest stateful;
+    stateful.needs.evaluation = AnalysisEvaluation::Stateful;
+    const auto refused = session.analyze(stateful);
+    return refused.status == AnalysisStatus::UnmetObligation && refused.stage == AnalysisStage::Demands;
+}
 LogicalResult checkStageProfileSession(func::FuncOp function, pto::GMAliasPolicy policy)
 {
     using namespace pto::frontiersynch;
@@ -246,6 +282,9 @@ LogicalResult checkStageProfileSession(func::FuncOp function, pto::GMAliasPolicy
     if (returned.mathematical != rebuilt.mathematical ||
         rebuilt.ledger->stages.size() != beforeReturn + 1 || rebuilt.ledger->stages.back().cacheHits != 1) {
         return function.emitError("certification replaced the retained production selection");
+    }
+    if (!checkRetainedCapabilityReuse(function, policy)) {
+        return function.emitError("retained capability reuse or request-context isolation failed");
     }
     llvm::outs() << "stage-profile: shared ledger cached requests exclusive timing unchanged route audit reuse\n";
     return success();
@@ -466,7 +505,11 @@ LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy p
       auto b = normalizedFamilyProtocolKey(*(*right)->familyProtocol);
       llvm::errs() << "protocol keys: " << a.size() << "/" << b.size() << "\n";
       for (std::size_t i = 0; i < std::min(a.size(), b.size()); ++i) {
-        if (a[i] != b[i]) { llvm::errs() << "first different protocol field: " << i << "\n"; break; }
+        if (a[i] != b[i]) { llvm::errs() << "first different protocol field: " << i << "\n";
+          for (std::size_t j = i > 4 ? i - 4 : 0; j < std::min(std::min(a.size(), b.size()), i + 5); ++j) {
+            llvm::errs() << "  field " << j << ": " << a[j] << "/" << b[j] << "\n";
+          }
+          break; }
       }
     }
     return function.emitError("allocation retry repeated work, changed commands or lost exact demands");
@@ -486,6 +529,10 @@ LogicalResult checkIndependentNumericalPlans(func::FuncOp function,
   const bool prepared = succeeded(left) && succeeded(right) && left->get() != right->get() &&
       !(*left)->allocationCertificate && !(*right)->allocationCertificate;
   if (!prepared) { return function.emitError("numerical preparation did not produce independent logical plans"); }
+  if (failed(pto::frontiersynch::materializeLogicalFamilies(**left)) ||
+      failed(pto::frontiersynch::materializeLogicalFamilies(**right))) {
+    return function.emitError("independent numerical endpoint recipes did not materialize");
+  }
   llvm::DenseSet<Operation*> firstOperations;
   for (const auto& preparation : (*left)->preparation) {
     if (preparation.code->getParent()) { return failure(); }
@@ -563,7 +610,7 @@ LogicalResult checkNumericalRegionSession(func::FuncOp function, pto::GMAliasPol
   const bool rootValid = external ? !root.mathematical && !session.hasWholeFunctionMinimumDemands() :
       root.mathematical && root.mathematical->numericalDemands == owner->numericalDemands;
   if (!rootValid) { return function.emitError("numerical root/child eligibility or ownership mismatch"); }
-  auto* sequence = session.analyzeSequenceFunction();
+  auto* sequence = session.auditSequenceFunction();
   const bool shared = sequence && sequence->error.empty() && session.numericalRegionConstructions() == 1 &&
       session.analyzeNumericalRegion({id}).mathematical == owner &&
       !session.constructionCounts().logicalPreparations && !session.constructionCounts().allocationExports;
@@ -595,6 +642,7 @@ LogicalResult checkNumericalRegionSession(func::FuncOp function, pto::GMAliasPol
 LogicalResult checkArithmeticRanking(func::FuncOp function, pto::GMAliasPolicy policy) {
   using namespace pto::frontiersynch;
   FrontierAnalysis session(function);
+  session.enableStageProfiling();
   if (failed(session.initialize(policy))) { return failure(); }
   AnalysisRequest request;
   const auto methods = session.arithmeticMethods(request);
@@ -602,7 +650,8 @@ LogicalResult checkArithmeticRanking(func::FuncOp function, pto::GMAliasPolicy p
   const auto retry = session.arithmeticMethods(request);
   const bool pure = methods == retry && methods.size() == 2 && count == 2 &&
       session.costRecords().size() == count && !session.arithmeticGeneratorConstructions() &&
-      !session.arithmeticRegionConstructions() && !session.constructionCounts().mathematicalAttempts;
+      !session.arithmeticRegionConstructions() && !session.constructionCounts().mathematicalAttempts &&
+      !session.result()->arithmetic && !session.result()->formConstructions;
   if (!pure) { return function.emitError("arithmetic ranking constructed a producer or repeated selection"); }
   for (auto [id, node] : llvm::enumerate(session.result()->nodes)) {
     if (node.kind != StructureKind::Loop && node.kind != StructureKind::Conditional) { continue; }
@@ -621,16 +670,29 @@ LogicalResult checkArithmeticRanking(func::FuncOp function, pto::GMAliasPolicy p
   const auto records = session.costRecords();
   const bool distinct = records.size() == beforeStrong + 2 && !session.arithmeticGeneratorConstructions();
   if (!distinct) { return function.emitError("stronger arithmetic needs reused a weaker estimate key"); }
+  if (llvm::any_of(session.diagnosticLedger()->stages, [](const auto& stage) {
+      return stage.stage == "arithmetic-form" || stage.stage == "form-check";
+  })) { return function.emitError("screening constructed unused arithmetic qualification"); }
   const bool overflowSafe = !estimatedAdd(UINT64_MAX, 1) && !estimatedMultiply(UINT64_MAX, 2) &&
       !estimatedPower(2, 64) && estimatedMultiply(EstimatedCount{}, 0) == EstimatedCount{0} &&
       estimatedPower(0, 0) == EstimatedCount{1};
   AnalysisCostEstimate unknown, known; known.work = UINT64_MAX; known.representation = UINT64_MAX;
-  const bool unknownEligible = estimatedCostLess(known, unknown) && !estimatedCostLess(unknown, known) &&
+  const bool unknownEligible = estimatedSelectionWorkLess(known, unknown) &&
+      !estimatedSelectionWorkLess(unknown, known) &&
       session.arithmeticMethods(request).size() == 2;
   if (!overflowSafe || !unknownEligible) { return function.emitError("overflow changed estimate eligibility/order"); }
+  auto smaller = unknown;
+  smaller.representation = 0;
+  auto larger = known;
+  larger.representation = 0;
+  if (estimatedSelectionWorkLess(smaller, unknown) || estimatedSelectionWorkLess(unknown, smaller) ||
+      estimatedSelectionWorkLess(known, larger) || estimatedSelectionWorkLess(larger, known)) {
+    return function.emitError("representation reordered tied or unknown work");
+  }
   for (std::size_t i = 1; i < records.size(); ++i) {
     const auto& a = records[i - 1]; const auto& b = records[i];
-    if (a.region == b.region && a.request == b.request && estimatedCostLess(b.estimate, a.estimate)) {
+    if (a.region == b.region && a.request == b.request && a.requestId == b.requestId &&
+        estimatedSelectionWorkLess(b.estimate, a.estimate)) {
       return function.emitError("arithmetic choices are not sorted by estimated work");
     }
   }
@@ -639,6 +701,24 @@ LogicalResult checkArithmeticRanking(func::FuncOp function, pto::GMAliasPolicy p
   if (!constructed) {
     return function.emitError("arithmetic construction did not follow pure ranking");
   }
+  const auto namedAttempts = session.constructionCounts().mathematicalAttempts;
+  const auto* namedDifference = session.arithmeticDemands();
+  const auto* namedInteger = session.generalArithmeticDemands();
+  if (failed(session.analyzeArithmeticFunction()) ||
+      session.constructionCounts().mathematicalAttempts != namedAttempts ||
+      session.arithmeticDemands() != namedDifference || session.generalArithmeticDemands() != namedInteger ||
+      session.constructionCounts().logicalPreparations || session.constructionCounts().allocationExports) {
+    return function.emitError("named arithmetic request lost its cached mathematical owner");
+  }
+  const auto beforeWarm = session.costRecords().size();
+  const auto stagesBeforeWarm = session.diagnosticLedger()->stages.size();
+  const auto warm = session.arithmeticMethods(request);
+  const auto warmCount = session.costRecords().size();
+  const bool refreshed = warmCount == beforeWarm + 2 && session.arithmeticMethods(request) == warm &&
+      session.costRecords().size() == warmCount && session.arithmeticGeneratorConstructions() == 1 &&
+      session.diagnosticLedger()->stages.size() == stagesBeforeWarm + 4;
+  // recognizeStructure and the selection scope are the only warm/retry stages.
+  if (!refreshed) { return function.emitError("retained qualification did not refresh screening once"); }
   (void)session.analyzeArithmeticPeriodicFunction();
   const bool shared = succeeded(session.analyzeArithmeticFunction()) && session.arithmeticGeneratorConstructions() == 1;
   if (!shared) {
@@ -699,7 +779,7 @@ LogicalResult checkArithmeticExportFailure(func::FuncOp function, pto::GMAliasPo
   }
   FrontierAnalysis direct(function);
   if (failed(direct.initialize(policy))) { return failure(); }
-  (void)direct.analyzeSequenceFunction();
+  (void)direct.auditSequenceFunction();
   const ArithmeticLimits profile{8, 8, 1, 4096};
   if (succeeded(direct.configureArithmeticProfiles(ArrayRef<ArithmeticLimits>(&profile, 1),
                                                   ArrayRef<ArithmeticLimits>(&profile, 1)))) {
@@ -820,9 +900,45 @@ LogicalResult checkArithmeticRequests(func::FuncOp function, pto::GMAliasPolicy 
   if (inconsistentExports) {
     return function.emitError("arithmetic stronger and weaker exports disagree in the common arena");
   }
-  auto first = prepareArithmeticRegion(*demands, arena, {}, error, input);
-  auto second = prepareArithmeticRegion(*demands, arena, {}, error, input);
+  std::shared_ptr<const ArithmeticRegionalPreparation> endpointTemplate;
+  auto first = prepareRetainedArithmeticRegion(demands, arena, {}, error, endpointTemplate, input);
+  auto second = prepareRetainedArithmeticRegion(demands, arena, {}, error, endpointTemplate, input);
+  if (failed(first) || failed(second) || !endpointTemplate ||
+      (*first)->familyRecipe != (*second)->familyRecipe || (*first)->families.empty()) {
+    return function.emitError("arithmetic retries did not retain an immutable family recipe");
+  }
+  const auto originalPipe = (*first)->families.front().sourcePipe;
+  (*first)->families.front().sourcePipe = originalPipe + 1;
+  const bool sharedFamilies = (*second)->families.front().sourcePipe != originalPipe;
+  (*first)->families.front().sourcePipe = originalPipe;
+  if (sharedFamilies) { return function.emitError("arithmetic template shared mutable family provenance"); }
+  auto templateOwner = endpointTemplate;
+  auto foreignArena = std::make_shared<RegionExpressions>();
+  auto foreignDemands = std::make_shared<const ArithmeticRegionalRelations>(*demands);
+  auto wrongArena = prepareRetainedArithmeticRegion(demands, foreignArena, {}, error, endpointTemplate, input);
+  auto wrongDemands = prepareRetainedArithmeticRegion(foreignDemands, arena, {}, error, endpointTemplate, input);
+  auto wrongPolicy = prepareRetainedArithmeticRegion(demands, arena, {}, error, endpointTemplate, input,
+      ArithmeticRegionalAllocationPolicy::CoordinateCandidate);
+  auto wrongFrame = prepareRetainedArithmeticRegion(demands, arena, {root}, error, endpointTemplate, input);
+  if (succeeded(wrongArena) || succeeded(wrongDemands) || succeeded(wrongPolicy) || succeeded(wrongFrame) ||
+      endpointTemplate != templateOwner) {
+    return function.emitError("arithmetic template accepted a changed request owner or replaced retained evidence");
+  }
+  // Export callbacks retain their own immutable family while returning fresh
+  // plans. They do not borrow the session's preparation cache or generated SSA.
+  if (!selected->prepareWithVisits) { return failure(); }
+  auto exportedFirst = selected->prepareWithVisits({}), exportedSecond = selected->prepareWithVisits({});
+  if (failed(exportedFirst) || failed(exportedSecond) || exportedFirst->get() == exportedSecond->get() ||
+      !(*exportedFirst)->familyRecipe || (*exportedFirst)->familyRecipe != (*exportedSecond)->familyRecipe ||
+      !(*exportedFirst)->preparation.empty() || !(*exportedSecond)->preparation.empty() ||
+      !(*exportedFirst)->allocationPreparation || !(*exportedSecond)->allocationPreparation) {
+    return function.emitError("arithmetic export callback lost independent plans or immutable recipe reuse");
+  }
+  error.clear();
   const bool preparation = succeeded(first) && succeeded(second) && first->get() != second->get() &&
+      (*first)->familyRecipe && (*second)->familyRecipe &&
+      (*first)->preparation.empty() && (*second)->preparation.empty() &&
+      succeeded(materializeLogicalFamilies(**first)) && succeeded(materializeLogicalFamilies(**second)) &&
       !(*first)->preparation.empty() && !(*second)->preparation.empty();
   if (!preparation) { return function.emitError("arithmetic preparation did not create distinct owned plans"); }
   llvm::DenseSet<Operation*> firstOperations;
@@ -865,7 +981,9 @@ LogicalResult checkArithmeticRequests(func::FuncOp function, pto::GMAliasPolicy 
   auto noAllocation = *demands;
   noAllocation.analysis.requiredOrder.clear(); // Deliberately unavailable handoff-reuse certificate.
   auto unavailablePlan = prepareArithmeticRegion(noAllocation, arena, {}, error, input);
-  if (failed(unavailablePlan)) { return function.emitError("allocation refusal prevented logical preparation"); }
+  if (failed(unavailablePlan) || failed(materializeLogicalFamilies(**unavailablePlan))) {
+    return function.emitError("allocation refusal prevented logical preparation");
+  }
   const auto unavailableText = printPlan(**unavailablePlan);
   const auto allocationNodes = arena->size();
   prepareAllocationSupport(**unavailablePlan);
@@ -1193,7 +1311,8 @@ LogicalResult checkRetainedDemands(func::FuncOp function, pto::GMAliasPolicy pol
     };
     if (arithmetic(costs[i]) && arithmetic(costs[i - 1]) &&
         costs[i].region == costs[i - 1].region && costs[i].request == costs[i - 1].request &&
-        estimatedCostLess(costs[i].estimate, costs[i - 1].estimate)) {
+        costs[i].requestId == costs[i - 1].requestId &&
+        estimatedSelectionWorkLess(costs[i].estimate, costs[i - 1].estimate)) {
       return function.emitError("eligible arithmetic methods were not ordered by estimated work");
     }
   }
@@ -2306,6 +2425,10 @@ int main(int argc, char **argv) {
         if (failed(checkOrderCoveredPeriodic(function, policy))) { return 1; }
         continue;
       }
+      if (certification && function->hasAttr("test.conditional_endpoint_upgrade")) {
+        if (failed(checkConditionalEndpointUpgrade(function, policy))) { return 1; }
+        continue;
+      }
       if (certification && function->hasAttr("test.sequence_endpoint_retry")) {
         if (failed(checkSequenceEndpointRetry(function, policy))) { return 1; }
         continue;
@@ -2444,6 +2567,10 @@ int main(int argc, char **argv) {
           const bool childExact = child.mathematical && child.mathematical->finiteVisitDemands &&
               child.mathematical->region == id && !probe.hasWholeFunctionMinimumDemands();
           if (!childExact) {
+            llvm::errs() << "finite-visit child region=" << id << " status=" << unsigned(child.status)
+                         << " stage=" << unsigned(child.stage) << " backend="
+                         << (child.mathematical ? child.mathematical->backend : "none") << "\n";
+            for (const auto& obligation : child.obligations) { llvm::errs() << obligation.diagnostic << "\n"; }
             function.emitError("finite-visit probe: child did not retain finite-type demands independently");
             return 1;
           }
@@ -2522,6 +2649,15 @@ int main(int argc, char **argv) {
             implicationCost["union_difference_attempts"] = arithmeticCost->unionDifferenceAttempts;
             implicationCost["union_difference_hits"] = arithmeticCost->unionDifferenceCacheHits;
             implicationCost["union_difference_builds"] = arithmeticCost->unionDifferenceBuilds;
+            const auto& difference = arithmeticCost->integerDifference;
+            implicationCost["difference_requests"] = difference.requests;
+            implicationCost["arrangement_seeds"] = difference.seeds;
+            implicationCost["arrangement_axes"] = difference.axes;
+            implicationCost["arrangement_skipped_axes"] = difference.skippedAxes;
+            implicationCost["arrangement_slices"] = difference.slices;
+            implicationCost["arrangement_output_pieces"] = difference.outputPieces;
+            implicationCost["slice_feasibility_calls"] = difference.sliceFeasibility.calls;
+            implicationCost["slice_feasibility_candidates"] = difference.sliceFeasibility.candidateSubstitutions;
             implicationCost["union_merge_attempts"] = arithmeticCost->unionMergeAttempts;
             implicationCost["union_merge_hits"] = arithmeticCost->unionMergeCacheHits;
             implicationCost["union_merge_builds"] = arithmeticCost->unionMergeBuilds;
@@ -2565,6 +2701,16 @@ int main(int argc, char **argv) {
               selectorCost["identity_requests"] = cost.identityRequests;
               selectorCost["owned_identity_hits"] = cost.ownedIdentityHits;
               selectorCost["structural_hashes"] = cost.structuralHashes;
+              selectorCost["feasibility_calls"] = cost.feasibility.calls;
+              selectorCost["feasibility_cache_hits"] = cost.feasibility.cacheHits;
+              selectorCost["feasibility_substitutions"] = cost.feasibility.candidateSubstitutions;
+              selectorCost["feasibility_equalities"] = cost.feasibility.equalityEliminations;
+              selectorCost["feasibility_octagonal_eliminations"] = cost.feasibility.octagonalEliminations;
+              selectorCost["feasibility_congruence_checks"] = cost.feasibility.congruenceChecks;
+              selectorCost["feasibility_congruence_matrix_columns"] = cost.feasibility.congruenceMatrixColumns;
+              selectorCost["feasibility_unary_decisions"] = cost.feasibility.unaryDecisions;
+              selectorCost["blocker_requests"] = cost.blockerRequests;
+              selectorCost["empty_order_skips"] = cost.emptyOrderSkips;
               selectorCost["structural_comparisons"] = cost.structuralComparisons;
               selectorCost["projection_requests"] = cost.projectionRequests;
               selectorCost["projection_hits"] = cost.projectionHits;
@@ -2642,7 +2788,7 @@ int main(int argc, char **argv) {
         const bool lazy = analysis.numericTemplatePreflights() == 0 &&
             llvm::none_of(analysis.result()->nodes, [](const auto& node) { return node.numericTemplate.has_value(); });
         if (!lazy) { function.emitError("structural recognition expanded numerical candidates"); return 1; }
-        if (failed(analysis.analyzeNumericCandidates())) { return 1; }
+        if (failed(analysis.auditNumericCandidates())) { return 1; }
         const auto count = analysis.numericTemplatePreflights();
         std::vector<const void*> owners;
         for (const auto& node : analysis.result()->nodes) {
@@ -2651,14 +2797,14 @@ int main(int argc, char **argv) {
             function.emitError("numerical demands constructed endpoints or allocation"); return 1;
           }
         }
-        if (failed(analysis.analyzeNumericCandidates())) { return 1; }
+        if (failed(analysis.auditNumericCandidates())) { return 1; }
         bool reused = count == analysis.numericTemplatePreflights();
         for (auto [node, owner] : llvm::zip(analysis.result()->nodes, owners)) {
           reused &= (node.numericTemplate ? &*node.numericTemplate : nullptr) == owner;
         }
         if (!reused) { function.emitError("numerical retry reconstructed its preflight or effects"); return 1; }
         if (failed(checkNumericPreflight(function, *analysis.input(), *analysis.result()))) { return 1; }
-        if (failed(analysis.prepareNumericCandidateExports())) { return 1; }
+        if (failed(analysis.auditNumericCandidateExports())) { return 1; }
         if (failed(checkRecurringNumericExports(function, *analysis.input(), *analysis.result()))) { return 1; }
         llvm::errs() << "numeric-session: lazy-preflight cached-effects demand-only foreign-context-rejected\n";
       }

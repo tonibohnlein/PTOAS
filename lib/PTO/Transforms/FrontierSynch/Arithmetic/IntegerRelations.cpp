@@ -10,6 +10,7 @@
 // contract. Congruence periods are class constants, never distances or trips.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/IntegerRelations.h"
 #include "IntegerCongruenceConsistency.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <algorithm>
 #include <map>
@@ -298,6 +299,47 @@ UnaryLattice unaryLattice(const IntegerSystem& system, unsigned coordinate)
     }
     return result;
 }
+// This describes the alternatives already used by exact elimination. Counts
+// bound the immediate enumeration, not recursive proof work. Keep strict ties
+// in their historical order so projection and witness ordering do not change.
+struct BoundedEliminationPlan {
+    UnaryLattice lattice;
+    std::optional<BoundInteger> first, unaryCount;
+    const IntegerConstraint* strip = nullptr;
+    BoundInteger stripLower{0}, count{0};
+    bool empty = false;
+};
+BoundedEliminationPlan boundedEliminationPlan(const IntegerSystem& system, unsigned coordinate,
+                                             const BoundInteger& cooperCount)
+{
+    BoundedEliminationPlan plan;
+    plan.lattice = unaryLattice(system, coordinate);
+    plan.count = cooperCount;
+    if (plan.lattice.empty) { plan.empty = true; plan.count = 0; return plan; }
+    if (plan.lattice.lower && plan.lattice.upper) {
+        plan.first = *plan.lattice.lower + mod(plan.lattice.residue - *plan.lattice.lower, plan.lattice.modulus);
+        if (*plan.first > *plan.lattice.upper) { plan.empty = true; plan.count = 0; return plan; }
+        plan.unaryCount = (*plan.lattice.upper - *plan.first) / plan.lattice.modulus + 1;
+        if (*plan.unaryCount < plan.count) { plan.count = *plan.unaryCount; }
+    }
+    const auto& rows = system.constraints();
+    BoundInteger stripCount = cooperCount;
+    for (const auto& row : rows) {
+        if (row.coefficients[coordinate] <= 0) { continue; }
+        auto opposite = row.coefficients;
+        for (auto& value : opposite) { value = -value; }
+        auto found = std::lower_bound(rows.begin(), rows.end(), opposite,
+            [](const IntegerConstraint& atom, const Coefficients& key) { return atom.coefficients < key; });
+        if (found == rows.end() || found->coefficients != opposite) { continue; }
+        const auto count = row.bound + found->bound + 1;
+        if (count <= 0) { plan.empty = true; plan.count = 0; return plan; }
+        if (count < stripCount && (!plan.unaryCount || count < *plan.unaryCount)) {
+            plan.strip = &row; plan.stripLower = -found->bound; stripCount = count;
+            plan.count = count;
+        }
+    }
+    return plan;
+}
 std::optional<BoundInteger> fixedResidue(const IntegerSystem& system, const IntegerCongruence& atom)
 {
     BoundInteger residue(0);
@@ -387,56 +429,27 @@ bool visitEliminationCandidates(const IntegerSystem& system, unsigned coordinate
     // Raw loop coordinates may have a large step but only a few admissible
     // values. Compare exact candidate counts; never expand a larger interval
     // than the Cooper endpoint/residue enumeration would already inspect.
-    const auto lattice = unaryLattice(system, coordinate);
-    if (lattice.empty) { return true; }
     BoundInteger existingCount(0);
     for (std::size_t i = 0; i < endpoints.size(); ++i) { existingCount += period; }
-    std::optional<BoundInteger> unaryCount;
-    if (lattice.lower && lattice.upper) {
-        const auto first = *lattice.lower + mod(lattice.residue - *lattice.lower, lattice.modulus);
-        if (first > *lattice.upper) { return true; }
-        unaryCount = (*lattice.upper - first) / lattice.modulus + 1;
-    }
-    // A narrow affine strip (including a floor's remainder strip) provides
-    // exact equalities for each possible integer left-side value. Prefer that
-    // finite union when cheaper than both existing candidate constructions.
-    const IntegerConstraint* strip = nullptr;
-    BoundInteger stripLower(0), stripCount = existingCount;
-    for (const auto& row : rows) {
-        if (row.coefficients[coordinate] <= 0) { continue; }
-        auto opposite = row.coefficients;
-        for (auto& value : opposite) { value = -value; }
-        auto found = std::lower_bound(rows.begin(), rows.end(), opposite,
-            [](const IntegerConstraint& atom, const Coefficients& key) { return atom.coefficients < key; });
-        if (found == rows.end() || found->coefficients != opposite) { continue; }
-        const auto count = row.bound + found->bound + 1;
-        if (count <= 0) { return true; }
-        if (count < stripCount && (!unaryCount || count < *unaryCount)) {
-            strip = &row; stripLower = -found->bound; stripCount = count;
-        }
-    }
-    if (strip) {
-        const auto denominator = strip->coefficients[coordinate];
-        for (BoundInteger offset(0); offset < stripCount; ++offset) {
-            IntegerAffine numerator{without(strip->coefficients, coordinate), stripLower + offset};
+    const auto plan = boundedEliminationPlan(system, coordinate, existingCount);
+    if (plan.empty) { return true; }
+    if (plan.strip) {
+        const auto denominator = plan.strip->coefficients[coordinate];
+        for (BoundInteger offset(0); offset < plan.count; ++offset) {
+            IntegerAffine numerator{without(plan.strip->coefficients, coordinate), plan.stripLower + offset};
             for (auto& value : numerator.coefficients) { value = -value; }
             auto domain = substitute(system, coordinate, numerator, denominator);
             if (!visit(std::move(domain), std::move(numerator), denominator)) { return false; }
         }
         return true;
     }
-    if (lattice.lower && lattice.upper) {
-        const auto first = *lattice.lower + mod(lattice.residue - *lattice.lower, lattice.modulus);
-        if (first > *lattice.upper) { return true; }
-        const auto count = (*lattice.upper - first) / lattice.modulus + 1;
-        if (count < existingCount) {
-            for (auto value = first; value <= *lattice.upper; value += lattice.modulus) {
-                IntegerAffine numerator{Coefficients(system.dimensions() - 1), value};
-                auto domain = substitute(system, coordinate, numerator, BoundInteger(1));
-                if (!visit(std::move(domain), std::move(numerator), BoundInteger(1))) { return false; }
-            }
-            return true;
+    if (plan.unaryCount && *plan.unaryCount < existingCount) {
+        for (auto value = *plan.first; value <= *plan.lattice.upper; value += plan.lattice.modulus) {
+            IntegerAffine numerator{Coefficients(system.dimensions() - 1), value};
+            auto domain = substitute(system, coordinate, numerator, BoundInteger(1));
+            if (!visit(std::move(domain), std::move(numerator), BoundInteger(1))) { return false; }
         }
+        return true;
     }
     // Put t=scale*y. All inequalities on t have unit coefficients, and all
     // divisibilities are periodic in t with this period. Any nonempty bounded
@@ -502,64 +515,8 @@ FailureOr<std::vector<IntegerSystem>> IntegerSystem::eliminate(unsigned coordina
     }
     return result;
 }
-bool IntegerSystem::isEmpty() const
-{
-    if (emptyCache) { return *emptyCache; }
-    if (!dimensionCount) { return contradiction; }
-    const auto congruenceResult = detail::congruenceConsistency(dimensionCount, this->congruences());
-    if (congruenceResult == detail::CongruenceConsistency::Inconsistent) {
-        emptyCache = true;
-        return true;
-    }
-    if (this->constraints().empty() && congruenceResult == detail::CongruenceConsistency::Consistent) {
-        emptyCache = false;
-        return false;
-    }
-    // Every recursive call removes one coordinate. Unlike project(), this
-    // search returns at the first witness and never builds the full union.
-    // Existential feasibility is independent of elimination order. Prefer a
-    // coordinate with fewer endpoint/residue candidates; eliminating an outer
-    // affine row index first can otherwise enumerate its large physical stride.
-    unsigned selected = 0;
-    std::optional<BoundInteger> leastCost;
-    for (unsigned coordinate = 0; coordinate < dimensionCount; ++coordinate) {
-        BoundInteger scale(1);
-        unsigned lower = 0, upper = 0;
-        for (const auto& atom : this->constraints()) {
-            const auto& coefficient = atom.coefficients[coordinate];
-            if (coefficient == 0) { continue; }
-            scale = commonMultiple(scale, magnitude(coefficient));
-            if (coefficient < 0) { ++lower; } else { ++upper; }
-        }
-        BoundInteger period = scale;
-        for (const auto& atom : this->congruences()) {
-            const auto modulus = scale * atom.modulus;
-            period = commonMultiple(period,
-                modulus / gcd(magnitude(atom.coefficients[coordinate]), modulus));
-        }
-        const auto count = std::max(1U, lower ? lower : upper);
-        const auto cost = period * BoundInteger(static_cast<int64_t>(count));
-        if (!leastCost || cost < *leastCost) { leastCost = cost; selected = coordinate; }
-    }
-    if (!isOctagonal()) {
-        emptyCache = visitEliminationCandidates(*this, selected,
-            [](const IntegerSystem& domain, const IntegerAffine&, const BoundInteger&) {
-                return domain.isEmpty();
-            }, true);
-        return *emptyCache;
-    }
-    auto children = eliminate(selected);
-    // The zero-dimensional case was handled above; this cannot be an invalid
-    // caller-supplied coordinate. An internal error must not become an answer.
-    if (failed(children)) {
-        llvm::report_fatal_error(
-            "integer relation invariant: nonconstant schema cannot eliminate the selected coordinate");
-    }
-    emptyCache = std::all_of(children->begin(), children->end(), [](const auto& child) { return child.isEmpty(); });
-    return *emptyCache;
-}
 namespace {
-std::vector<unsigned> projectionEqualityRanks(const IntegerSystem& system)
+std::vector<unsigned> eliminationEqualityRanks(const IntegerSystem& system)
 {
     std::vector<unsigned> equalityRank(system.dimensions(), 2);
     std::map<Coefficients, BoundInteger> bounds;
@@ -576,7 +533,7 @@ std::vector<unsigned> projectionEqualityRanks(const IntegerSystem& system)
     }
     return equalityRank;
 }
-BoundInteger projectionCandidateCost(const IntegerSystem& system, unsigned coordinate)
+BoundInteger eliminationCandidateCost(const IntegerSystem& system, unsigned coordinate)
 {
     BoundInteger scale(1);
     unsigned lower = 0, upper = 0;
@@ -595,17 +552,95 @@ BoundInteger projectionCandidateCost(const IntegerSystem& system, unsigned coord
     const auto count = std::max(1U, lower ? lower : upper);
     return period * BoundInteger(static_cast<int64_t>(count));
 }
+} // namespace
+bool IntegerSystem::isEmpty(IntegerFeasibilityCost* cost) const
+{
+    if (cost) { accumulateCost(cost->calls, 1); }
+    if (emptyCache) {
+        if (cost) { accumulateCost(cost->cacheHits, 1); }
+        return *emptyCache;
+    }
+    if (!dimensionCount) { return contradiction; }
+    if (dimensionCount == 1) {
+        // All remaining atoms constrain one integer. Intersect their exact
+        // residue classes once; enumerating a Cooper period cannot add facts.
+        // A one-sided or unbounded interval meets every nonempty lattice.
+        const auto lattice = unaryLattice(*this, 0);
+        bool empty = lattice.empty;
+        if (!empty && lattice.lower && lattice.upper) {
+            const auto first = *lattice.lower + mod(lattice.residue - *lattice.lower, lattice.modulus);
+            empty = first > *lattice.upper;
+        }
+        if (cost) { accumulateCost(cost->unaryDecisions, 1); }
+        emptyCache = empty;
+        return empty;
+    }
+    const bool octagonal = isOctagonal();
+    const auto ranks = octagonal ? std::vector<unsigned>(dimensionCount, 2) : eliminationEqualityRanks(*this);
+    // Substitute an exact defining equality before building a congruence
+    // lattice. The unchanged substitution preserves its divisibility condition
+    // and every residual congruence; recursion checks the smaller exact system.
+    const bool definingEquality = !octagonal && llvm::any_of(ranks, [](unsigned rank) { return rank < 2; });
+    const auto congruenceResult = definingEquality ? detail::CongruenceConsistency::Unknown :
+        detail::congruenceConsistency(dimensionCount, this->congruences(), cost);
+    if (congruenceResult == detail::CongruenceConsistency::Inconsistent) {
+        emptyCache = true;
+        return true;
+    }
+    if (this->constraints().empty() && congruenceResult == detail::CongruenceConsistency::Consistent) {
+        emptyCache = false;
+        return false;
+    }
+    // Every recursive call removes one coordinate. Unlike project(), this
+    // search returns at the first witness and never builds the full union.
+    // Solve exact defining equalities first in the general integer path.
+    // This is only a traversal preference: substitute() retains divisibility,
+    // every residual candidate remains available, and witness order is unchanged.
+    // The octagonal path retains its original endpoint-cost ordering.
+    unsigned selected = 0, selectedRank = 2;
+    std::optional<BoundInteger> leastCost;
+    for (unsigned coordinate = 0; coordinate < dimensionCount; ++coordinate) {
+        const auto cooperCost = eliminationCandidateCost(*this, coordinate);
+        const auto candidateCost = octagonal ? cooperCost :
+            boundedEliminationPlan(*this, coordinate, cooperCost).count;
+        const auto rank = ranks[coordinate];
+        if (!leastCost || rank < selectedRank || (rank == selectedRank && candidateCost < *leastCost)) {
+            leastCost = candidateCost; selected = coordinate; selectedRank = rank;
+        }
+    }
+    if (!octagonal) {
+        if (cost && selectedRank < 2) { accumulateCost(cost->equalityEliminations, 1); }
+        emptyCache = visitEliminationCandidates(*this, selected,
+            [cost](const IntegerSystem& domain, const IntegerAffine&, const BoundInteger&) {
+                if (cost) { accumulateCost(cost->candidateSubstitutions, 1); }
+                return domain.isEmpty(cost);
+            }, true);
+        return *emptyCache;
+    }
+    if (cost) { accumulateCost(cost->octagonalEliminations, 1); }
+    auto children = eliminate(selected);
+    // The zero-dimensional case was handled above; this cannot be an invalid
+    // caller-supplied coordinate. An internal error must not become an answer.
+    if (failed(children)) {
+        llvm::report_fatal_error(
+            "integer relation invariant: nonconstant schema cannot eliminate the selected coordinate");
+    }
+    emptyCache = std::all_of(children->begin(), children->end(),
+        [cost](const auto& child) { return child.isEmpty(cost); });
+    return *emptyCache;
+}
+namespace {
 std::optional<unsigned> projectionCoordinate(const IntegerSystem& system,
     const std::vector<unsigned>& coordinates, const std::vector<bool>& retained)
 {
-    const auto equalityRank = projectionEqualityRanks(system);
+    const auto equalityRank = eliminationEqualityRanks(system);
     std::optional<unsigned> selected;
     unsigned selectedRank = 2;
     std::optional<BoundInteger> leastCost;
     // Stable descending original order resolves equal estimates.
     for (unsigned coordinate = system.dimensions(); coordinate-- > 0;) {
         if (retained[coordinates[coordinate]]) { continue; }
-        const auto cost = projectionCandidateCost(system, coordinate);
+        const auto cost = eliminationCandidateCost(system, coordinate);
         const auto rank = equalityRank[coordinate];
         if (!selected || rank < selectedRank || (rank == selectedRank && cost < *leastCost)) {
             selected = coordinate; selectedRank = rank; leastCost = cost;
@@ -824,7 +859,7 @@ std::vector<std::vector<MembershipTest>> membershipTests(llvm::ArrayRef<IntegerS
     return tests;
 }
 std::vector<IntegerSystem> arrange(const IntegerSystem& seed, llvm::ArrayRef<IntegerSystem> rhs,
-                                  llvm::ArrayRef<Axis> axes)
+                                  llvm::ArrayRef<Axis> axes, IntegerDifferenceCost* cost)
 {
     struct Frame {
         IntegerSystem region;
@@ -844,6 +879,17 @@ std::vector<IntegerSystem> arrange(const IntegerSystem& seed, llvm::ArrayRef<Int
     std::vector<IntegerSystem> result;
     while (!stack.empty()) {
         auto& current = stack.back();
+        // Rejected clauses stay false throughout this branch. If no live
+        // clause depends on an axis, all its exhaustive slices have the same
+        // membership and their union is the unchanged current region. Skip
+        // only before entering that axis, never after emitting one of its cells.
+        while (current.axis < axes.size() && current.interval == 0 && current.residue == 0 &&
+            llvm::all_of(tests[current.axis], [&](const auto& test) {
+                return current.clauses[test.clause].rejected;
+            })) {
+            if (cost) { accumulateCost(cost->skippedAxes, 1); }
+            ++current.axis;
+        }
         // Every surviving clause must be decided when all axes are assigned.
         assert(current.axis < axes.size());
         const auto& axis = axes[current.axis];
@@ -858,6 +904,7 @@ std::vector<IntegerSystem> arrange(const IntegerSystem& seed, llvm::ArrayRef<Int
             if (interval > axis.thresholds.size()) { stack.pop_back(); continue; }
             slice = thresholdSlice(seed.dimensions(), axis, current.interval++);
         }
+        if (cost) { accumulateCost(cost->slices, 1); }
         auto clauses = current.clauses; // Sibling cells own independent assignments.
         for (const auto& test : tests[current.axis]) {
             auto& clause = clauses[test.clause];
@@ -874,7 +921,7 @@ std::vector<IntegerSystem> arrange(const IntegerSystem& seed, llvm::ArrayRef<Int
         if (failed(next)) {
             llvm::report_fatal_error("integer relation invariant: validated arrangement slice has an invalid schema");
         }
-        if (next->isEmpty()) { continue; } // Geometric feasibility remains exact.
+        if (next->isEmpty(cost ? &cost->sliceFeasibility : nullptr)) { continue; } // Exact feasibility.
         if (llvm::all_of(clauses, [](const auto& clause) { return clause.rejected; })) {
             // Every RHS clause has a false atom, even on unassigned axes.
             result.push_back(std::move(*next));
@@ -886,8 +933,9 @@ std::vector<IntegerSystem> arrange(const IntegerSystem& seed, llvm::ArrayRef<Int
 }
 }
 FailureOr<std::vector<IntegerSystem>> subtractIntegerUnions(unsigned dimensions,
-    llvm::ArrayRef<IntegerSystem> lhs, llvm::ArrayRef<IntegerSystem> rhs)
+    llvm::ArrayRef<IntegerSystem> lhs, llvm::ArrayRef<IntegerSystem> rhs, IntegerDifferenceCost* cost)
 {
+    if (cost) { accumulateCost(cost->requests, 1); }
     if (dimensions > Coefficients().max_size()) { return failure(); }
     for (auto pieces : {lhs, rhs}) {
         if (std::any_of(pieces.begin(), pieces.end(),
@@ -911,7 +959,9 @@ FailureOr<std::vector<IntegerSystem>> subtractIntegerUnions(unsigned dimensions,
         relative.erase(std::remove_if(relative.begin(), relative.end(),
                                       [](const auto& piece) { return piece.isEmpty(); }), relative.end());
         const auto axes = arrangementAxes({}, relative);
-        auto selected = arrange(seed, relative, axes);
+        if (cost) { accumulateCost(cost->seeds, 1); accumulateCost(cost->axes, axes.size()); }
+        auto selected = arrange(seed, relative, axes, cost);
+        if (cost) { accumulateCost(cost->outputPieces, selected.size()); }
         for (auto& piece : selected) { result.push_back(std::move(piece)); }
     }
     return result;

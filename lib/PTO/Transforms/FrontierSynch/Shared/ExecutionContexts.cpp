@@ -391,6 +391,10 @@ LogicalResult allocateContextSynchronization(func::FuncOp function, ArrayRef<int
         }
     }
     auto covered = function.walk([&](Operation* op) -> WalkResult {
+        if (isa<LogicalFamilyOp>(op)) {
+            op->emitError("saved numerical families do not support execution-context allocation");
+            return WalkResult::interrupt();
+        }
         if (!isa<LogicalSetOp, LogicalWaitOp>(op)) { return WalkResult::advance(); }
         auto context = contextOf(op);
         auto saved = context.empty() ? DictionaryAttr() : bundle.getAs<DictionaryAttr>(context);
@@ -428,7 +432,8 @@ LogicalResult allocateContextSynchronization(func::FuncOp function, ArrayRef<int
         if (failed(allocatePhysicalEventIds(working, eligibleIds))) { return failure(); }
     }
     if (working.walk([](Operation* op) {
-            return isa<LogicalSetOp, LogicalWaitOp>(op) ? WalkResult::interrupt() : WalkResult::advance();
+            return isa<LogicalFamilyOp, LogicalSetOp, LogicalWaitOp>(op) ?
+                WalkResult::interrupt() : WalkResult::advance();
         }).wasInterrupted()) {
         return function.emitError("execution-context allocation left unresolved logical endpoints");
     }

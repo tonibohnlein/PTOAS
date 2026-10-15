@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "RegionalAllocationCandidates.h"
+#include "CertifiedAllocationCandidates.h"
 #include "mlir/IR/Diagnostics.h"
 #include "llvm/Support/SaveAndRestore.h"
 #include <set>
@@ -37,13 +38,33 @@ LogicalResult selectRegionalAllocationCandidate(func::FuncOp function,
     }
     const auto incumbent = plan.regionalAllocation;
     const auto certificate = plan.allocationCertificate;
-    if (fits(function, certificate, eligibleIds)) {
+    auto prior = certifiedAllocationCandidates(certificate);
+    if (failed(prior)) { return failure(); }
+    SmallVector<DictionaryAttr> available = std::move(*prior);
+    if (certificate) { available.push_back(withoutAllocationInventory(certificate)); }
+    auto finish = [&](const std::shared_ptr<RegionalAllocationSummary>& selected, DictionaryAttr evidence) {
+        for (const auto& completed : plan.allocationPreparation.retainedCertificates(plan, eligibleIds)) {
+            available.push_back(completed.evidence);
+        }
+        plan.regionalAllocation = selected;
+        plan.allocationCertificate = withAllocationInventory(evidence, available);
+        plan.allocationPreparation.preserveCertificates(plan);
+        // Only completed proof data crosses the saved-artifact boundary.
         plan.allocationPreparation = AllocationPreparation{};
         return success();
+    };
+    if (fits(function, certificate, eligibleIds)) { return finish(incumbent, certificate); }
+    // A previous required parent export may already have the exact proof for
+    // this protocol. Reading it never invokes a summary or proof producer.
+    for (const auto& completed : plan.allocationPreparation.retainedCertificates(plan, eligibleIds)) {
+        if (fits(function, completed.evidence, eligibleIds)) {
+            return finish(completed.owner, completed.evidence);
+        }
     }
     std::shared_ptr<RegionalAllocationSummary> previous;
     for (auto strength : {AllocationStrength::Independent, AllocationStrength::Shared}) {
-        auto candidate = requestAllocationSummary(plan, strength, profile);
+        auto candidate = plan.allocationPreparation.retained(strength);
+        if (!candidate) { candidate = requestAllocationSummary(plan, strength, profile); }
         if (!candidate || candidate == previous) { continue; }
         previous = candidate;
         DictionaryAttr evidence;
@@ -51,23 +72,24 @@ LogicalResult selectRegionalAllocationCandidate(func::FuncOp function,
         {
             llvm::SaveAndRestore<std::shared_ptr<RegionalAllocationSummary>> selected(
                 plan.regionalAllocation, candidate);
-            evidence = regionalBaseAllocationCertificate(region, plan, profile);
+            for (const auto& completed : plan.allocationPreparation.retainedCertificates(plan, eligibleIds)) {
+                if (completed.owner == candidate) { evidence = completed.evidence; }
+            }
+            if (!evidence) {
+                evidence = regionalBaseAllocationCertificate(region, plan, profile, eligibleIds);
+                plan.allocationPreparation.retainCertificate(plan, candidate, evidence, eligibleIds);
+            }
             accepted = fits(function, evidence, eligibleIds);
             if (!accepted) {
-                auto stronger = strengthenRegionalAllocationCertificate(region, plan, evidence, profile);
+                auto stronger = strengthenRegionalAllocationCertificate(region, plan, evidence, profile, eligibleIds);
                 if (stronger != evidence) {
                     evidence = stronger;
+                    plan.allocationPreparation.retainCertificate(plan, candidate, evidence, eligibleIds);
                     accepted = fits(function, evidence, eligibleIds);
                 }
             }
         }
-        if (!accepted) { continue; }
-        plan.regionalAllocation = std::move(candidate);
-        plan.allocationCertificate = evidence;
-        // The complete parent has accepted the assignment. Saved split output
-        // contains the certificate, never callbacks into an expired session.
-        plan.allocationPreparation = AllocationPreparation{};
-        return success();
+        if (accepted) { return finish(candidate, evidence); }
     }
     plan.regionalAllocation = incumbent;
     plan.allocationCertificate = certificate;

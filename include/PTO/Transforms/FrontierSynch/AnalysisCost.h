@@ -61,6 +61,13 @@ inline bool estimatedCostLess(const AnalysisCostEstimate& a, const AnalysisCostE
     const auto work = compare(a.work, b.work);
     return work ? work < 0 : compare(a.representation, b.representation) < 0;
 }
+inline bool estimatedSelectionWorkLess(const AnalysisCostEstimate& a, const AnalysisCostEstimate& b)
+{
+    // Candidate screening preserves stable ties, including unknown work.
+    // Representation size is not evidence of construction work still required.
+    if (a.work.has_value() != b.work.has_value()) { return a.work.has_value(); }
+    return a.work && *a.work < *b.work;
+}
 struct AnalysisCostRecord {
     std::size_t region = 0;
     // Query, selector, synchronization and fallback bits, respectively.

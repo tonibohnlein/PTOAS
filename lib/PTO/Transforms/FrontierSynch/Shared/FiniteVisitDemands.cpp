@@ -225,7 +225,8 @@ private:
             auto any = e.boolean(false);
             std::vector<Expr> refresh;
             for (std::size_t t = 0; t < views.size(); ++t) {
-                const auto& boundary = state.boundaries[t][cell];
+                // Sequence summaries are indexed by physical cell, then child type.
+                const auto& boundary = state.boundaries[cell][t];
                 auto a = nonempty(state, boundary.firstWriters), b = nonempty(state, boundary.lastWriters);
                 if (!a || !b) { return false; }
                 any = e.lor(any, e.lor(*a, *b));

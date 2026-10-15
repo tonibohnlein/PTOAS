@@ -120,7 +120,8 @@ FailureOr<CompletionSummary> CompletionRegion::summarizeEventFree(func::FuncOp f
     std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error)
 {
     if (!function || hasManualOnCoreSynchronization(function) || function.walk([](Operation* op) {
-            return isa<func::CallOp, LogicalSetOp, LogicalWaitOp>(op) || getSyncMacroModel(op).has_value() ||
+            return isa<func::CallOp, LogicalFamilyOp, LogicalSetOp, LogicalWaitOp>(op) ||
+                getSyncMacroModel(op).has_value() ||
                 (isPreservedSyncProtocol(op) && !isa<BarrierOp>(op)) ?
                 WalkResult::interrupt() : WalkResult::advance();
         }).wasInterrupted()) {
@@ -139,7 +140,7 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::qualifyExistingChild(f
 {
     if (!function || !function.isPrivate() || hasManualOnCoreSynchronization(function) ||
         function.walk([](Operation* op) {
-            return isa<LogicalSetOp, LogicalWaitOp>(op) || getSyncMacroModel(op).has_value() ||
+            return isa<LogicalFamilyOp, LogicalSetOp, LogicalWaitOp>(op) || getSyncMacroModel(op).has_value() ||
                 (isPreservedSyncProtocol(op) && !isa<BarrierOp>(op)) ?
                 WalkResult::interrupt() : WalkResult::advance();
         }).wasInterrupted()) {
@@ -185,7 +186,7 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
     DenseMap<Operation*, std::shared_ptr<const ClosedCompletionChild>> imports, byCallee;
     function.walk([&](Operation* op) {
         if (op == function.getOperation() || !error.empty()) { return; }
-        if (recoverSyncPhysicalCore(op) != core || isa<LogicalSetOp, LogicalWaitOp>(op) ||
+        if (recoverSyncPhysicalCore(op) != core || isa<LogicalFamilyOp, LogicalSetOp, LogicalWaitOp>(op) ||
             (isPreservedSyncProtocol(op) && !isa<BarrierOp>(op))) {
             error = "completion child lacks closed same-core execution"; return;
         }

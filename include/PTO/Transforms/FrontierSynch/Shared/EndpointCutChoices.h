@@ -10,8 +10,11 @@
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ENDPOINTCUTCHOICES_H
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateEndpoints.h"
 #include <memory>
+#include <optional>
 namespace mlir::pto::frontiersynch {
 class RegionExpressions;
+// Original section containers admitted by the shared cut-selection proof.
+bool isEndpointSelectionContainer(Operation* operation);
 class EndpointCutChoices {
 public:
     scf::ForOp loop() const { return invocation; }
@@ -19,6 +22,18 @@ public:
     Value consumerPredicate() const { return terminalPredicate; }
     bool pendingMaterialization() const { return bool(terminalArena); }
     bool validPendingSelection() const;
+    struct PendingSelection {
+        std::shared_ptr<const RegionExpressions> arena;
+        uint32_t expression;
+    };
+    // An owned exact singleton witness, never a borrowed executable callback.
+    // Serialization must requalify its original cuts and retain the command
+    // activity recipes separately: this witness proves multiplicity only.
+    std::optional<PendingSelection> pendingSelection() const
+    {
+        if (!terminalArena) { return std::nullopt; }
+        return PendingSelection{terminalArena, terminalExpression};
+    }
     // Attempt-local identity of retained selection evidence. A fresh choice
     // wrapper around the same arena predicate must not force allocation again.
     // The containing protocol retains this object and therefore the arena.

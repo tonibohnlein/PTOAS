@@ -246,6 +246,7 @@ FiniteVisitAnalysis analyzeFiniteVisitLoop(func::FuncOp function, const SyncInpu
     // invocations are fixed; including it would incorrectly extend scoped
     // hardware protection across the very boundary being reduced.
     SequenceRegionResolver resolver;
+    resolver.allocationPolicy = program.allocationPolicy;
     resolver.form = std::move(form);
     std::map<std::size_t, RegionalAnalysis> regions;
     auto within = types.enclosing;
@@ -273,7 +274,7 @@ FiniteVisitAnalysis analyzeFiniteVisitLoop(func::FuncOp function, const SyncInpu
         // A type is a complete unmasked visit. Its original selection path is
         // retained for consumers, never reused as an inter-visit predicate.
         out.children.push_back(composeRegionalSequenceWithin(
-            function, arena, std::move(parts), true, false, within, index->sourceFacts()));
+            function, arena, std::move(parts), true, false, within, index->sourceFacts(), program.allocationPolicy));
         if (!out.children.back().error.empty()) {
             contract.demands = ContractImplementation::Unavailable;
             contract.implementationError = "finite whole-visit composition: " + out.children.back().error;

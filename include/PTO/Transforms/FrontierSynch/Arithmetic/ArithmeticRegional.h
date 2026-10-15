@@ -8,6 +8,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICREGIONAL_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ARITHMETICREGIONAL_H
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgram.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticAllocationPolicy.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticStorageSelectors.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h"
 namespace mlir::pto::frontiersynch {
@@ -29,7 +30,7 @@ struct ArithmeticRegionalRelations {
 // Session mathematics contains no arena-local IDs or optional storage exports.
 std::shared_ptr<const ArithmeticRegionalRelations> analyzeArithmeticRegionDemands(
     ArithmeticRegionContext context, const PhaseIndex& index, const SyncInput& input,
-    const ArithmeticProgram* certified, std::string& error);
+    const ArithmeticProgram* certified, std::string& error, ArithmeticDemandProfile profile = {});
 // Pure phase mathematics: constants specialize the producer; remaining entry
 // values are bound only by a later transactional export. No arena IDs escape.
 std::shared_ptr<const ArithmeticRegionalRelations> analyzeSpecializedArithmeticDemands(
@@ -40,7 +41,8 @@ std::shared_ptr<const ArithmeticRegionalRelations> analyzeSpecializedArithmeticD
 FailureOr<RegionalAnalysis> exportSpecializedArithmeticRegion(
     const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
     bool selectors, std::string& error,
-    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding);
+    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding,
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId);
 // Probe finite storage support from a cached form before reducing demands.
 // No expressions or query callbacks escape this transaction.
 bool hasFiniteArithmeticStorage(const ArithmeticProgram& program, const SyncInput& input,
@@ -49,11 +51,24 @@ bool hasFiniteArithmeticStorage(const ArithmeticProgram& program, const SyncInpu
 // Failed construction rolls back its unpublished nodes and arena diagnostics.
 FailureOr<RegionalAnalysis> exportArithmeticRegion(
     const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
-    bool selectors, std::string& error, std::shared_ptr<const SyncInput> inputOwner = {});
+    bool selectors, std::string& error, std::shared_ptr<const SyncInput> inputOwner = {},
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegion(
     const ArithmeticRegionalRelations& demands, std::shared_ptr<RegionExpressions> expressions,
     ArrayRef<scf::ForOp> enclosing, std::string& error,
-    std::shared_ptr<const SyncInput> inputOwner = {});
+    std::shared_ptr<const SyncInput> inputOwner = {},
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId);
+// Immutable endpoint recipes tied to one retained mathematical/context owner.
+// As with that owner, original IR must remain unchanged until invalidation.
+// Each call still creates a fresh plan and allocation callback state. Standalone
+// reference-based preparation above deliberately does not retain this cache.
+struct ArithmeticRegionalPreparation;
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareRetainedArithmeticRegion(
+    std::shared_ptr<const ArithmeticRegionalRelations> demands, std::shared_ptr<RegionExpressions> expressions,
+    ArrayRef<scf::ForOp> enclosing, std::string& error,
+    std::shared_ptr<const ArithmeticRegionalPreparation>& preparation,
+    std::shared_ptr<const SyncInput> inputOwner = {},
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId);
 // Analyze one original region with shared entry bindings. The finite-boundary
 // adapter enumerates bounded physical bytes, never dynamic payload occurrences;
 // adjacent bytes with identical selector tuples share one exported cell.
@@ -63,11 +78,13 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegion(
 FailureOr<RegionalAnalysis> analyzeArithmeticRegion(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::string& error,
-    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding = {});
+    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding = {},
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId);
 FailureOr<RegionalAnalysis> analyzeArithmeticRegionWithProfiles(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
     std::string& error, ArrayRef<ArithmeticLimits> profiles,
-    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding = {});
+    std::function<std::optional<RegionExpressions::Id>(Value)> parameterBinding = {},
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId);
 // Preserve exact reduction independently of selector/query export. The owned
 // result retains its original context and expression arena on export failure.
 FailureOr<RegionalAnalysis> analyzeArithmeticRegionRetained(ArithmeticRegionContext context,
@@ -82,9 +99,11 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionRetained(ArithmeticRegionCont
 // symbolic-capable analysis above as a fallback. No occurrence expansion occurs.
 FailureOr<RegionalAnalysis> analyzeFiniteArithmeticRegion(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
-    std::string& error);
+    std::string& error,
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId);
 FailureOr<RegionalAnalysis> analyzeFiniteArithmeticRegionWithProfiles(ArithmeticRegionContext context,
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions,
-    std::string& error, ArrayRef<ArithmeticLimits> profiles);
+    std::string& error, ArrayRef<ArithmeticLimits> profiles,
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId);
 }
 #endif

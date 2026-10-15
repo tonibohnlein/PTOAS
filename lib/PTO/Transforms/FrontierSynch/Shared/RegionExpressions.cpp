@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Intern expressions independently of source cuts; emit shared arithmetic only
 // after checking original-IR availability at each detached preparation cut.
+#include "ScalarConstruction.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include "RegionIntegerExpressionsInternal.h"
 #include "OriginalCutFacts.h"
@@ -14,11 +15,13 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/IR/AffineMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
 namespace mlir::pto::frontiersynch {
+#include "RegionExpressionArchive.h"
 RegionExpressions::Transaction::Transaction(RegionExpressions& arena)
     : arena(arena), count(arena.nodes.size()), evaluationCount(arena.evaluationInsertions.size()),
       constructionMessage(arena.constructionMessage), emissionMessage(arena.emissionMessage) {}
@@ -731,35 +734,44 @@ bool RegionExpressions::prepareEmission(Id expression, OpBuilder& builder, Opera
 Value RegionExpressions::emitNode(const Node& node, OpBuilder& builder, Location location,
     const llvm::DenseMap<Id, Value>& memo) const
 {
+    detail::ScalarConstruction construction(builder, location);
+    auto lookup = [&](Id id) { return construction.input(memo.lookup(id)); };
+    return constructNode(node, construction, builder.getContext(), lookup).value;
+}
+detail::ScalarToken RegionExpressions::constructNode(const Node& node, detail::ScalarConstruction& construction,
+    MLIRContext* context, llvm::function_ref<detail::ScalarToken(Id)> lookup,
+    const detail::ScalarToken* input) const
+{
     // DenseMap reserves UINT32_MAX; absent operands must never be looked up.
-    Value a = node.a == invalid ? Value() : memo.lookup(node.a);
-    Value b = node.b == invalid ? Value() : memo.lookup(node.b);
-    Value c = node.c == invalid ? Value() : memo.lookup(node.c);
+    auto a = node.a == invalid ? detail::ScalarToken{} : lookup(node.a);
+    auto b = node.b == invalid ? detail::ScalarToken{} : lookup(node.b);
+    auto c = node.c == invalid ? detail::ScalarToken{} : lookup(node.c);
     switch (node.kind) {
-        case Kind::Integer: return emitInteger(node, builder, location, memo);
+        case Kind::Integer: return constructInteger(node, construction, context, lookup);
         case Kind::Constant:
-            if (node.boolean) { return builder.create<arith::ConstantIntOp>(location, node.literal, 1); }
-            return builder.create<arith::ConstantOp>(location, builder.getIndexType(),
-                IntegerAttr::get(builder.getIndexType(), APInt(64, node.literal)));
-        case Kind::Input:
-            if (node.value.getType().isIndex() || node.boolean) { return node.value; }
-            return builder.create<arith::IndexCastUIOp>(location, builder.getIndexType(), node.value);
-        case Kind::Add: return builder.create<arith::AddIOp>(location, a, b);
-        case Kind::Sub: return builder.create<arith::SubIOp>(location, a, b);
-        case Kind::Div: return builder.create<arith::DivUIOp>(location, a, b);
-        case Kind::Rem: return builder.create<arith::RemUIOp>(location, a, b);
-        case Kind::Lt: return builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::ult, a, b);
-        case Kind::Le: return builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::ule, a, b);
-        case Kind::Eq: return builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq, a, b);
-        case Kind::SLt: return builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::slt, a, b);
-        case Kind::SLe: return builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::sle, a, b);
-        case Kind::And: return builder.create<arith::AndIOp>(location, a, b);
-        case Kind::Or: return builder.create<arith::OrIOp>(location, a, b);
+            if (node.boolean) { return construction.boolean(node.literal); }
+            return construction.number(static_cast<int64_t>(node.literal));
+        case Kind::Input: {
+            auto source = input ? *input : construction.input(node.value);
+            if (node.value.getType().isIndex() || node.boolean) { return source; }
+            return construction.cast<arith::IndexCastUIOp>(IndexType::get(context), source);
+        }
+        case Kind::Add: return construction.binary<arith::AddIOp>(a, b);
+        case Kind::Sub: return construction.binary<arith::SubIOp>(a, b);
+        case Kind::Div: return construction.binary<arith::DivUIOp>(a, b);
+        case Kind::Rem: return construction.binary<arith::RemUIOp>(a, b);
+        case Kind::Lt: return construction.compare(arith::CmpIPredicate::ult, a, b);
+        case Kind::Le: return construction.compare(arith::CmpIPredicate::ule, a, b);
+        case Kind::Eq: return construction.compare(arith::CmpIPredicate::eq, a, b);
+        case Kind::SLt: return construction.compare(arith::CmpIPredicate::slt, a, b);
+        case Kind::SLe: return construction.compare(arith::CmpIPredicate::sle, a, b);
+        case Kind::And: return construction.binary<arith::AndIOp>(a, b);
+        case Kind::Or: return construction.binary<arith::OrIOp>(a, b);
         case Kind::Not:
-            return builder.create<arith::XOrIOp>(location, a, builder.create<arith::ConstantIntOp>(location, 1, 1));
-        case Kind::Select: return builder.create<arith::SelectOp>(location, a, b, c);
-        default: return {};
+            return construction.binary<arith::XOrIOp>(a, construction.boolean(true));
+        case Kind::Select: return construction.select(a, b, c);
     }
+    return {};
 }
 FailureOr<Value> RegionExpressions::emit(Id expression, OpBuilder& builder, Operation* cut,
     llvm::DenseMap<Id, Value>& memo)
@@ -813,18 +825,23 @@ SmallVector<std::pair<RegionExpressions::Id, Value>> RegionExpressions::referenc
     ArrayRef<Id> roots, uint64_t* visits) const
 {
     SmallVector<std::pair<Id, Value>> result;
+    const auto count = visitReferenced(roots, [&](Id id) {
+        if (nodes[id].kind == Kind::Input) { result.push_back({id,nodes[id].value}); }
+    });
+    if (visits) { *visits = count; }
+    llvm::sort(result,[](const auto& a,const auto& b) { return a.first < b.first; });
+    return result;
+}
+uint64_t RegionExpressions::visitReferenced(ArrayRef<Id> roots, llvm::function_ref<void(Id)> visitor) const
+{
     SmallVector<Id> pending(roots.begin(), roots.end());
     llvm::DenseSet<Id> seen;
     while (!pending.empty()) {
         auto id = pending.pop_back_val();
         if (!valid(id) || !seen.insert(id).second) { continue; }
-        if (nodes[id].kind == Kind::Input) { result.push_back({id,nodes[id].value}); }
-        appendOperands(nodes[id],pending);
+        visitor(id);
+        appendOperands(nodes[id], pending);
     }
-    if (visits) {
-        *visits = seen.size();
-    }
-    llvm::sort(result,[](const auto& a,const auto& b) { return a.first < b.first; });
-    return result;
+    return seen.size();
 }
 } // namespace mlir::pto::frontiersynch

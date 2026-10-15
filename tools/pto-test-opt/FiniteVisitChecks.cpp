@@ -133,6 +133,10 @@ fs::RegionalAnalysis makeType(std::shared_ptr<fs::RegionExpressions> arena,
 bool checkWord(const fs::FiniteVisitDemands& library, llvm::ArrayRef<unsigned> word,
                uint64_t& pairsChecked)
 {
+    if (!library.original || library.original->types.empty()) { return false; }
+    const auto types = library.original->types.size();
+    if (types > typeCount || library.boundaries.size() != types * types ||
+        llvm::any_of(word, [&](unsigned type) { return type >= types; })) { return false; }
     auto& e = *library.original->types.front().body.expressions;
     const auto& extra = library.original->prerequisites;
     const auto expected = unfolded(word, true, extra), native = unfolded(word, false, extra);
@@ -148,7 +152,7 @@ bool checkWord(const fs::FiniteVisitDemands& library, llvm::ArrayRef<unsigned> w
             demands.emplace(offset + edge.first, offset + edge.second);
         }
         if (!visit) { continue; }
-        const auto& boundary = library.boundaries[word[visit-1] * typeCount + word[visit]];
+        const auto& boundary = library.boundaries[word[visit-1] * types + word[visit]];
         if (boundary.sourceType != word[visit-1] || boundary.targetType != word[visit]) { return false; }
         for (bool isNative : {false, true}) {
             const auto& crossings = isNative ? boundary.native : boundary.demands;
@@ -267,6 +271,52 @@ bool uniformlyOptional(func::FuncOp function, const fs::FiniteVisitInput& good)
     }
     uint64_t checked = 0;
     return checkWord(library, {0, 2, 1, 0}, checked);
+}
+bool rectangularRefresh(func::FuncOp function, const fs::FiniteVisitInput& good)
+{
+    // Vary the two independent directory axes. Repeating an identical access
+    // pattern on disjoint bytes preserves the raw-conflict graph oracle.
+    for (auto [types, cells] : {std::pair<unsigned, unsigned>{2, 1}, {2, 3}, {3, 1}, {3, 4}}) {
+        auto input = good;
+        input.types.resize(types);
+        for (auto& type : input.types) {
+            const auto prototype = type.body.storageBoundary.front();
+            type.body.storageBoundary.clear();
+            for (unsigned cell = 0; cell < cells; ++cell) {
+                auto boundary = prototype;
+                boundary.cell.begin = 16 * cell; boundary.cell.end = 16 * cell + 8;
+                type.body.storageBoundary.push_back(std::move(boundary));
+            }
+        }
+        auto library = fs::buildFiniteVisitDemands(function, input);
+        if (!library.error.empty() || library.persistentCells.size() != cells ||
+            library.boundaries.size() != types * types || library.cost.pairReductions != types * types) {
+            llvm::errs() << "finite visit rectangular refresh " << types << "x" << cells
+                         << ": " << library.error << "\n"; return false;
+        }
+        uint64_t checked = 0;
+        for (unsigned first = 0; first < types; ++first) {
+            for (unsigned second = 0; second < types; ++second) {
+                if (!checkWord(library, {first, second, first}, checked)) { return false; }
+            }
+        }
+        // Removing any one type/cell refresh violates precisely the common
+        // persistent-set premise, including off-diagonal directory entries.
+        for (unsigned type = 0; type < types; ++type) {
+            for (unsigned cell = 0; cell < cells; ++cell) {
+                auto missing = input;
+                auto& boundary = missing.types[type].body.storageBoundary[cell];
+                boundary.firstWriters.clear(); boundary.lastWriters.clear();
+                auto refused = fs::buildFiniteVisitDemands(function, std::move(missing));
+                if (refused.error != "finite visit types do not certify a common persistent refresh set" ||
+                    !refused.boundaries.empty() || !refused.original) {
+                    llvm::errs() << "finite visit accepted missing refresh at type " << type
+                                 << " cell " << cell << "\n"; return false;
+                }
+            }
+        }
+    }
+    return true;
 }
 bool additionalCases(func::FuncOp function, const fs::FiniteVisitInput& good)
 {
@@ -432,7 +482,7 @@ bool runFiniteVisitChecks(MLIRContext* context)
     // no new expression or analysis is needed to select their recipes.
     if (arena->size() != nodes || library.cost.pairReductions != typeCount*typeCount ||
         !rejectedInputs(function, input) || !additionalCases(function, input) ||
-        !uniformlyOptional(function, input)) { return false; }
+        !rectangularRefresh(function, input) || !uniformlyOptional(function, input)) { return false; }
     for (unsigned mode = 0; mode < 3; ++mode) {
         if (!originalIR(context, mode)) {
             llvm::errs() << "finite visit original-IR mode " << mode << " failed\n";

@@ -14,6 +14,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/CountedLoop.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RecognitionInternal.h"
+#include "BoundedMandatoryTransportChecks.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/BitVector.h"
@@ -420,11 +421,17 @@ std::optional<bool> evaluateMacroComposition(fs::RegionExpressions& e, fs::Regio
     if (!result || *result > 1) { return std::nullopt; }
     return *result != 0;
 }
-bool macroSitePresent(const fs::BoundedLifetimeRecognition& recognized, unsigned site, bool enabled)
+std::optional<bool> macroSitePresent(const fs::BoundedLifetimeRecognition& recognized, scf::ForOp loop,
+    unsigned site, unsigned visit, unsigned trips, bool enabled)
 {
     for (auto guard = recognized.skeleton.phases[site].guard; guard;
         guard = recognized.skeleton.guards[*guard].parent) {
-        if (recognized.skeleton.guards[*guard].takeThen != enabled) { return false; }
+        const auto& condition = recognized.skeleton.guards[*guard];
+        // The external bit controls opaque floating predicates only. Integer
+        // guards are original program arithmetic at this exact occurrence.
+        auto value = scalar(condition.condition, loop, visit, trips, enabled ? 1 : 0);
+        if (!value) { return std::nullopt; }
+        if (condition.takeThen != value->getBoolValue()) { return false; }
     }
     return true;
 }
@@ -456,7 +463,8 @@ bool checkMacroCrossings(fs::SequenceAnalysis& composed, const fs::BoundedLifeti
     for (unsigned trips : {0U, 1U, 2U, 5U}) {
         for (bool enabled : {false, true}) {
             for (unsigned site : sites) {
-                const auto ordinal = e.constant(incoming || !trips ? 0 : trips - 1);
+                const unsigned visit = incoming || !trips ? 0 : trips - 1;
+                const auto ordinal = e.constant(visit);
                 fs::SequenceEvent inner{1, site, ordinal, incoming ? fs::PeriodicEventKind::Start :
                     fs::PeriodicEventKind::Completion};
                 fs::SequenceEvent outer{incoming ? 0U : 2U, 0, e.constant(0), incoming ?
@@ -465,10 +473,18 @@ bool checkMacroCrossings(fs::SequenceAnalysis& composed, const fs::BoundedLifeti
                     fs::sequenceEventReachability(composed, inner, outer);
                 if (!query) { return false; }
                 auto value = evaluateMacroComposition(e, *query, demands.loop, trips, enabled);
-                const bool expected = trips && macroSitePresent(recognized, site, enabled);
+                auto present = trips ? macroSitePresent(recognized, demands.loop, site, visit, trips, enabled) :
+                    std::optional<bool>(false);
+                if (!present) {
+                    llvm::errs() << "macro parent oracle cannot evaluate original guard\n";
+                    return false;
+                }
+                const bool expected = *present;
                 if (!value || *value != expected) {
                     llvm::errs() << "macro parent crossing mismatch site=" << site << " trips=" << trips
-                                 << " incoming=" << incoming << " enabled=" << enabled << "\n";
+                                 << " incoming=" << incoming << " enabled=" << enabled
+                                 << " expected=" << expected << " actual=" << (value ? (*value ? 1 : 0) : -1)
+                                 << "\n";
                     return false;
                 }
                 ++count;
@@ -507,7 +523,12 @@ bool checkMacroComposition(const fs::BoundedLifetimeDemandResult& demands,
 bool checkBoundedRegionalQueries(const fs::BoundedLifetimeDemandResult& demands,
     const fs::BoundedLifetimeRecognition& recognized, const fs::PhaseIndex& index, fs::RegionalAnalysis& queries)
 {
-    if (!checkWriterCoverage(demands, recognized)) { return false; }
+    auto fail = [](StringRef stage) {
+        llvm::errs() << "bounded query check failed: " << stage << "\n";
+        return false;
+    };
+    if (!checkMandatoryTransport()) { return fail("mandatory transport independent controls"); }
+    if (!checkWriterCoverage(demands, recognized)) { return fail("writer coverage independent controls"); }
     APInt lower, step;
     auto loop = demands.loop;
     if (!matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) || !lower.isZero() ||
@@ -517,7 +538,7 @@ bool checkBoundedRegionalQueries(const fs::BoundedLifetimeDemandResult& demands,
     auto& e = *queries.expressions;
     fs::RegionalEvent source{0, e.constant(0), fs::PeriodicEventKind::Start};
     auto target = source;
-    if (!fs::regionalReachability(queries, source, target)) { return false; }
+    if (!fs::regionalReachability(queries, source, target)) { return fail("initial reflexive regional query"); }
     // Native same-pipe kinds must retain their small coordinate/presence
     // formula even for symbolic ordinals; no window-reachability substitution
     // is necessary. The full graph oracle below independently checks semantics.
@@ -530,18 +551,76 @@ bool checkBoundedRegionalQueries(const fs::BoundedLifetimeDemandResult& demands,
                            std::make_pair(fs::PeriodicEventKind::Start, fs::PeriodicEventKind::Completion),
                            std::make_pair(fs::PeriodicEventKind::Completion, fs::PeriodicEventKind::Completion)}) {
             auto native = fs::regionalReachability(queries, {site, first, kinds.first}, {site, next, kinds.second});
-            if (!native) { return false; }
+            if (!native) {
+                llvm::errs() << "bounded native query unavailable site=" << site
+                             << " kinds=" << unsigned(kinds.first) << ":" << unsigned(kinds.second) << "\n";
+                return false;
+            }
         }
     }
     if (e.size() - beforeNative > 16) {
         llvm::errs() << "bounded native query expanded its window: " << e.size() - beforeNative << " nodes\n";
         return false;
     }
+    // The production Delta fixture's unconditional tadd and tstore are linked
+    // through later native V completions and the final conversion's RAW edge.
+    // The transport proof must cover every physical residue before replacing
+    // this symbolic same-visit C->I query. The raw-conflict oracle below checks
+    // actual reachability independently, including absent visits and branches.
+    auto originalSite = [&](StringRef name) -> std::optional<uint32_t> {
+        Operation* original = nullptr;
+        for (auto& operation : *loop.getBody()) {
+            if (operation.getName().getStringRef() != name) { continue; }
+            if (original) { return std::nullopt; }
+            original = &operation;
+        }
+        if (!original) { return std::nullopt; }
+        std::optional<uint32_t> site;
+        for (auto [id, anchor] : llvm::enumerate(demands.anchors)) {
+            if (!anchor.phase || anchor.phase->elementOp != original) { continue; }
+            if (site || id > UINT32_MAX) { return std::nullopt; }
+            site = static_cast<uint32_t>(id);
+        }
+        return site;
+    };
+    // Resolve exact original operations through this export's phase inventory;
+    // global, local and macro-envelope site numbers are not interchangeable.
+    const auto producer = originalSite("pto.tadd"), consumer = originalSite("pto.tstore");
+    if (!producer || !consumer || *producer >= demands.unconditional.size() ||
+        *consumer >= demands.unconditional.size() || !demands.unconditional[*producer] ||
+        !demands.unconditional[*consumer]) {
+        return fail("production mandatory-query source/target fixture premises");
+    }
+    const auto beforeMandatory = e.size();
+    const fs::RegionalEvent mandatorySource{*producer, first, fs::PeriodicEventKind::Completion};
+    const fs::RegionalEvent mandatoryTarget{*consumer, first, fs::PeriodicEventKind::Start};
+    auto mandatory = fs::regionalReachability(queries, mandatorySource, mandatoryTarget);
+    if (!mandatory || e.size() - beforeMandatory > 16) {
+        llvm::errs() << "bounded mandatory query expanded its window\n"; return false;
+    }
+    const auto retainedSize = e.size();
+    for (unsigned retry = 0; retry < 32; ++retry) {
+        if (fs::regionalReachability(queries, mandatorySource, mandatoryTarget) != mandatory ||
+            e.size() != retainedSize) { return fail("mandatory query cache identity or construction growth"); }
+    }
+    for (uint64_t count : {0U, 1U, 2U, 5U}) {
+        for (uint64_t visit = 0; visit <= count; ++visit) {
+            fs::RegionExpressions::Substitution bindings({{first, e.constant(visit)},
+                {e.input(loop.getUpperBound()), e.constant(count)}});
+            const auto actual = e.constantValue(e.substitute(*mandatory, bindings));
+            if (actual != uint64_t(visit < count)) {
+                llvm::errs() << "bounded mandatory query evaluation trips=" << count << " visit=" << visit
+                             << " actual=" << (actual ? std::to_string(*actual) : "unavailable")
+                             << " expected=" << uint64_t(visit < count) << "\n";
+                return false;
+            }
+        }
+    }
     source.visits.push_back(e.constant(0));
-    if (fs::regionalReachability(queries, source, target)) { return false; }
+    if (fs::regionalReachability(queries, source, target)) { return fail("unexpected extra-visit query accepted"); }
     source.visits.clear(); source.kind = static_cast<fs::PeriodicEventKind>(255);
     target.ordinal = e.constant(2 * recognized.refresh.span + 10);
-    if (fs::regionalReachability(queries, source, target)) { return false; }
+    if (fs::regionalReachability(queries, source, target)) { return fail("invalid event-kind query accepted"); }
     // A read-only cell used only under an arbitrary branch has no bounded
     // fringe certificate. Refusing that stronger export must preserve queries.
     auto missing = recognized;
@@ -561,15 +640,17 @@ bool checkBoundedRegionalQueries(const fs::BoundedLifetimeDemandResult& demands,
         std::string error;
         llvm::errs() << "bounded negative selector begin\n";
         auto failedSelectors = fs::boundedLifetimeRegionalSelectors(demands, missing, queries, error);
-        if (succeeded(failedSelectors) || error.empty() || !e.constructionError().empty()) { return false; }
+        if (succeeded(failedSelectors) || error.empty() || !e.constructionError().empty()) {
+            return fail("negative selector export did not preserve the precise refusal contract");
+        }
         auto retained = fs::regionalReachability(queries,
             {0, e.constant(0), fs::PeriodicEventKind::Start}, {0, e.constant(0), fs::PeriodicEventKind::Completion});
-        if (!retained) { return false; }
+        if (!retained) { return fail("negative selector export lost retained reachability"); }
         // Traverse every input, including abandoned proof expressions.
         SmallVector<fs::RegionExpressions::Id> roots;
         for (fs::RegionExpressions::Id root = 0; root < e.size(); ++root) { roots.push_back(root); }
         fs::RegionExpressions ownershipProbe;
-        if (failed(ownershipProbe.import(e, roots))) { return false; }
+        if (failed(ownershipProbe.import(e, roots))) { return fail("negative selector export left unowned inputs"); }
         llvm::errs() << "bounded negative selector checked\n";
         injectedFailure = true;
         break;
@@ -579,7 +660,11 @@ bool checkBoundedRegionalQueries(const fs::BoundedLifetimeDemandResult& demands,
     for (unsigned trips : {0u, 1u, 2u, 3u, static_cast<unsigned>(2 * recognized.refresh.span + 3),
             static_cast<unsigned>(2 * recognized.refresh.span + 4)}) {
         for (unsigned pattern = 0; pattern < 4; ++pattern) {
-            if (!check(demands, recognized, index, queries, trips, pattern, count)) { return false; }
+            if (!check(demands, recognized, index, queries, trips, pattern, count)) {
+                llvm::errs() << "bounded independent graph check failed trips=" << trips
+                             << " pattern=" << pattern << " completed-comparisons=" << count << "\n";
+                return false;
+            }
         }
     }
     llvm::outs() << "bounded-query independent event comparisons=" << count << "\n";
@@ -589,6 +674,12 @@ bool checkBoundedRegionalQueries(const fs::BoundedLifetimeDemandResult& demands,
 bool checkBoundedMacroSelectors(const fs::BoundedLifetimeDemandResult& demands,
     const fs::BoundedLifetimeRecognition& recognized, const fs::PhaseIndex& index, fs::RegionalAnalysis& queries)
 {
+    if (auto expected = demands.function->getAttrOfType<BoolAttr>("test.coordinate_substitution_stable")) {
+        if (queries.capabilities.substitutionStableQueries != expected.getValue()) {
+            llvm::errs() << "bounded coordinate substitution qualification mismatch\n";
+            return false;
+        }
+    }
     if (!queries.capabilities.exactSelectors || !recognized.physical) { return false; }
     bool simultaneousWriters = false, simultaneousReaderWriter = false;
     const auto& effects = demands.input->accesses().effects();

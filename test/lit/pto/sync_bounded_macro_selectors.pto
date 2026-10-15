@@ -12,6 +12,9 @@
 // CHECK: bounded-selectors region={{[0-9]+}} established=1
 // CHECK: bounded macro selectors: simultaneous writers=1 reader-writer=1
 // CHECK: bounded macro composition comparisons=
+// CHECK: bounded-selectors region={{[0-9]+}} established=1
+// CHECK: bounded macro selectors: simultaneous writers=1 reader-writer=0
+// CHECK: bounded macro composition comparisons=
 // Partial physical overlap selects the bounded physical-cell route. Two
 // invocations in each visit distinguish macro identity from pipe/site order;
 // the oracle checks zero, one and repeated visits against all boundary members.
@@ -22,7 +25,8 @@
 !count = !pto.tile_buf<vec, 1x8xi32>
 !scratch = !pto.tile_buf<vec, 1x256xi8>
 module attributes {pto.target_arch = "a3"} {
-  func.func @scatter_boundaries(%n: index, %flag: f32) attributes {test.bounded_macro_selectors} {
+  func.func @scatter_boundaries(%n: index, %flag: f32) attributes {
+      test.bounded_macro_selectors, test.coordinate_substitution_stable = false} {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %a = arith.constant 0 : i64
@@ -50,7 +54,7 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
   func.func @gather_boundaries(%n: index) attributes {
-      test.bounded_macro_selectors, test.bounded_macro_readers} {
+      test.bounded_macro_selectors, test.bounded_macro_readers, test.coordinate_substitution_stable = true} {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %a = arith.constant 0 : i64
@@ -70,6 +74,34 @@ module attributes {pto.target_arch = "a3"} {
       pto.tgather ins(%src, %key, %tmp : !float, f32, !scratch) outs(%dst, %count : !words, !count)
     }
     pto.tadds ins(%dst, %value : !words, i32) outs(%dst : !words)
+    return
+  }
+  func.func @modular_boundaries(%n: index, %flag: f32) attributes {
+      test.bounded_macro_selectors, test.coordinate_substitution_stable = true} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %a = arith.constant 0 : i64
+    %b = arith.constant 64 : i64
+    %c = arith.constant 128 : i64
+    %d = arith.constant 160 : i64
+    %value = arith.constant 1.0 : f16
+    %test = arith.constant 0.0 : f32
+    %src = pto.alloc_tile addr = %a : !half
+    %idx = pto.alloc_tile addr = %b : !indices
+    %dst = pto.alloc_tile addr = %c : !half
+    %overlap = pto.alloc_tile addr = %d : !half
+    pto.tadds ins(%dst, %value : !half, f16) outs(%dst : !half)
+    scf.for %i = %zero to %n step %one {
+      pto.tscatter ins(%src, %idx : !half, !indices) outs(%dst : !half)
+      pto.tadds ins(%dst, %value : !half, f16) outs(%overlap : !half)
+      pto.tadds ins(%dst, %value : !half, f16) outs(%src : !half)
+      %guard = arith.cmpi slt, %i, %one : index
+      scf.if %guard {
+        pto.tscatter ins(%src, %idx : !half, !indices) outs(%dst : !half)
+      }
+      pto.tscatter ins(%src, %idx : !half, !indices) outs(%dst : !half)
+    }
+    pto.tadds ins(%dst, %value : !half, f16) outs(%dst : !half)
     return
   }
 }

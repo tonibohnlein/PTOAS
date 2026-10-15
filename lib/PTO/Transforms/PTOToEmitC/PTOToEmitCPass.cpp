@@ -621,6 +621,12 @@ struct EmitPTOManualPass
     LLVM_DEBUG(llvm::dbgs() << "DEBUG: Start PTOToEmitC Pass\n");
     MLIRContext *ctx = &getContext();
     ModuleOp mop = getOperation();
+    bool deferredFamilies = false;
+    mop.walk([&](pto::LogicalFamilyOp op) {
+      op.emitError("deferred logical families require pto-frontier-allocate before device lowering");
+      deferredFamilies = true;
+    });
+    if (deferredFamilies) { return signalPassFailure(); }
     if (failed(validateAndAnnotate(mop))) {
       return signalPassFailure();
     }

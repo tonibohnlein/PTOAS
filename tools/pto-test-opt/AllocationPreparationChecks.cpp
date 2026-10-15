@@ -15,6 +15,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionalAllocationCandidates.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/AllocationInputCache.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/SaveAndRestore.h"
 namespace {
 namespace fs = mlir::pto::frontiersynch;
 using Summary = std::shared_ptr<fs::RegionalAllocationSummary>;
@@ -63,10 +64,14 @@ bool runAllocationPreparationChecks()
     });
     const auto independent = fs::AllocationStrength::Independent;
     const auto stronger = fs::AllocationStrength::Shared;
+    if (parent.allocationPreparation.retained(independent) ||
+        parent.allocationPreparation.retained(stronger) || cheap || shared) { return false; }
     auto first = fs::requestAllocationSummary(parent, independent);
     if (!first || first->groups.front().budget != 7 || cheap != 1 || shared || parent.regionalAllocation ||
         !parent.allocationPreparation || !child.allocationPreparation) { return false; }
-    if (fs::requestAllocationSummary(parent, independent) != first || cheap != 1) { return false; }
+    if (parent.allocationPreparation.retained(independent) != first ||
+        parent.allocationPreparation.retained(stronger) ||
+        fs::requestAllocationSummary(parent, independent) != first || cheap != 1) { return false; }
     auto second = fs::requestAllocationSummary(parent, stronger);
     if (!second || second->groups.front().budget != 6 || cheap != 1 || shared != 1 ||
         parent.allocationPreparation || child.allocationPreparation) { return false; }
@@ -88,7 +93,9 @@ bool runAllocationPreparationChecks()
         ++attempts; return strength == stronger ? palette(1) : Summary{};
     });
     auto selected = fs::requestAllocationSummary(direct, stronger);
-    if (!selected || fs::requestAllocationSummary(direct, independent) != selected || attempts != 3) { return false; }
+    if (!selected || direct.allocationPreparation.retained(independent) != selected ||
+        direct.allocationPreparation.retained(stronger) != selected ||
+        fs::requestAllocationSummary(direct, independent) != selected || attempts != 3) { return false; }
     // Legacy producers stay one-shot. Moving a capability into a regional view
     // preserves its ownership and does not materialize deferred scalar code.
     fs::PreparedLogicalPlan legacy(0);
@@ -143,6 +150,31 @@ bool runRegionalAllocationCandidateChecks(mlir::func::FuncOp function,
     const auto endpoints = plan.endpoints.size();
     auto cheap = fs::requestAllocationSummary(plan, fs::AllocationStrength::Independent);
     if (fs::requestAllocationSummary(plan, fs::AllocationStrength::Independent) != cheap) { return false; }
+    if (!cheap || !plan.allocationPreparation.retainedCertificates(plan).empty()) { return false; }
+    mlir::DictionaryAttr completed;
+    {
+        llvm::SaveAndRestore<Summary> selected(plan.regionalAllocation, cheap);
+        // This explicitly requested parent export performs the real proof.
+        // Subsequent candidate selection must reuse its completed evidence.
+        completed = fs::regionalBaseAllocationCertificate(*region, plan);
+    }
+    const auto retained = plan.allocationPreparation.retainedCertificates(plan);
+    if (!completed || retained.size() != 1 || retained.front().owner != cheap ||
+        retained.front().evidence != completed) { return false; }
+    mlir::NamedAttrList otherScope(completed);
+    otherScope.set("test_completed_scope", mlir::UnitAttr::get(function.getContext()));
+    const auto scoped = otherScope.getDictionary(function.getContext());
+    plan.allocationPreparation.retainCertificate(plan, palette(1), scoped);
+    if (plan.allocationPreparation.retainedCertificates(plan).size() != 1) { return false; }
+    plan.allocationPreparation.retainCertificate(plan, cheap, scoped, {0, 1});
+    if (plan.allocationPreparation.retainedCertificates(plan).size() != 1 ||
+        plan.allocationPreparation.retainedCertificates(plan, {0, 1}).size() != 2 ||
+        plan.allocationPreparation.retainedCertificates(plan, {1, 0}).size() != 1) { return false; }
+    {
+        llvm::SaveAndRestore<bool> changed(plan.completeInvocation, !plan.completeInvocation);
+        if (!plan.allocationPreparation.retainedCertificates(plan).empty()) { return false; }
+    }
+    if (plan.allocationPreparation.retainedCertificates(plan).size() != 1) { return false; }
     // Keep a separate incumbent on the same retained mathematical result.
     // It establishes that the default split-pipeline request still works.
     auto incumbent = analysis.prepareLogical(outcome);
@@ -164,10 +196,30 @@ bool runRegionalAllocationCandidateChecks(mlir::func::FuncOp function,
     if (!cheap || plan.regionalAllocation != cheap || plan.familyRecipe != recipe ||
         plan.preparation.size() != prepared ||
         plan.endpoints.size() != endpoints || plan.allocationPreparation || render() != original) { return false; }
+    // The callback is gone, but its proof-only archive survives. Capacity
+    // partitions and original source owners remain exact after this transfer.
+    const auto archived = plan.allocationPreparation.retainedCertificates(plan);
+    if (archived.size() != 1 || archived.front().owner != cheap || archived.front().evidence != completed ||
+        plan.allocationPreparation.retainedCertificates(plan, {0, 1}).size() != 2 ||
+        plan.allocationPreparation.retainedCertificates(plan, {1, 0}).size() != 1) { return false; }
     auto unrestricted = analysis.prepareLogical(outcome);
     if (mlir::failed(unrestricted) || mlir::failed(analysis.attachAllocation(outcome, **unrestricted)) ||
         (*unrestricted)->allocationCertificate != (*incumbent)->allocationCertificate ||
         analysis.constructionCounts().mathematicalAttempts != attempts) { return false; }
+    auto consumed = analysis.prepareLogical(outcome);
+    if (mlir::failed(consumed) || mlir::failed(fs::normalizeLogicalFamilies(**consumed))) { return false; }
+    auto consumedSource = fs::requestAllocationSummary(**consumed, fs::AllocationStrength::Independent);
+    mlir::DictionaryAttr consumedEvidence;
+    {
+        llvm::SaveAndRestore<Summary> selected((*consumed)->regionalAllocation, consumedSource);
+        consumedEvidence = fs::regionalBaseAllocationCertificate(*region, **consumed);
+    }
+    if (!consumedEvidence) { return false; }
+    fs::prepareAllocationSupport(**consumed);
+    const auto preserved = (*consumed)->allocationPreparation.retainedCertificates(**consumed);
+    if ((*consumed)->allocationPreparation || !llvm::any_of(preserved, [&](const auto& entry) {
+            return entry.owner == consumedSource && entry.evidence == consumedEvidence;
+        }) || render() != original) { return false; }
     llvm::errs() << "regional-allocation-candidates: independent=" << bool(cheap)
                  << "; selected certificate without scalar materialization\n";
     return true;

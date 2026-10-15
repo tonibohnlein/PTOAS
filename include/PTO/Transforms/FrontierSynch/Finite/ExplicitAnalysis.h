@@ -50,7 +50,9 @@ std::optional<bool> explicitEventPrecedes(const ExplicitAnalysis& analysis,
                                         PeriodicEvent source, PeriodicEvent target);
 std::optional<bool> explicitEventPrecedes(const ExplicitReduction& reduction,
                                         PeriodicEvent source, PeriodicEvent target);
-// Whole-function route only. Preparation is detached and failure changes no IR.
+// Retain original-cut singleton recipes without generated SSA. Whole-function
+// and exact regional callers share this producer; composition owns invocation
+// masking/namespace translation. Failure changes no original IR.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
     func::FuncOp function, const ExplicitAnalysis& analysis, bool includeAllocation = true);
 } // namespace mlir::pto::frontiersynch

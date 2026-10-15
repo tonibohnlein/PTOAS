@@ -2739,6 +2739,22 @@ class PTO_LogicalSyncOp<string mnemonic> : PTO_Op<mnemonic> {
   }];
 }
 
+def LogicalFamilyOp : PTO_Op<"logical_family"> {
+  let summary = "Retain numerical logical endpoint recipes at an original cut";
+  let description = [{
+    Owns finite coordinate-selected synchronization pieces without materializing
+    their scalar guards or matching identities. The enclosing function carries
+    versioned family provenance and allocation evidence. Axes bind original loop
+    induction variables. This side-effecting logical artifact must be consumed
+    by physical allocation before device lowering; it is not a physical command.
+  }];
+  let arguments = (ins Variadic<Index>:$axes, I64Attr:$plan_id, I64Attr:$cut_id,
+                       DenseI64ArrayAttr:$axis_ids, ArrayAttr:$pieces);
+  let results = (outs);
+  let hasVerifier = 1;
+  let assemblyFormat = [{ `(` $axes `)` attr-dict `:` functional-type($axes, results) }];
+}
+
 def LogicalSetOp : PTO_LogicalSyncOp<"logical_set"> {
   let summary = "Publish a logical synchronization occurrence";
   let description = [{

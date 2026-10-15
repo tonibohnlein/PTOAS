@@ -24,6 +24,20 @@ struct IntegerAffine {
     std::vector<BoundInteger> coefficients;
     BoundInteger constant;
 };
+// Optional per-request observations. Cache hits do not replay earlier work;
+// recursive calls and candidates count only construction performed now.
+struct IntegerFeasibilityCost {
+    uint64_t calls = 0, cacheHits = 0, candidateSubstitutions = 0;
+    uint64_t equalityEliminations = 0, octagonalEliminations = 0;
+    uint64_t congruenceChecks = 0, congruenceMatrixColumns = 0;
+    uint64_t unaryDecisions = 0;
+};
+// Difference arrangement work only. Feasibility excludes prerequisite seed,
+// implication and axis-normalization checks; it measures constructed slices.
+struct IntegerDifferenceCost {
+    uint64_t requests = 0, seeds = 0, axes = 0, skippedAxes = 0, slices = 0, outputPieces = 0;
+    IntegerFeasibilityCost sliceFeasibility;
+};
 struct IntegerEliminationWitness;
 class IntegerSystem {
 public:
@@ -45,7 +59,7 @@ public:
     }
     // Representation/cache observation only; never invokes an emptiness solver.
     bool isKnownEmpty() const { return contradiction || (emptyCache && *emptyCache); }
-    bool isEmpty() const;
+    bool isEmpty(IntegerFeasibilityCost* cost = nullptr) const;
     FailureOr<IntegerSystem> intersect(const IntegerSystem& other) const;
     // Duplicates identify old coordinates; fresh coordinates are unconstrained.
     FailureOr<IntegerSystem> remap(unsigned newDimensions, llvm::ArrayRef<unsigned> oldToNew) const;
@@ -84,6 +98,7 @@ struct IntegerEliminationWitness {
 // fixed primitive coefficient bounds and fixed witness/projection depth.
 // Malformed schemas fail; no machine coefficient, period or branch-count cap.
 FailureOr<std::vector<IntegerSystem>> subtractIntegerUnions(
-    unsigned dimensions, llvm::ArrayRef<IntegerSystem> lhs, llvm::ArrayRef<IntegerSystem> rhs);
+    unsigned dimensions, llvm::ArrayRef<IntegerSystem> lhs, llvm::ArrayRef<IntegerSystem> rhs,
+    IntegerDifferenceCost* cost = nullptr);
 } // namespace mlir::pto::frontiersynch
 #endif

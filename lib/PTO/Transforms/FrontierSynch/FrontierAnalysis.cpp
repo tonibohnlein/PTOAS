@@ -16,7 +16,6 @@
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingAnalysis.h"
-#include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompactAllocation.h"
@@ -102,6 +101,7 @@ LogicalResult FrontierAnalysis::recognizeStructure() {
     auto recognized = recognizeProgram(function, *storage, *structuralIndex, ProgramRecognitionMode::Inventory);
     if (failed(recognized)) { return failure(); }
     program = std::make_shared<ProgramRecognition>(std::move(*recognized));
+    program->allocationPolicy = arithmeticAllocationPolicy();
     program->deferContractAudit = true;
     program->regionalArithmeticProfiles = regionalArithmeticProfiles;
     return success();
@@ -115,15 +115,21 @@ void FrontierAnalysis::recognizeForm(std::size_t region, ProgramForm form)
     if (program->nodes[region].attemptedForms & bit) { profile.cacheHit(); return; }
     profile.constructed();
     materializeProgramForm(*program, region, form, *structuralIndex, *storage);
+    if (sessionState) { sessionState->retainedEvidencePublished(); }
 }
 LogicalResult FrontierAnalysis::recognizeAllForms()
 {
     if (failed(recognizeStructure())) { return failure(); }
     AnalysisProfileScope profile(sessionState ? sessionState->ledger : nullptr, "form-audit");
+    std::vector<uint8_t> attempted;
+    for (const auto& node : program->nodes) { attempted.push_back(node.attemptedForms); }
     materializeAllProgramForms(*program, *structuralIndex, *storage);
+    if (sessionState && llvm::any_of(llvm::enumerate(program->nodes), [&](auto node) {
+            return attempted[node.index()] != node.value().attemptedForms;
+        })) { sessionState->retainedEvidencePublished(); }
     return success();
 }
-LogicalResult FrontierAnalysis::analyzeNumericCandidates() {
+LogicalResult FrontierAnalysis::auditNumericCandidates() {
     if (failed(recognizeStructure())) { return failure(); }
     const auto& index = *structuralIndex;
     for (auto [id, node] : llvm::enumerate(program->nodes)) {
@@ -135,10 +141,12 @@ LogicalResult FrontierAnalysis::analyzeNumericCandidates() {
             node.varyingRotating->result.state == RecognitionState::Applicable) {
             if (construction.varyingBoundaryReductions != UINT64_MAX) { ++construction.varyingBoundaryReductions; }
             node.varyingDemands = analyzeVaryingRotating(*node.varyingRotating, index, *storage);
+            sessionState->retainedEvidencePublished();
         }
         if (!node.numericTemplate || node.periodicAnalysis ||
             node.numericTemplate->result.state != RecognitionState::Applicable) { continue; }
         node.periodicAnalysis = analyzeNumericTemplate(*node.numericTemplate);
+        sessionState->retainedEvidencePublished();
         const auto& numeric = *node.numericTemplate;
         const bool whole = !node.unsupportedContext && !numeric.specializedBody && numeric.outer &&
             numeric.outer->getParentOp() == function.operator->() &&
@@ -150,21 +158,23 @@ LogicalResult FrontierAnalysis::analyzeNumericCandidates() {
     refreshProgramContractAudit(*program);
     return success();
 }
-LogicalResult FrontierAnalysis::prepareNumericCandidateExports() {
-    if (failed(analyzeNumericCandidates())) { return failure(); }
+LogicalResult FrontierAnalysis::auditNumericCandidateExports() {
+    if (failed(auditNumericCandidates())) { return failure(); }
     for (auto& node : program->nodes) {
         if (!node.numericTemplate || !node.periodicAnalysis || !node.periodicAnalysis->error.empty()) { continue; }
         if (!node.logicalEndpoints) {
             node.logicalEndpoints = buildNumericTemplateEndpoints(*node.numericTemplate, *node.periodicAnalysis);
+            sessionState->retainedEvidencePublished();
         }
         const bool endpointsAvailable = node.logicalEndpoints->logical.error.empty();
         if (!endpointsAvailable || node.periodicAllocation) { continue; }
         node.periodicAllocation = buildPeriodicAllocation(*node.periodicAnalysis);
+        sessionState->retainedEvidencePublished();
     }
     refreshProgramContractAudit(*program);
     return success();
 }
-LogicalResult FrontierAnalysis::analyzeExplicitFunction() {
+LogicalResult FrontierAnalysis::produceExplicitFunction() {
     if (!storage || function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         return failure();
     }
@@ -176,13 +186,14 @@ LogicalResult FrontierAnalysis::analyzeExplicitFunction() {
     if (explicitAnalysis->error.empty()) { recordWholeRegion(AnalysisBackend::Explicit); }
     return success(explicitAnalysis->error.empty());
 }
-SequenceAnalysis* FrontierAnalysis::analyzeSequenceFunction() {
+SequenceAnalysis* FrontierAnalysis::produceSequenceFunction() {
     if (failed(recognizeStructure())) { return nullptr; }
     if (!sequenceAnalysis) {
         if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
         sessionState->requestsStarted = true;
         sequenceAnalysis = std::make_shared<SequenceAnalysis>(analyzeSequenceRegionWithResolver(
             function, *storage, *program, 0, sessionState->expressions, structuralIndex, false, regionalResolver()));
+        if (sequenceAnalysis->error.empty()) { sessionState->retainedEvidencePublished(); }
         recordSequenceContractAttempt(*program, *storage, *sequenceAnalysis);
         if (program->sequenceContract && program->sequenceContract->membership == ContractStatus::Established &&
             program->sequenceContract->demands == ContractImplementation::Available) {
@@ -192,7 +203,7 @@ SequenceAnalysis* FrontierAnalysis::analyzeSequenceFunction() {
     }
     return &*sequenceAnalysis;
 }
-LogicalResult FrontierAnalysis::analyzeFiniteVisitCandidates()
+LogicalResult FrontierAnalysis::auditFiniteVisitCandidates()
 {
     if (failed(recognizeStructure())) { return failure(); }
     for (std::size_t id = 0; id < program->nodes.size(); ++id) {
@@ -208,6 +219,7 @@ LogicalResult FrontierAnalysis::analyzeFiniteVisitCandidates()
             analyzeFiniteVisitLoop(function, *storage, *program, *candidate.node, structuralIndex,
                 [this](std::size_t id, ProgramForm form) { recognizeForm(id, form); }));
         finiteVisitAnalyses.emplace(*candidate.node, std::move(result));
+        sessionState->retainedEvidencePublished();
     }
     for (auto& candidate : program->finiteVisitContracts) {
         if (!candidate.node) { continue; }
@@ -216,16 +228,6 @@ LogicalResult FrontierAnalysis::analyzeFiniteVisitCandidates()
     }
     refreshProgramContractAudit(*program);
     return success();
-}
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareBoundedLifetimeFunction(std::string& error)
-{
-    if (failed(recognizeStructure())) { return failure(); }
-    for (std::size_t id = 0; id < program->nodes.size(); ++id) {
-        if (program->nodes[id].kind == StructureKind::Loop) { recognizeForm(id, ProgramForm::BoundedLifetime); }
-    }
-    auto prepared = prepareBoundedLifetimeInsertion(function, *storage, *program, error, &boundedAnalysis);
-    if (boundedAnalysis) { recordWholeRegion(AnalysisBackend::BoundedLifetime); }
-    return prepared;
 }
 uint64_t FrontierAnalysis::arithmeticRegionConstructions() const
 {
@@ -246,18 +248,20 @@ LogicalResult FrontierAnalysis::ensureArithmeticGenerators()
         if (!sessionState->differenceGenerators) {
             const auto protection = structuredProtection(storage->accesses());
             sessionState->differenceGenerators.emplace(analyzeDifferenceArithmeticGenerators(arithmetic, &protection));
+            sessionState->retainedEvidencePublished();
             if (sessionState->arithmeticGeneratorBuilds != UINT64_MAX) { ++sessionState->arithmeticGeneratorBuilds; }
         }
         return success();
     }
-    if (!arithmeticGeneratorStage) {
+    if (!sessionState->generalGenerators) {
         const auto protection = structuredProtection(storage->accesses());
-        arithmeticGeneratorStage.emplace(analyzeGeneralArithmeticGenerators(arithmetic, &protection));
+        sessionState->generalGenerators.emplace(analyzeGeneralArithmeticGenerators(arithmetic, &protection));
+        sessionState->retainedEvidencePublished();
         if (sessionState->arithmeticGeneratorBuilds != UINT64_MAX) { ++sessionState->arithmeticGeneratorBuilds; }
     }
     return success();
 }
-LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
+LogicalResult FrontierAnalysis::produceArithmeticPeriodicFunction()
 {
     if (failed(recognizeArithmetic()) || !program->arithmetic) { return failure(); }
     if (!arithmeticPeriodicAnalysis) {
@@ -271,7 +275,7 @@ LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
         if (failed(ensureArithmeticGenerators())) { return failure(); }
         auto converted = sessionState->differenceGenerators ?
             convertArithmeticPeriodicProgram(*program->arithmetic, *sessionState->differenceGenerators, {}, false) :
-            convertArithmeticPeriodicProgram(*program->arithmetic, *arithmeticGeneratorStage, {}, false);
+            convertArithmeticPeriodicProgram(*program->arithmetic, *sessionState->generalGenerators, {}, false);
         arithmeticPeriodicAnalysis = std::make_shared<ArithmeticPeriodicProgram>(std::move(converted));
     }
     const auto& conversion = arithmeticPeriodicAnalysis->conversion;
@@ -279,28 +283,7 @@ LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
     if (exact) { recordWholeRegion(AnalysisBackend::ArithmeticPeriodic); }
     return success(exact);
 }
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareArithmeticPeriodicFunction()
-{
-    if (failed(recognizeStructure())) { return failure(); }
-    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
-    sessionState->requestsStarted = true;
-    auto result = requestBackend(AnalysisBackend::ArithmeticPeriodic, {});
-    if (result.status != AnalysisStatus::Ready) { return failure(); }
-    periodicExports = {};
-    auto prepared = prepareLogical(result);
-    if (failed(prepared)) {
-        periodicExports.endpointError = "periodic original-cut endpoint export unavailable";
-        return failure();
-    }
-    periodicExports.endpointsAvailable = true;
-    auto allocation = attachAllocation(result, **prepared);
-    periodicExports.allocationAvailable = succeeded(allocation);
-    if (!periodicExports.allocationAvailable) {
-        periodicExports.allocationError = "periodic source-identity allocation certificate unavailable";
-    }
-    return prepared;
-}
-LogicalResult FrontierAnalysis::analyzeArithmeticFunction()
+LogicalResult FrontierAnalysis::produceArithmeticFunction()
 {
     if (failed(ensureArithmeticGenerators())) { return failure(); }
     if (sessionState->differenceGenerators) {
@@ -309,7 +292,7 @@ LogicalResult FrontierAnalysis::analyzeArithmeticFunction()
         if (exact) { recordWholeRegion(AnalysisBackend::Arithmetic); }
         return success(exact);
     }
-    generalArithmeticAnalysis = reduceGeneralArithmeticDemands(*arithmeticGeneratorStage);
+    generalArithmeticAnalysis = reduceGeneralArithmeticDemands(*sessionState->generalGenerators);
     const bool exact = generalArithmeticAnalysis && generalArithmeticAnalysis->error.empty() &&
                        generalArithmeticAnalysis->exactMinimum;
     if (exact) { recordWholeRegion(AnalysisBackend::Arithmetic); }
@@ -344,6 +327,7 @@ LogicalResult FrontierAnalysis::recognizeArithmetic() {
             selected->recognition.state == RecognitionState::Applicable) { break; }
     }
     program->arithmetic = std::move(selected);
+    if (sessionState && program->arithmetic) { sessionState->retainedEvidencePublished(); }
     refreshProgramContractAudit(*program);
     return success();
 }
@@ -384,6 +368,7 @@ const ArithmeticProgram* FrontierAnalysis::recognizeArithmeticRegion(std::size_t
             selected->recognition.state == RecognitionState::Applicable) { break; }
     }
     auto stored = arithmeticForms.emplace(region, std::move(selected));
+    if (sessionState) { sessionState->retainedEvidencePublished(); }
     refreshProgramContractAudit(*program);
     return stored.first->second.get();
 }
@@ -491,6 +476,8 @@ DictionaryAttr contractReport(const frontiersynch::ProgramRecognition& program, 
     }
     report.set("cost_estimates", b.getArrayAttr(estimates));
     report.set("mathematical_attempts", b.getI64IntegerAttr(counts.mathematicalAttempts));
+    report.set("request_walks", b.getI64IntegerAttr(counts.requestWalks));
+    report.set("exhausted_walk_hits", b.getI64IntegerAttr(counts.exhaustedWalkHits));
     report.set("logical_preparations", b.getI64IntegerAttr(counts.logicalPreparations));
     report.set("allocation_exports", b.getI64IntegerAttr(counts.allocationExports));
     report.set("physical_allocation", b.getStringAttr("not-requested"));
@@ -506,8 +493,13 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     func::FuncOp function, GMAliasPolicy policy,
     const std::optional<frontiersynch::ArithmeticLimits>& profile = std::nullopt, bool profileStages = false,
     bool prepareAllocation = true, ArrayRef<int64_t> allocationIds = {}, bool completeInvocation = false,
-    bool physicalOutput = false, bool completionOnly = false)
+    bool physicalOutput = false, bool completionOnly = false, bool deferredOutput = false,
+    frontiersynch::ArithmeticRegionalAllocationPolicy allocationPolicy =
+        frontiersynch::ArithmeticRegionalAllocationPolicy::SingleId)
 {
+    if (deferredOutput && completeInvocation) {
+        return function.emitError("deferred-output does not export closed child contracts"), failure();
+    }
     if (completionOnly) {
         std::string error;
         auto completion = frontiersynch::CompletionRegion::buildCoarse(function, policy, error);
@@ -520,7 +512,7 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         plan->completionOwner = std::move(completion);
         return plan;
     }
-    frontiersynch::FrontierAnalysis analysis(function);
+    frontiersynch::FrontierAnalysis analysis(function, allocationPolicy);
     analysis.enableStageProfiling(profileStages);
     StageProfileReport profileReport{analysis, "production-root"};
     if (failed(analysis.initialize(policy))) { return failure(); }
@@ -544,6 +536,7 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
                 StringRef(result.mathematical->backend);
             // Missing allocation support leaves the selected logical graph available.
             if (prepareAllocation) { (void)analysis.attachAllocation(result, **prepared, allocationIds); }
+            (*prepared)->deferredOutput = deferredOutput;
             if (physicalOutput &&
                 failed(frontiersynch::planPhysicalFamilyOutput(function, **prepared, allocationIds))) {
                 return function.emitError(
@@ -633,6 +626,13 @@ public:
                 return;
             }
         }
+        if (deferredOutput && (analysisOnly || physicalOutput || completionOnly || !prepareAllocation)) {
+            getOperation().emitError(
+                "deferred-output requires logical allocation preparation and excludes analysis-only, "
+                "physical-output and completion-only");
+            signalPassFailure();
+            return;
+        }
         if (completionOnly && (analysisOnly || physicalOutput || !arithmeticProfile.empty())) {
             getOperation().emitError(
                 "completion-only is an explicit conservative logical request without exact audit or physical-output");
@@ -670,7 +670,10 @@ public:
                         [&](func::FuncOp function, GMAliasPolicy contextPolicy, bool closed) {
                             return prepareFunction(
                                 function, contextPolicy, profile, profileStages, prepareAllocation, allocationIds,
-                                closed, physicalOutput, completionOnly);
+                                closed, physicalOutput, completionOnly, deferredOutput,
+                                experimentalCoordinateAllocation ?
+                                    frontiersynch::ArithmeticRegionalAllocationPolicy::CoordinateCandidate :
+                                    frontiersynch::ArithmeticRegionalAllocationPolicy::SingleId);
                         },
                         completionOnly))) {
                 signalPassFailure();
@@ -686,7 +689,9 @@ public:
                 const bool skip = function.isDeclaration() || hasManualOnCoreSynchronization(function);
                 if (skip) { continue; }
                 unfinished = true;
-                frontiersynch::FrontierAnalysis analysis(function);
+                frontiersynch::FrontierAnalysis analysis(function, experimentalCoordinateAllocation ?
+                    frontiersynch::ArithmeticRegionalAllocationPolicy::CoordinateCandidate :
+                    frontiersynch::ArithmeticRegionalAllocationPolicy::SingleId);
                 analysis.enableStageProfiling(profileStages);
                 StageProfileReport profileReport{analysis, "exhaustive-certification"};
                 const auto contextPolicy = delegation.calledFunctions.contains(function) ?

@@ -8,6 +8,7 @@
 // Detached preparation consumes retained mathematics. Producer and reducer
 // work is never repeated after a missing synchronization export.
 #include "AnalysisSessionInternal.h"
+#include "Shared/SequenceAnalysisInternal.h"
 #include "Shared/InvocationPrefixCollection.h"
 #include "Shared/InvocationSourceBounds.h"
 #include "Shared/PrivateStatePlan.h"
@@ -26,38 +27,6 @@
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 namespace mlir::pto::frontiersynch {
-namespace {
-bool sameOriginalCoordinates(const RegionalAnalysis& a, const RegionalAnalysis& b)
-{
-    const bool sameDomain = a.expressions == b.expressions && a.anchors.size() == b.anchors.size() &&
-        a.occurrenceLoops == b.occurrenceLoops && a.accessModel == b.accessModel &&
-        a.gmAliasPolicy == b.gmAliasPolicy;
-    if (!sameDomain) { return false; }
-    // Specialized phase views need their own explicit coordinate adapter.
-    if (a.firstOrdinal != b.firstOrdinal || a.endpointSiteGuard != b.endpointSiteGuard ||
-        a.endpointInvocationGuard != b.endpointInvocationGuard) { return false; }
-    for (std::size_t i = 0; i < a.anchors.size(); ++i) {
-        const auto& x = a.anchors[i];
-        const auto& y = b.anchors[i];
-        if (x.phase != y.phase || x.before.block != y.before.block || x.before.before != y.before.before ||
-            x.after.block != y.after.block || x.after.before != y.after.before ||
-            x.coordinates.size() != y.coordinates.size()) { return false; }
-        for (std::size_t j = 0; j < x.coordinates.size(); ++j) {
-            if (x.coordinates[j].loop != y.coordinates[j].loop ||
-                x.coordinates[j].induction != y.coordinates[j].induction) { return false; }
-        }
-        const auto ax = a.outerLoops.empty() ? ArrayRef<scf::ForOp>() : ArrayRef<scf::ForOp>(a.outerLoops[i]);
-        const auto bx = b.outerLoops.empty() ? ArrayRef<scf::ForOp>() : ArrayRef<scf::ForOp>(b.outerLoops[i]);
-        if (ax != bx) { return false; }
-        for (std::size_t j = 0; j < ax.size(); ++j) {
-            const auto ad = a.outerDivisors.empty() ? 1 : a.outerDivisors[i][j];
-            const auto bd = b.outerDivisors.empty() ? 1 : b.outerDivisors[i][j];
-            if (ad != bd) { return false; }
-        }
-    }
-    return true;
-}
-} // namespace
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetainedPrefix(
     std::shared_ptr<const MathematicalResult> demands, std::string& error)
 {
@@ -73,7 +42,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
     if (!target) { error = "invocation prefix requires 64-bit scalar control"; return failure(); }
     AnalysisProfileScope profile(sessionState->ledger, "prefix-preparation", demands->region, demands->backend);
     profile.constructed();
-    InvocationPrefixCollection collection(function, demands->input);
+    InvocationPrefixCollection collection(function, demands->input, sessionState->ledger->profiling);
     if (failed(collectInvocationPrefix(demands, collection, error))) { return failure(); }
     auto bounds = inferInvocationSourceBounds(function, collection.recipe().sources, error);
     if (failed(bounds)) { return failure(); }
@@ -99,9 +68,16 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
             auto& attempts = sessionState->attempts[owner.childRegion];
             auto found = attempts.find(owner.childBackend);
             if (found != attempts.end() && found->second.mathematical == owner.child) {
+                if (!found->second.endpoints.value_or(false)) { sessionState->retainedEvidencePublished(); }
                 found->second.endpoints = true;
             }
-            (*prepared)->completeInvocation = true;
+            // This identity wrapper owns exactly the original invocation loop.
+            // A statically empty loop has no payload to complete at its exit.
+            auto loop = cast<scf::ForOp>(owner.loop);
+            APInt lower, upper;
+            const bool empty = matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) &&
+                matchPattern(loop.getUpperBound(), m_ConstantInt(&upper)) && lower.sge(upper);
+            (*prepared)->completeInvocation = !empty;
         }
         return prepared;
     }
@@ -215,9 +191,14 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
                                                 resolver);
     }
     if (demands.arithmeticRegionalDemands) {
-        const auto& retained = *demands.arithmeticRegionalDemands;
-        return prepareArithmeticRegion(retained, sessionState->expressions,
-            program->nodes[demands.region].loops, error, demands.input);
+        auto& attempts = sessionState->attempts[demands.region];
+        auto found = llvm::find_if(attempts, [&](const auto& attempt) {
+            return attempt.second.mathematical.get() == &demands;
+        });
+        if (found == attempts.end()) { return failure(); }
+        return prepareRetainedArithmeticRegion(demands.arithmeticRegionalDemands, sessionState->expressions,
+            program->nodes[demands.region].loops, error, found->second.arithmeticPreparation,
+            demands.input, arithmeticAllocationPolicy());
     }
     if (demands.regionalDemands) {
         const auto& regional = *demands.regionalDemands;

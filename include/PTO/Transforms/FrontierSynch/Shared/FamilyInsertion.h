@@ -36,6 +36,10 @@ struct ContextualEndpointFamily {
     RegionExpressions::Id ordinal = RegionExpressions::invalid;
     RegionExpressions::Id residueCoordinate = RegionExpressions::invalid;
     uint64_t modulus = 0, residue = 0;
+    // Exact matching-source coordinates follow the provenance member and any
+    // enclosing invocation coordinates. They are owned expression recipes,
+    // never callbacks into an arithmetic producer or prepared SSA values.
+    SmallVector<RegionExpressions::Id> matchingCoordinates;
 };
 // One preparation attempt shares successful availability recipes across
 // protocol selection and family construction. The arena is append-only and
@@ -92,6 +96,9 @@ LogicalResult normalizeFamilyEndpointPlan(PreparedLogicalPlan& plan);
 // Explicit combined-output request. Decode retained certified assignments and
 // compose their maps with the frozen protocol before any family scalar lowering.
 LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPlan& plan, ArrayRef<int64_t> eligibleIds);
+// Exact pre-CSE scalar construction count for the supported owned preparation
+// schedule. No SSA is built. Uncovered upstream/coalescing forms return unknown.
+std::optional<uint64_t> physicalFamilyConstructionOperations(const PreparedLogicalPlan& plan);
 bool validPhysicalFamilyOutput(const PreparedLogicalPlan& plan);
 bool validFamilyEndpointProtocol(const PreparedLogicalPlan& plan);
 bool validPhysicalFamilyEndpoint(const PreparedLogicalPlan& plan, const PreparedLogicalEndpoint& endpoint);
@@ -106,6 +113,11 @@ std::size_t familyEndpointPieceCount(const FamilyEndpointRecipe& recipe);
 // Exact matching-tuple sizes for nonlocal records, before SSA. Count the source
 // ordinal and enclosing invocation coordinates, excluding the provenance label.
 // Derived through the same composition walk as lowering; conflicting shapes fail.
+struct FamilyMatchingShape {
+    uint64_t coordinateCount = 0;
+    bool hasSet = false, hasWait = false, hasLocal = false;
+};
+FailureOr<std::map<uint32_t, FamilyMatchingShape>> familyMatchingShapes(const FamilyEndpointRecipe& recipe);
 FailureOr<std::map<uint32_t, uint64_t>> familyMatchingArities(const FamilyEndpointRecipe& recipe);
 } // namespace mlir::pto::frontiersynch
 #endif

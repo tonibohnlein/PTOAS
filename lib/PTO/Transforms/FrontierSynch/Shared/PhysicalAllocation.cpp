@@ -8,7 +8,10 @@
 // Preflight logical families, preserve certified member-to-phase maps, and lower
 // commands in place. Allocation does not inspect or reconstruct endpoint guards.
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/DeferredFamily.h"
 #include "PhysicalMapInputs.h"
+#include "CertifiedAllocationCandidates.h"
+#include "ScalarConstruction.h"
 #include "PrefixLifetimes.h"
 #include "ClosedCompletionChild.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalExecutedCounters.h"
@@ -100,8 +103,23 @@ public:
     uint64_t arity = 0;
 };
 namespace {
+using Scalar = detail::ScalarToken;
+using Construction = detail::ScalarConstruction;
+struct MapScalarSelection {
+    Scalar directId, directPhase;
+    const PhysicalTupleRule* tuple = nullptr;
+    Scalar tupleBase;
+    SmallVector<Scalar> tuplePhases;
+};
 std::optional<int64_t> constantTupleId(const PhysicalRecordAllocation& record);
 std::optional<uint64_t> mappingCost(ArrayRef<Endpoint> endpoints);
+bool endpointRequiresMember(const Endpoint& endpoint);
+bool endpointNeedsCoordinate(const Endpoint& endpoint, uint64_t coordinate);
+std::optional<uint64_t> endpointConstructionOperations(const Endpoint& endpoint, uint64_t arity);
+std::optional<std::pair<uint64_t, uint64_t>> compareCompleteMapConstruction(
+    const Endpoint& incumbent, const Endpoint& candidate, uint64_t arity,
+    PhysicalMapComparisonKind* kind = nullptr);
+
 
 std::vector<uint64_t> physicalMappingKey(const PhysicalRecordAllocation& member)
 {
@@ -186,21 +204,21 @@ std::optional<CommonTupleMapping> commonTupleMapping(ArrayRef<const PhysicalReco
     return result;
 }
 
-Value selectPhysicalPalette(OpBuilder& builder, Location location, Value index, ArrayRef<int64_t> palette)
+Scalar selectPhysicalPalette(Construction& construction, Scalar index, ArrayRef<int64_t> palette)
 {
     if (palette.size() > 1 && llvm::all_of(llvm::enumerate(palette), [&](auto entry) {
             return entry.value() == palette.front() + static_cast<int64_t>(entry.index());
         })) {
         if (!palette.front()) { return index; }
-        Value base = builder.create<arith::ConstantIndexOp>(location, palette.front());
-        return builder.create<arith::AddIOp>(location, index, base);
+        Scalar base = construction.number(palette.front());
+        return construction.binary<arith::AddIOp>(index, base);
     }
-    Value result = builder.create<arith::ConstantIndexOp>(location, palette.front());
+    Scalar result = construction.number(palette.front());
     for (std::size_t i = 1; i < palette.size(); ++i) {
-        Value position = builder.create<arith::ConstantIndexOp>(location, static_cast<int64_t>(i));
-        Value selected = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq, index, position);
-        Value id = builder.create<arith::ConstantIndexOp>(location, palette[i]);
-        result = builder.create<arith::SelectOp>(location, selected, id, result);
+        Scalar position = construction.number(static_cast<int64_t>(i));
+        Scalar selected = construction.compare(arith::CmpIPredicate::eq, index, position);
+        Scalar id = construction.number(palette[i]);
+        result = construction.select(selected, id, result);
     }
     return result;
 }
@@ -824,11 +842,10 @@ FailureOr<SmallVector<Endpoint>> preflight(func::FuncOp function, const Physical
     }
     return endpoints;
 }
-Value memberPhase(OpBuilder& builder, const Endpoint& endpoint, Value member)
+Scalar memberPhase(Construction& construction, const Endpoint& endpoint, Scalar member)
 {
-    auto location = endpoint.operation->getLoc();
-    auto number = [&](uint64_t value) -> Value {
-        return builder.create<arith::ConstantIndexOp>(location, static_cast<int64_t>(value));
+    auto number = [&](uint64_t value) -> Scalar {
+        return construction.number(static_cast<int64_t>(value));
     };
     const auto& phases = endpoint.phases;
     if (phases.size() == 1) {
@@ -856,53 +873,53 @@ Value memberPhase(OpBuilder& builder, const Endpoint& endpoint, Value member)
         if (!coefficient) {
             return number(intercept);
         }
-        Value modulus = number(capacity);
-        Value term = builder.create<arith::RemUIOp>(location, member, modulus);
+        Scalar modulus = number(capacity);
+        Scalar term = construction.binary<arith::RemUIOp>(member, modulus);
         if (coefficient == 1 && !intercept) {
             return term;
         }
         if (coefficient != 1) {
-            term = builder.create<arith::MulIOp>(location, term, number(coefficient));
+            term = construction.binary<arith::MulIOp>(term, number(coefficient));
         }
         if (intercept) {
-            term = builder.create<arith::AddIOp>(location, number(intercept), term);
+            term = construction.binary<arith::AddIOp>(number(intercept), term);
         }
-        return builder.create<arith::RemUIOp>(location, term, modulus);
+        return construction.binary<arith::RemUIOp>(term, modulus);
     }
-    Value result = number(phases.front());
+    Scalar result = number(phases.front());
     // An irregular finite phase map remains one command with a shared decision
     // expression. It is never expanded back into independently guarded commands.
     for (std::size_t i = 1; i < phases.size(); ++i) {
         if (phases[i] != phases.front()) {
-            auto selected = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq,
+            auto selected = construction.compare(arith::CmpIPredicate::eq,
                                                           member, number(endpoint.labels[i]));
-            result = builder.create<arith::SelectOp>(location, selected, number(phases[i]), result);
+            result = construction.select(selected, number(phases[i]), result);
         }
     }
     return result;
 }
-Value physicalId(OpBuilder& builder, Location location, Value ordinal,
-                 const PhysicalRecordAllocation& record, Value phaseOffset)
+Scalar physicalId(Construction& construction, Scalar ordinal,
+                 const PhysicalRecordAllocation& record, Scalar phaseOffset)
 {
-    auto constant = [&](uint64_t value) -> Value {
-        return builder.create<arith::ConstantIndexOp>(location, static_cast<int64_t>(value));
+    auto constant = [&](uint64_t value) -> Scalar {
+        return construction.number(static_cast<int64_t>(value));
     };
     const uint64_t capacity = record.ids.size();
     const uint64_t stride = record.stride % capacity;
     // memberPhase and the singleton constant are already in [0, capacity).
     // A zero cyclic stride needs no ordinal arithmetic or second remainder.
-    Value phase = phaseOffset ? phaseOffset : constant(record.phase % capacity);
+    Scalar phase = phaseOffset ? phaseOffset : constant(record.phase % capacity);
     if (stride) {
-        Value modulus = constant(capacity);
-        Value term = builder.create<arith::RemUIOp>(location, ordinal, modulus);
+        Scalar modulus = constant(capacity);
+        Scalar term = construction.binary<arith::RemUIOp>(ordinal, modulus);
         if (stride != 1) {
-            term = builder.create<arith::MulIOp>(location, term, constant(stride));
+            term = construction.binary<arith::MulIOp>(term, constant(stride));
         }
         // Reduce before multiplying; native capacity bounds these intermediates.
-        phase = builder.create<arith::AddIOp>(location, term, phase);
-        phase = builder.create<arith::RemUIOp>(location, phase, modulus);
+        phase = construction.binary<arith::AddIOp>(term, phase);
+        phase = construction.binary<arith::RemUIOp>(phase, modulus);
     }
-    return selectPhysicalPalette(builder, location, phase, record.ids);
+    return selectPhysicalPalette(construction, phase, record.ids);
 }
 std::optional<int64_t> constantTupleId(const PhysicalRecordAllocation& record)
 {
@@ -918,20 +935,19 @@ std::optional<int64_t> constantTupleId(const PhysicalRecordAllocation& record)
     }
     return record.ids[offset];
 }
-Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint, ArrayRef<Value> coordinates, Value member)
+Scalar tuplePhysicalId(Construction& construction, const Endpoint& endpoint,
+    ArrayRef<Scalar> coordinates, Scalar member, const MapScalarSelection& selection)
 {
-    auto* op = endpoint.operation;
-    auto location = op->getLoc();
-    std::map<uint64_t, Value> constants;
-    auto constant = [&](uint64_t value) -> Value {
+    std::map<uint64_t, Scalar> constants;
+    auto constant = [&](uint64_t value) -> Scalar {
         auto [entry, added] = constants.try_emplace(value);
-        if (added) { entry->second = builder.create<arith::ConstantIndexOp>(location, static_cast<int64_t>(value)); }
+        if (added) { entry->second = construction.number(static_cast<int64_t>(value)); }
         return entry->second;
     };
     using TermKey = std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>;
-    std::map<TermKey, Value> terms;
-    std::map<std::vector<uint64_t>, Value> mappings;
-    auto tupleOffset = [&](const PhysicalTupleRule& rule, Value offset, ArrayRef<Value> phases = {}) {
+    std::map<TermKey, Scalar> terms;
+    std::map<std::vector<uint64_t>, Scalar> mappings;
+    auto tupleOffset = [&](const PhysicalTupleRule& rule, Scalar offset, ArrayRef<Scalar> phases = {}) {
         for (auto [index, term] : llvm::enumerate(rule.terms)) {
             if (!term.scale || term.modulus == 1) {
                 continue;
@@ -940,58 +956,58 @@ Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint, ArrayRef<Val
             if (!phases.empty()) {
                 // Selected phases are exact on the supplied member domain.
                 // Reduce the source coordinate first, as for static phases.
-                Value value = phases[index];
+                Scalar value = phases[index];
                 if (stride) {
                     auto coordinate = coordinates[term.coordinate];
                     auto modulus = constant(term.modulus);
-                    Value product = builder.create<arith::RemUIOp>(location, coordinate, modulus);
+                    Scalar product = construction.binary<arith::RemUIOp>(coordinate, modulus);
                     if (stride != 1) {
-                        product = builder.create<arith::MulIOp>(location, product, constant(stride));
+                        product = construction.binary<arith::MulIOp>(product, constant(stride));
                     }
-                    value = builder.create<arith::AddIOp>(location, product, value);
-                    value = builder.create<arith::RemUIOp>(location, value, modulus);
+                    value = construction.binary<arith::AddIOp>(product, value);
+                    value = construction.binary<arith::RemUIOp>(value, modulus);
                 }
                 if (term.scale != 1) {
-                    value = builder.create<arith::MulIOp>(location, value, constant(term.scale));
+                    value = construction.binary<arith::MulIOp>(value, constant(term.scale));
                 }
-                offset = builder.create<arith::AddIOp>(location, offset, value);
+                offset = construction.binary<arith::AddIOp>(offset, value);
                 continue;
             }
             const TermKey key{term.coordinate, stride, phase, term.modulus};
             auto [entry, added] = terms.try_emplace(key);
             if (added) {
-                Value value = constant(phase);
+                Scalar value = constant(phase);
                 if (stride) {
                     auto coordinate = coordinates[term.coordinate];
                     auto modulus = constant(term.modulus);
-                    auto residue = builder.create<arith::RemUIOp>(location, coordinate, modulus);
-                    Value product = residue;
+                    auto residue = construction.binary<arith::RemUIOp>(coordinate, modulus);
+                    Scalar product = residue;
                     if (stride != 1) {
-                        product = builder.create<arith::MulIOp>(location, product, constant(stride));
+                        product = construction.binary<arith::MulIOp>(product, constant(stride));
                     }
                     if (phase) {
-                        product = builder.create<arith::AddIOp>(location, product, constant(phase));
+                        product = construction.binary<arith::AddIOp>(product, constant(phase));
                     }
-                    value = builder.create<arith::RemUIOp>(location, product, modulus);
+                    value = construction.binary<arith::RemUIOp>(product, modulus);
                 }
                 entry->second = value;
             }
-            Value value = entry->second;
+            Scalar value = entry->second;
             if (term.scale != 1) {
-                value = builder.create<arith::MulIOp>(location, value, constant(term.scale));
+                value = construction.binary<arith::MulIOp>(value, constant(term.scale));
             }
-            offset = builder.create<arith::AddIOp>(location, offset, value);
+            offset = construction.binary<arith::AddIOp>(offset, value);
         }
         return offset;
     };
     // Compose source selection with the common nonconstant skeleton before
     // lowering a dispatcher. Exact bases/phases use original coordinates.
-    if (endpoint.composedTuple) {
-        auto offset = tupleOffset(endpoint.composedTuple->rule, endpoint.composedTuple->base,
-                                  endpoint.composedTuple->phases);
-        return selectPhysicalPalette(builder, location, offset, endpoint.allocation->ids);
+    if (selection.tuple) {
+        auto offset = tupleOffset(*selection.tuple, selection.tupleBase,
+                                  selection.tuplePhases);
+        return selectPhysicalPalette(construction, offset, endpoint.allocation->ids);
     }
-    auto memberId = [&](const PhysicalRecordAllocation& member) -> Value {
+    auto memberId = [&](const PhysicalRecordAllocation& member) -> Scalar {
         if (auto fixed = constantTupleId(member)) { return constant(*fixed); }
         // Flat grouped families keep their original source ordinal in operand
         // zero. The same bounded arithmetic serves nested tuple families.
@@ -1001,21 +1017,105 @@ Value tuplePhysicalId(OpBuilder& builder, const Endpoint& endpoint, ArrayRef<Val
         if (!inserted) { return cached->second; }
         // Checked term bounds keep offsets within the palette. Products use
         // reduced residues, so large original coordinates cannot wrap.
-        Value offset = tupleOffset(rule, constant(rule.base));
-        cached->second = selectPhysicalPalette(builder, location, offset, member.ids);
+        Scalar offset = tupleOffset(rule, constant(rule.base));
+        cached->second = selectPhysicalPalette(construction, offset, member.ids);
         return cached->second;
     };
-    Value fallback = memberId(*endpoint.tupleMembers.front());
-    Value result = fallback;
+    Scalar fallback = memberId(*endpoint.tupleMembers.front());
+    Scalar result = fallback;
     for (std::size_t i = 1; i < endpoint.tupleMembers.size(); ++i) {
-        Value selectedId = memberId(*endpoint.tupleMembers[i]);
+        Scalar selectedId = memberId(*endpoint.tupleMembers[i]);
         if (selectedId == fallback) { continue; }
-        Value label = endpoint.directPhase ? endpoint.directPhase : member;
-        auto selected = builder.create<arith::CmpIOp>(location, arith::CmpIPredicate::eq,
+        Scalar label = selection.directPhase ? selection.directPhase : member;
+        auto selected = construction.compare(arith::CmpIPredicate::eq,
             label, constant(endpoint.labels[i]));
-        result = builder.create<arith::SelectOp>(location, selected, selectedId, result);
+        result = construction.select(selected, selectedId, result);
     }
     return result;
+}
+// A restricted construction dominance comparison. These counts are actual map
+// suffix operations before optional CSE/hoisting, not weighted scores. Identical
+// inputs cancel; dropping inputs or a selector cannot increase upstream work at
+// one unchanged endpoint. Strict suffix improvement therefore improves complete
+// construction, without assuming that a dropped input was exclusive to this map.
+struct ComparableMapConstruction {
+    uint64_t operations = 0;
+    bool ordinal = false;
+    SmallVector<uint64_t> selector;
+};
+std::optional<ComparableMapConstruction> comparableMapConstruction(const Endpoint& endpoint)
+{
+    ComparableMapConstruction result;
+    auto palette = [](ArrayRef<int64_t> ids) -> uint64_t {
+        if (ids.size() > 1 && llvm::all_of(llvm::enumerate(ids), [&](auto entry) {
+                return entry.value() == ids.front() + static_cast<int64_t>(entry.index());
+            })) {
+            return ids.front() ? 2 : 0; // Constant base and addition.
+        }
+        return 1 + 4 * (ids.size() - 1); // Initial ID, then constant/cmp/constant/select.
+    };
+    const auto* recipe = endpoint.mapping.get();
+    if (recipe) {
+        if (!recipe->phases.empty() ||
+            (recipe->kind != PhysicalIdRecipe::Kind::Id && recipe->kind != PhysicalIdRecipe::Kind::Phase)) {
+            return std::nullopt;
+        }
+        // Exact key equality includes every original coordinate and requested
+        // selector output. Its full construction is common, however expensive.
+        result.selector.push_back(static_cast<uint64_t>(recipe->kind));
+        appendFamilyExpressionKey(*recipe->selector, result.selector);
+        if (recipe->kind == PhysicalIdRecipe::Kind::Id) {
+            result.operations = palette(recipe->palette);
+            return result;
+        }
+    } else if (!endpoint.tupleMembers.empty()) {
+        if (endpoint.tupleMembers.size() != 1 || !constantTupleId(*endpoint.tupleMembers.front())) {
+            return std::nullopt;
+        }
+        result.operations = 1;
+        return result;
+    } else {
+        // Dynamic record dispatch is not covered by this exact subclass.
+        if (endpoint.phases.size() != 1) { return std::nullopt; }
+        result.operations = 1; // memberPhase's constant.
+    }
+    if (!endpoint.allocation || endpoint.allocation->tupleRule || endpoint.allocation->ids.empty()) {
+        return std::nullopt;
+    }
+    const auto stride = endpoint.allocation->stride % endpoint.allocation->ids.size();
+    result.ordinal = stride != 0;
+    if (stride) {
+        // Modulus, first remainder, optional multiplier and its constant,
+        // phase addition and final remainder: exactly physicalId's emission.
+        result.operations += 4 + 2 * uint64_t(stride != 1);
+    }
+    result.operations += palette(endpoint.allocation->ids);
+    return result;
+}
+std::optional<std::pair<uint64_t, uint64_t>> compareMapConstruction(
+    const Endpoint& incumbent, const Endpoint& candidate)
+{
+    auto before = comparableMapConstruction(incumbent), after = comparableMapConstruction(candidate);
+    if (!before || !after || (after->ordinal && !before->ordinal) ||
+        (!after->selector.empty() && before->selector != after->selector)) { return std::nullopt; }
+    return std::make_pair(before->operations, after->operations);
+}
+std::optional<std::pair<uint64_t, uint64_t>> compareMapConstructions(
+    ArrayRef<Endpoint> incumbent, ArrayRef<Endpoint> candidate)
+{
+    if (incumbent.size() != candidate.size()) { return std::nullopt; }
+    uint64_t before = 0, after = 0;
+    for (auto [a, b] : llvm::zip(incumbent, candidate)) {
+        if (a.operation != b.operation) { return std::nullopt; }
+        const auto operands = a.operation->getNumOperands();
+        const uint64_t arity = operands > 1 ? operands - 1 : operands;
+        auto costs = compareCompleteMapConstruction(a, b, arity);
+        if (!costs || costs->first > uint64_t(INT64_MAX) - before ||
+            costs->second > uint64_t(INT64_MAX) - after) { return std::nullopt; }
+        before += costs->first;
+        after += costs->second;
+    }
+    return std::make_pair(before, after);
 }
 // Score complete live map recipes without constructing scratch SSA. The
 // deterministic estimate charges selects and non-power-of-two remainders more
@@ -1128,44 +1228,127 @@ std::optional<uint64_t> mappingCost(ArrayRef<Endpoint> endpoints)
     }
     return valid ? std::optional(cost) : std::nullopt;
 }
-void emitMapSelectors(OpBuilder& builder, Location location, Endpoint& endpoint, const PhysicalIdRecipe& mapping)
+MapScalarSelection constructMapSelectors(Construction& construction, const PhysicalIdRecipe& mapping)
 {
-    std::map<std::vector<uint64_t>, Value> values;
+    MapScalarSelection result;
+    std::map<std::vector<uint64_t>, Scalar> values;
     auto emit = [&](const FamilyExpressionRecipe& recipe) {
         SmallVector<uint64_t> key;
         appendFamilyExpressionKey(recipe, key);
         auto [entry, added] = values.try_emplace(std::vector<uint64_t>(key.begin(), key.end()));
-        if (added) {
-            auto selected = emitFamilyExpressions(builder, location, recipe);
-            assert(selected.error.empty() && selected.member && "validated family map must lower");
-            entry->second = selected.member;
-        }
+        if (added) { entry->second = detail::constructFamilyExpressions(construction, recipe).member; }
         return entry->second;
     };
     const auto selected = emit(*mapping.selector);
     if (mapping.kind == PhysicalIdRecipe::Kind::Id) {
-        endpoint.directId = selectPhysicalPalette(builder, location, selected, mapping.palette);
+        result.directId = selectPhysicalPalette(construction, selected, mapping.palette);
     } else if (mapping.kind == PhysicalIdRecipe::Kind::Tuple) {
+        result.tuple = &mapping.tuple;
+        result.tupleBase = selected;
+        for (const auto& phase : mapping.phases) { result.tuplePhases.push_back(emit(*phase)); }
+    } else { result.directPhase = selected; }
+    return result;
+}
+Scalar constructEndpointId(Construction& construction, const Endpoint& endpoint,
+    ArrayRef<Scalar> tuple, Scalar member, const MapScalarSelection& selection)
+{
+    if (selection.directId) { return selection.directId; }
+    if (!endpoint.tupleMembers.empty()) {
+        return tuplePhysicalId(construction, endpoint, tuple, member, selection);
+    }
+    const auto phase = selection.directPhase ? selection.directPhase : memberPhase(construction, endpoint, member);
+    return physicalId(construction, tuple.front(), *endpoint.allocation, phase);
+}
+void emitMapSelectors(OpBuilder& builder, Location location, Endpoint& endpoint, const PhysicalIdRecipe& mapping)
+{
+    Construction construction(builder, location);
+    auto selected = constructMapSelectors(construction, mapping);
+    endpoint.directId = selected.directId.value;
+    endpoint.directPhase = selected.directPhase.value;
+    if (selected.tuple) {
         endpoint.composedTuple = std::make_unique<ComposedTupleMapping>();
-        endpoint.composedTuple->rule = mapping.tuple;
-        endpoint.composedTuple->base = selected;
-        for (const auto& phase : mapping.phases) {
-            endpoint.composedTuple->phases.push_back(emit(*phase));
-        }
-    } else {
-        endpoint.directPhase = selected;
+        endpoint.composedTuple->rule = *selected.tuple;
+        endpoint.composedTuple->base = selected.tupleBase.value;
+        for (auto phase : selected.tuplePhases) { endpoint.composedTuple->phases.push_back(phase.value); }
     }
 }
 Value emitEndpointId(OpBuilder& builder, const Endpoint& endpoint, ArrayRef<Value> tuple, Value member)
 {
-    if (endpoint.directId) {
-        return endpoint.directId;
+    Construction construction(builder, endpoint.operation->getLoc());
+    MapScalarSelection selected;
+    selected.directId = construction.input(endpoint.directId);
+    selected.directPhase = construction.input(endpoint.directPhase);
+    if (endpoint.composedTuple) {
+        selected.tuple = &endpoint.composedTuple->rule;
+        selected.tupleBase = construction.input(endpoint.composedTuple->base);
+        for (auto phase : endpoint.composedTuple->phases) { selected.tuplePhases.push_back(construction.input(phase)); }
     }
-    if (!endpoint.tupleMembers.empty()) {
-        return tuplePhysicalId(builder, endpoint, tuple, member);
+    SmallVector<Scalar> coordinates;
+    for (auto value : tuple) { coordinates.push_back(construction.input(value)); }
+    return constructEndpointId(construction, endpoint, coordinates, construction.input(member), selected).value;
+}
+bool endpointRequiresMember(const Endpoint& endpoint)
+{
+    if (endpoint.mapping) {
+        return false;
     }
-    const auto phase = endpoint.directPhase ? endpoint.directPhase : memberPhase(builder, endpoint, member);
-    return physicalId(builder, endpoint.operation->getLoc(), tuple.front(), *endpoint.allocation, phase);
+    return endpoint.tupleMembers.empty() ? endpoint.phases.size() > 1 : endpoint.tupleMembers.size() > 1;
+}
+bool endpointNeedsCoordinate(const Endpoint& endpoint, uint64_t coordinate)
+{
+    auto needs = [&](const PhysicalTupleRule& rule) {
+        return llvm::any_of(rule.terms, [&](const auto& term) {
+            return term.coordinate == coordinate && term.scale && term.modulus > 1 && term.stride % term.modulus;
+        });
+    };
+    if (endpoint.mapping) {
+        const auto& recipe = *endpoint.mapping;
+        if (recipe.kind == PhysicalIdRecipe::Kind::Id) {
+            return false;
+        }
+        if (recipe.kind == PhysicalIdRecipe::Kind::Tuple) {
+            return needs(recipe.tuple);
+        }
+        if (recipe.kind == PhysicalIdRecipe::Kind::Phase) {
+            return coordinate == 0 && endpoint.allocation->stride % endpoint.allocation->ids.size();
+        }
+    }
+    if (endpoint.tupleMembers.empty()) {
+        return coordinate == 0 && endpoint.allocation->stride % endpoint.allocation->ids.size();
+    }
+    return llvm::any_of(endpoint.tupleMembers, [&](const auto* record) {
+        return record->tupleRule ? needs(*record->tupleRule) : coordinate == 0 && record->stride % record->ids.size();
+    });
+}
+std::optional<uint64_t> endpointConstructionOperations(const Endpoint& endpoint, uint64_t arity)
+{
+    Construction construction;
+    MapScalarSelection selected;
+    if (endpoint.mapping) { selected = constructMapSelectors(construction, *endpoint.mapping); }
+    SmallVector<Scalar> coordinates;
+    for (uint64_t i = 0; i < arity; ++i) { coordinates.push_back(construction.external()); }
+    (void)constructEndpointId(construction, endpoint, coordinates, construction.external(), selected);
+    return construction.operations();
+}
+std::optional<std::pair<uint64_t, uint64_t>> compareCompleteMapConstruction(
+    const Endpoint& incumbent, const Endpoint& candidate, uint64_t arity, PhysicalMapComparisonKind* kind)
+{
+    if (kind) { *kind = PhysicalMapComparisonKind::Unknown; }
+    bool sameInputs = endpointRequiresMember(incumbent) == endpointRequiresMember(candidate);
+    for (uint64_t coordinate = 0; coordinate < arity; ++coordinate) {
+        sameInputs &= endpointNeedsCoordinate(incumbent, coordinate) == endpointNeedsCoordinate(candidate, coordinate);
+    }
+    if (sameInputs) {
+        const auto before = endpointConstructionOperations(incumbent, arity);
+        const auto after = endpointConstructionOperations(candidate, arity);
+        if (!before || !after) { return std::nullopt; }
+        if (kind) { *kind = PhysicalMapComparisonKind::ExactFootprint; }
+        return std::make_pair(*before, *after);
+    }
+    if (endpointRequiresMember(candidate) && !endpointRequiresMember(incumbent)) { return std::nullopt; }
+    auto result = compareMapConstruction(incumbent, candidate);
+    if (result && kind) { *kind = PhysicalMapComparisonKind::InputDominance; }
+    return result;
 }
 LogicalResult materializePhysicalMapping(Endpoint& endpoint, DominanceInfo& dominance)
 {
@@ -1198,17 +1381,6 @@ LogicalResult materializePhysicalMapping(Endpoint& endpoint, DominanceInfo& domi
     }
     endpoint.phaseCode = std::move(block);
     return success();
-}
-bool candidateFits(DictionaryAttr candidate, std::size_t capacity)
-{
-    auto directions = candidate.getAs<ArrayAttr>("directions");
-    if (!directions) { return false; }
-    return llvm::all_of(directions, [&](Attribute raw) {
-        auto direction = dyn_cast<DictionaryAttr>(raw);
-        auto budget = direction ? direction.getAs<IntegerAttr>("budget") : IntegerAttr{};
-        return budget && budget.getType().isInteger(64) && budget.getInt() >= 0 &&
-            static_cast<uint64_t>(budget.getInt()) <= capacity;
-    });
 }
 // Share the complete small ID calculation, including tuple rules and palette
 // selection. Only generated, total integer arithmetic crosses a command guard.
@@ -1314,10 +1486,6 @@ void compactGeneratedArithmetic(func::FuncOp function, const llvm::DenseSet<Oper
     });
 }
 } // namespace
-bool physicalCandidateFits(DictionaryAttr certificate, std::size_t capacity)
-{
-    return candidateFits(certificate, capacity);
-}
 LogicalResult preflightPhysicalOutput(func::FuncOp function, DictionaryAttr certificate)
 {
     if (!function) {
@@ -1349,7 +1517,15 @@ FailureOr<std::shared_ptr<const PhysicalEndpointMap>> planPhysicalEndpointMap(
     Operation* cut, ArrayRef<PhysicalRecordAllocation> members, ArrayRef<SmallVector<TemplateCoordinate>> points,
     uint64_t tupleArity, bool nested, DominanceInfo& dominance)
 {
-    if (!cut || members.empty() || !tupleArity || points.size() != members.size()) {
+    if (!cut) { return failure(); }
+    auto refuse = [&](StringRef reason) -> InFlightDiagnostic {
+        auto diagnostic = emitError(cut->getLoc());
+        diagnostic << "physical endpoint map: " << reason;
+        return diagnostic;
+    };
+    if (members.empty() || !tupleArity || points.size() != members.size()) {
+        refuse("invalid shape") << " (members=" << members.size() << ", points=" << points.size()
+            << ", arity=" << tupleArity << ")";
         return failure();
     }
     auto result = std::make_shared<PhysicalEndpointMap>();
@@ -1360,9 +1536,16 @@ FailureOr<std::shared_ptr<const PhysicalEndpointMap>> planPhysicalEndpointMap(
     endpoint.allocation = &result->records.front();
     std::set<int64_t> labels;
     for (const auto& record : result->records) {
-        std::set<int64_t> palette;
+        // Regional lane certificates may assign the same physical ID to
+        // several nonconflicting slots. Preserve this ordered phase table;
+        // its length, rather than its distinct colors, defines the modulus.
+        if (record.ids.size() > 6) {
+            refuse("too many palette slots") << " (record=" << record.record << ", slots=" << record.ids.size() << ")";
+            return failure();
+        }
         for (auto id : record.ids) {
-            if (id < 0 || id > 5 || !palette.insert(id).second) {
+            if (id < 0 || id > 5) {
+                refuse("invalid palette ID") << " (record=" << record.record << ", id=" << id << ")";
                 return failure();
             }
         }
@@ -1370,13 +1553,21 @@ FailureOr<std::shared_ptr<const PhysicalEndpointMap>> planPhysicalEndpointMap(
             record.targetPipe > static_cast<uint32_t>(PIPE::PIPE_FIX) ||
             record.sourcePipe == static_cast<uint32_t>(PIPE::PIPE_ALL) ||
             record.targetPipe == static_cast<uint32_t>(PIPE::PIPE_ALL)) {
+            refuse("invalid communication direction") << " (record=" << record.record << ")";
             return failure();
         }
         if (record.record < 0 || !labels.insert(record.record).second || record.ids.empty() ||
-            record.sourcePipe != members.front().sourcePipe || record.targetPipe != members.front().targetPipe ||
-            (record.tupleRule ? record.tupleRule->coordinateCount != tupleArity ||
-                                    !validPhysicalTupleRule(*record.tupleRule, record.ids.size()) :
-                                nested && record.stride % record.ids.size() != 0)) {
+            record.sourcePipe != members.front().sourcePipe || record.targetPipe != members.front().targetPipe) {
+            refuse("invalid, duplicate or incompatible record") << " (record=" << record.record << ")";
+            return failure();
+        }
+        if (record.tupleRule ? record.tupleRule->coordinateCount != tupleArity ||
+                                  !validPhysicalTupleRule(*record.tupleRule, record.ids.size()) :
+                              nested && record.stride % record.ids.size() != 0) {
+            refuse("matching tuple is incompatible with allocation rule") << " (record=" << record.record
+                << ", arity=" << tupleArity << ", rule arity="
+                << (record.tupleRule ? record.tupleRule->coordinateCount : 0)
+                << ", nested=" << nested << ", stride=" << record.stride << ", palette=" << record.ids.size() << ")";
             return failure();
         }
         endpoint.labels.push_back(record.record);
@@ -1395,6 +1586,7 @@ FailureOr<std::shared_ptr<const PhysicalEndpointMap>> planPhysicalEndpointMap(
         for (auto coordinate : point) {
             auto loop = coordinate.loop;
             if (!loop || !dominance.properlyDominates(loop.getInductionVar(), cut)) {
+                refuse("fixed coordinate does not dominate command cut") << " (coordinate=" << current.size() << ")";
                 return failure();
             }
             current.push_back(loop.getOperation());
@@ -1421,41 +1613,11 @@ FailureOr<std::shared_ptr<const PhysicalEndpointMap>> planPhysicalEndpointMap(
 uint64_t physicalMapTupleArity(const PhysicalEndpointMap& mapping) { return mapping.arity; }
 bool physicalMapRequiresMember(const PhysicalEndpointMap& mapping)
 {
-    const auto& endpoint = mapping.endpoint;
-    if (endpoint.mapping) {
-        return false;
-    }
-    return endpoint.tupleMembers.empty() ? endpoint.phases.size() > 1 : endpoint.tupleMembers.size() > 1;
+    return endpointRequiresMember(mapping.endpoint);
 }
 bool physicalMapNeedsCoordinate(const PhysicalEndpointMap& mapping, uint64_t coordinate)
 {
-    if (coordinate >= mapping.arity) {
-        return false;
-    }
-    const auto& endpoint = mapping.endpoint;
-    auto needs = [&](const PhysicalTupleRule& rule) {
-        return llvm::any_of(rule.terms, [&](const auto& term) {
-            return term.coordinate == coordinate && term.scale && term.modulus > 1 && term.stride % term.modulus;
-        });
-    };
-    if (endpoint.mapping) {
-        const auto& recipe = *endpoint.mapping;
-        if (recipe.kind == PhysicalIdRecipe::Kind::Id) {
-            return false;
-        }
-        if (recipe.kind == PhysicalIdRecipe::Kind::Tuple) {
-            return needs(recipe.tuple);
-        }
-        if (recipe.kind == PhysicalIdRecipe::Kind::Phase) {
-            return coordinate == 0 && endpoint.allocation->stride % endpoint.allocation->ids.size();
-        }
-    }
-    if (endpoint.tupleMembers.empty()) {
-        return coordinate == 0 && endpoint.allocation->stride % endpoint.allocation->ids.size();
-    }
-    return llvm::any_of(endpoint.tupleMembers, [&](const auto* record) {
-        return record->tupleRule ? needs(*record->tupleRule) : coordinate == 0 && record->stride % record->ids.size();
-    });
+    return coordinate < mapping.arity && endpointNeedsCoordinate(mapping.endpoint, coordinate);
 }
 bool equivalentPhysicalMaps(const PhysicalEndpointMap& a, const PhysicalEndpointMap& b)
 {
@@ -1516,6 +1678,17 @@ std::optional<uint64_t> physicalMapCost(const PhysicalEndpointMap& mapping)
 {
     return mappingCost(ArrayRef<Endpoint>(&mapping.endpoint, 1));
 }
+std::optional<uint64_t> physicalMapConstructionOperations(const PhysicalEndpointMap& mapping)
+{
+    return endpointConstructionOperations(mapping.endpoint, mapping.arity);
+}
+std::optional<std::pair<uint64_t, uint64_t>> comparePhysicalMapConstruction(
+    const PhysicalEndpointMap& incumbent, const PhysicalEndpointMap& candidate, PhysicalMapComparisonKind* kind)
+{
+    if (kind) { *kind = PhysicalMapComparisonKind::Unknown; }
+    if (incumbent.arity != candidate.arity) { return std::nullopt; }
+    return compareCompleteMapConstruction(incumbent.endpoint, candidate.endpoint, incumbent.arity, kind);
+}
 Value emitPhysicalEndpointMap(
     OpBuilder& builder, Location location, const PhysicalEndpointMap& mapping, ArrayRef<Value> tuple, Value member)
 {
@@ -1524,16 +1697,13 @@ Value emitPhysicalEndpointMap(
     assert(llvm::all_of(llvm::enumerate(tuple), [&](auto input) {
         return !physicalMapNeedsCoordinate(mapping, input.index()) || input.value();
     }) && "physical map coordinate is required");
-    Endpoint endpoint;
-    endpoint.operation = mapping.endpoint.operation;
-    endpoint.allocation = mapping.endpoint.allocation;
-    endpoint.phases = mapping.endpoint.phases;
-    endpoint.labels = mapping.endpoint.labels;
-    endpoint.tupleMembers = mapping.endpoint.tupleMembers;
-    if (mapping.endpoint.mapping) {
-        emitMapSelectors(builder, location, endpoint, *mapping.endpoint.mapping);
-    }
-    return emitEndpointId(builder, endpoint, tuple, member);
+    Construction construction(builder, location);
+    MapScalarSelection selected;
+    if (mapping.endpoint.mapping) { selected = constructMapSelectors(construction, *mapping.endpoint.mapping); }
+    SmallVector<Scalar> coordinates;
+    for (auto value : tuple) { coordinates.push_back(construction.input(value)); }
+    return constructEndpointId(construction, mapping.endpoint, coordinates,
+        construction.input(member), selected).value;
 }
 void emitPhysicalCommand(
     OpBuilder& builder, Location location, bool publish, uint32_t sourcePipe, uint32_t targetPipe, Value id)
@@ -1557,10 +1727,55 @@ void emitPhysicalCommand(
         }
     }
 }
+FailureOr<llvm::DenseMap<Operation*, int64_t>> resolveExecutedFamilyCommands(
+    func::FuncOp function, const PhysicalAllocationPlan& records)
+{
+    auto metadata = function->getAttrOfType<DictionaryAttr>("pto.endpoint_families");
+    if (!metadata || (number(metadata, "version") != 3 && number(metadata, "version") != 4) ||
+        number(metadata, "protocol_version") != 1) {
+        return function.emitError("executed grouped commands require normalized family provenance"), failure();
+    }
+    auto checked = function.walk([&](Operation* op) -> WalkResult {
+        if (!isa<LogicalSetOp, LogicalWaitOp>(op)) { return WalkResult::advance(); }
+        for (auto key : {"plan_id", "record_id", "pto.endpoint_piece"}) {
+            auto value = op->getAttrOfType<IntegerAttr>(key);
+            if (!value || !value.getType().isInteger(64)) {
+                op->emitError("executed command identities require i64 attributes"); return WalkResult::interrupt();
+            }
+        }
+        auto cut = op->getParentOp()->getAttrOfType<IntegerAttr>("pto.endpoint_cut");
+        if (!cut || !cut.getType().isInteger(64)) {
+            op->emitError("executed command cut identity requires an i64 attribute"); return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+    });
+    if (checked.wasInterrupted()) { return failure(); }
+    auto endpoints = preflight(function, records);
+    if (failed(endpoints)) { return failure(); }
+    llvm::DenseMap<Operation*, int64_t> result;
+    for (const auto& endpoint : *endpoints) {
+        auto* op = endpoint.operation;
+        APInt ordinal, member;
+        if (endpoint.labels.size() != 1 || op->getNumOperands() < 2 ||
+            !matchPattern(op->getOperand(0), m_ConstantInt(&ordinal)) || !ordinal.isZero() ||
+            !matchPattern(op->getOperand(1), m_ConstantInt(&member)) || !member.isSignedIntN(64) ||
+            member.isNegative() || member.getZExtValue() != endpoint.labels.front()) {
+            return op->emitError("executed grouped commands require singleton original-record provenance"), failure();
+        }
+        result.try_emplace(op, static_cast<int64_t>(endpoint.labels.front()));
+    }
+    return result;
+}
 static LogicalResult allocatePhysicalEventIdsImpl(func::FuncOp function, ArrayRef<int64_t> eligibleIds)
 {
     if (!function) {
         return failure();
+    }
+    if (function->hasAttr("pto.deferred_family")) { return allocateDeferredFamilyOutput(function, eligibleIds); }
+    bool orphanFamily = false;
+    function.walk([&](LogicalFamilyOp) { orphanFamily = true; });
+    if (orphanFamily) {
+        return function.emitError("logical_family requires its deferred family metadata before allocation");
     }
     if (function->hasAttr("pto.prefix_protocol")) {
         return allocatePrefixLifetimes(function, eligibleIds);
@@ -1593,21 +1808,32 @@ static LogicalResult allocatePhysicalEventIdsImpl(func::FuncOp function, ArrayRe
     if (failed(endpoints)) {
         return failure();
     }
-    auto cyclicEvidence = function->getAttrOfType<DictionaryAttr>(CyclicAllocationAttr);
-    auto alternativeEvidence =
-        cyclicEvidence ? cyclicEvidence.getAs<DictionaryAttr>("regular_candidate") : DictionaryAttr{};
+    auto alternatives = certifiedAllocationCandidates(certificate);
+    if (failed(alternatives)) { return function.emitError("malformed completed allocation candidate inventory"); }
     std::optional<uint64_t> originalCost, alternativeCost;
+    std::size_t comparedCandidate = 0;
     bool choseAlternative = false;
-    if (alternativeEvidence && candidateFits(alternativeEvidence, eligibleIds.size())) {
+    StringRef selectedStrategy = "cycle-cover";
+    for (const auto& entry : llvm::enumerate(*alternatives)) {
+        auto alternativeEvidence = entry.value();
         ScopedDiagnosticHandler optionalDiagnostics(function.getContext(), [](Diagnostic&) { return success(); });
-        auto alternative = decodeCyclicAllocationCertificate(function, alternativeEvidence, eligibleIds);
+        auto alternative = decodePhysicalAllocationCertificate(function, alternativeEvidence, eligibleIds);
         if (succeeded(alternative) && alternative->planId == plan->planId) {
             auto alternativeEndpoints = preflight(function, *alternative);
             if (succeeded(alternativeEndpoints)) {
-                originalCost = mappingCost(*endpoints);
-                alternativeCost = mappingCost(*alternativeEndpoints);
-                if (alternativeCost && originalCost && *alternativeCost < *originalCost) {
+                auto comparison = compareMapConstructions(*endpoints, *alternativeEndpoints);
+                const bool improves = comparison && comparison->second < comparison->first;
+                // Keep the winning pair after selection. A later losing candidate
+                // must not overwrite the receipt for the selected mapping.
+                if (comparison && (!originalCost || improves)) {
+                    originalCost = comparison->first;
+                    alternativeCost = comparison->second;
+                    comparedCandidate = entry.index();
+                }
+                if (improves) {
                     choseAlternative = true;
+                    selectedStrategy = alternativeEvidence == certificate.getAs<DictionaryAttr>("regular_candidate") ?
+                        "regular" : "certified-candidate";
                     // Endpoints borrow candidate storage; moving the vector preserves it.
                     *endpoints = std::move(*alternativeEndpoints);
                     *plan = std::move(*alternative);
@@ -1619,10 +1845,13 @@ static LogicalResult allocatePhysicalEventIdsImpl(func::FuncOp function, ArrayRe
     if (originalCost && alternativeCost) {
         Builder metadata(function.getContext());
         mappingChoice = metadata.getDictionaryAttr(
-            {metadata.getNamedAttr("strategy", metadata.getStringAttr(choseAlternative ? "regular" : "cycle-cover")),
-             metadata.getNamedAttr("cost_model", metadata.getStringAttr("structural-map-v1")),
-             metadata.getNamedAttr("cycle_cost", metadata.getI64IntegerAttr(*originalCost)),
-             metadata.getNamedAttr("regular_cost", metadata.getI64IntegerAttr(*alternativeCost))});
+            {metadata.getNamedAttr("strategy",
+                                  metadata.getStringAttr(choseAlternative ? selectedStrategy : "cycle-cover")),
+             metadata.getNamedAttr("cost_model", metadata.getStringAttr("shared-schedule-or-input-dominance-v2")),
+             metadata.getNamedAttr("compared_incumbent_cost", metadata.getI64IntegerAttr(*originalCost)),
+             metadata.getNamedAttr("candidate_cost", metadata.getI64IntegerAttr(*alternativeCost)),
+             metadata.getNamedAttr("candidate_index", metadata.getI64IntegerAttr(comparedCandidate)),
+             metadata.getNamedAttr("candidate_selected", metadata.getBoolAttr(choseAlternative))});
     }
     DominanceInfo dominance(function);
     for (auto& endpoint : *endpoints) {
@@ -1721,7 +1950,7 @@ public:
         }
         if (hasManualOnCoreSynchronization(function)) {
             auto logical = function.walk([](Operation* op) {
-                return isa<LogicalSetOp, LogicalWaitOp>(op)
+                return isa<LogicalFamilyOp, LogicalSetOp, LogicalWaitOp>(op)
                     ? WalkResult::interrupt() : WalkResult::advance();
             });
             // Analysis left a manual function untouched. A mixed logical and

@@ -41,8 +41,9 @@ FailureOr<std::vector<fs::ArithmeticStorageSelectors>> selectorAdapters(
     const fs::ArithmeticProgram& program, llvm::ArrayRef<uint32_t> pipes)
 {
     auto imported = fs::importOwnedArithmeticIntegerPieces(program);
-    auto incomplete = fs::importOwnedArithmeticIntegerPieces(program, true);
-    if (failed(imported) || failed(incomplete)) { return failure(); }
+    auto incomplete = fs::importOwnedArithmeticIntegerPieces(program, fs::ArithmeticPrimitiveRequest::Occurrences);
+    auto requested = fs::importOwnedArithmeticIntegerPieces(program, fs::ArithmeticPrimitiveRequest::Storage);
+    if (failed(imported) || failed(incomplete) || failed(requested)) { return failure(); }
     const auto otherProgram = program;
     if (fs::buildArithmeticStorageSelectorsFromImported(otherProgram, *imported, pipes).error.empty() ||
         fs::buildArithmeticStorageSelectorsFromImported(program, *incomplete, pipes).error.empty()) {
@@ -56,6 +57,7 @@ FailureOr<std::vector<fs::ArithmeticStorageSelectors>> selectorAdapters(
     if (fs::buildArithmeticStorageSelectorsFromImported(program, *imported, pipes).error.empty()) { return failure(); }
     std::vector<fs::ArithmeticStorageSelectors> results;
     results.push_back(fs::buildArithmeticStorageSelectors(program, pipes));
+    results.push_back(fs::buildArithmeticStorageSelectorsFromImported(program, *requested, pipes));
     results.push_back(fs::buildArithmeticStorageSelectorsFromImported(program, moved, pipes));
     results.push_back(fs::buildArithmeticStorageSelectorsFromImported(program, moved, pipes));
     if (before.size() != moved.pieces().size()) { return failure(); }
@@ -77,7 +79,7 @@ class Fixture {
 public:
     fs::ArithmeticProgram program;
     std::vector<uint32_t> pipes{0, 1, 0};
-    Fixture()
+    explicit Fixture(unsigned unusedRelations = 0)
     {
         program.primitives.period = 1;
         program.primitives.pipeCount = 2;
@@ -96,7 +98,24 @@ public:
             if (a != 0) { add(Kind::Writes, a, {}); }
             for (unsigned b = 0; b < 3; ++b) { add(Kind::Order, a, b); }
         }
-        program.recognition = fs::recognizeArithmetic(program.primitives, {2, 4, 1, 1});
+        // Reduction owns these valid native/prerequisite relations. Storage
+        // export has no consumer for their extra existential coordinate.
+        const auto order = llvm::find_if(program.primitives.relations, [](const auto& relation) {
+            return relation.kind == Kind::Order;
+        });
+        const auto sourceOrder = *order;
+        for (unsigned i = 0; i < unusedRelations; ++i) {
+            auto relation = sourceOrder;
+            relation.kind = i % 2 ? Kind::Native : Kind::Prerequisites;
+            auto& piece = relation.pieces.front();
+            SmallVector<AffineExpr> rows(piece.system.getConstraints());
+            SmallVector<bool> equalities(piece.system.getEqFlags());
+            rows.push_back(getAffineSymbolExpr(2, &context));
+            equalities.push_back(true);
+            piece.system = IntegerSet::get(relation.dimensions, 3, rows, equalities);
+            program.primitives.relations.push_back(std::move(relation));
+        }
+        program.recognition = fs::recognizeArithmetic(program.primitives, {2, 5, 1, 1});
     }
 private:
     void add(Kind kind, std::optional<std::size_t> source, std::optional<std::size_t> target)
@@ -596,9 +615,33 @@ bool rationalCoverChecks()
     auto wideCover = fs::rationalCoordinateCover(*wide, 0, requests);
     return wideCover && *wideCover == std::make_pair(Integer(-7), Integer(-3));
 }
+bool selectiveImportChecks()
+{
+    for (unsigned count : {4U, 16U, 64U}) {
+        Fixture fixture(count);
+        auto& program = fixture.program;
+        if (program.recognition.state != fs::RecognitionState::Applicable) { return false; }
+        auto all = fs::importOwnedArithmeticIntegerPieces(program);
+        auto needed = fs::importOwnedArithmeticIntegerPieces(program, fs::ArithmeticPrimitiveRequest::Storage);
+        if (failed(all) || failed(needed) || all->constructionCost().projectionRequests != count ||
+            needed->constructionCost().projectionRequests != 0) { return false; }
+        unsigned ignored = 0;
+        std::size_t at = 0;
+        for (const auto& piece : all->pieces()) {
+            if (piece.schema->kind == Kind::Native || piece.schema->kind == Kind::Prerequisites) {
+                ++ignored; continue;
+            }
+            if (at == needed->pieces().size() || !sameImportedPiece(piece, needed->pieces()[at++])) { return false; }
+        }
+        if (ignored != count || at != needed->pieces().size()) { return false; }
+        auto audit = fs::importArithmeticIntegerPieces(program);
+        if (failed(audit) || audit->size() != all->pieces().size()) { return false; }
+    }
+    return true;
+}
 bool check()
 {
-    Fixture fixture;
+    Fixture fixture(4);
     auto adapters = selectorAdapters(fixture.program, fixture.pipes);
     if (failed(adapters)) { return false; }
     for (const auto& result : *adapters) {
@@ -645,13 +688,131 @@ bool check()
     }
     return true;
 }
+bool absentOrderChecks()
+{
+    MLIRContext context;
+    for (unsigned sites : {4U, 16U, 64U}) {
+        for (bool accesses : {false, true}) {
+            fs::ArithmeticProgram program;
+            program.primitives.period = 1;
+            program.primitives.pipeCount = 1;
+            program.primitives.parameters = {"choice"};
+            program.sites.resize(sites);
+            auto parameter = getAffineSymbolExpr(0, &context);
+            auto append = [&](Kind kind, std::optional<unsigned> site) {
+                fs::PrimitiveRelation relation;
+                relation.kind = kind;
+                relation.sourceSite = site;
+                const bool access = kind == Kind::Reads || kind == Kind::Writes;
+                if (access) {
+                    relation.dimensions = 1;
+                    relation.storageSpace = pto::AddressSpace::VEC;
+                    relation.coordinates.push_back({"byte", fs::CoordinateKind::Storage});
+                }
+                relation.coordinates.push_back({"choice", fs::CoordinateKind::Parameter});
+                if (kind == Kind::Context || site) {
+                    SmallVector<AffineExpr> constraints;
+                    SmallVector<bool> equalities;
+                    if (site) {
+                        constraints.push_back(parameter - *site);
+                        equalities.push_back(true);
+                    } else {
+                        constraints = {parameter, sites - 1 - parameter};
+                        equalities = {false, false};
+                    }
+                    if (access) {
+                        constraints.push_back(getAffineDimExpr(0, &context));
+                        equalities.push_back(true);
+                    }
+                    relation.pieces.push_back({IntegerSet::get(relation.dimensions, 1,
+                        constraints, equalities), SmallVector<uint64_t>(relation.coordinates.size(), 0)});
+                }
+                program.primitives.relations.push_back(std::move(relation));
+            };
+            for (auto kind : {Kind::Context, Kind::Order, Kind::Native, Kind::Prerequisites}) {
+                append(kind, {});
+            }
+            if (!accesses) { append(Kind::Reads, {}); append(Kind::Writes, {}); }
+            // Exactly one scalar occurrence is present for each admissible
+            // entry choice, so the strict reference-order relation is empty.
+            for (unsigned site = 0; site < sites; ++site) {
+                append(Kind::Occurrences, site);
+                if (accesses) { append(Kind::Reads, site); append(Kind::Writes, site); }
+            }
+            program.recognition = fs::recognizeArithmetic(program.primitives, {1, 2, 1, 1});
+            auto result = fs::buildArithmeticStorageSelectors(program, std::vector<uint32_t>(sites, 0));
+            if (!result.error.empty() || !result.cost.emptyOrderSkips ||
+                result.cost.intersectionRequests != (accesses ? 4 * sites : 0) ||
+                result.cost.projectionRequests != (accesses ? 2 * sites : 0)) {
+                llvm::errs() << "absent-order construction sites=" << sites << " accesses=" << accesses
+                    << " error=" << result.error << " skips=" << result.cost.emptyOrderSkips
+                    << " intersections=" << result.cost.intersectionRequests
+                    << " projections=" << result.cost.projectionRequests << "\n";
+                return false;
+            }
+            std::set<std::pair<Boundary, std::optional<std::size_t>>> expectedBoundaries{
+                {Boundary::FirstPayload, {}}, {Boundary::LastPayload, {}}};
+            for (unsigned site = 0; site < sites; ++site) {
+                expectedBoundaries.emplace(Boundary::FirstSite, site);
+                expectedBoundaries.emplace(Boundary::LastSite, site);
+            }
+            if (accesses) {
+                for (auto kind : {Boundary::FirstWriter, Boundary::LastWriter,
+                                  Boundary::FirstReaderBeforeWrite, Boundary::LastReaderAfterWrite}) {
+                    expectedBoundaries.emplace(kind, std::nullopt);
+                }
+            }
+            if (result.cost.emptyOrderSkips > result.cost.blockerRequests) { return false; }
+            for (const auto& boundary : result.boundaries) {
+                if (!expectedBoundaries.erase({boundary.kind, boundary.site})) { return false; }
+            }
+            if (!expectedBoundaries.empty()) { return false; }
+            for (int64_t choice = -1; choice <= sites; ++choice) {
+                std::vector<Occurrence> occurrences;
+                if (choice >= 0 && choice < sites) {
+                    occurrences.push_back({static_cast<std::size_t>(choice), 0, 0,
+                        accesses ? std::set<int64_t>{0} : std::set<int64_t>{},
+                        accesses ? std::set<int64_t>{0} : std::set<int64_t>{}});
+                }
+                for (int64_t byte : {-1, 0, 1}) {
+                    if (!supportMatches(result, occurrences, byte, {Integer(choice)})) { return false; }
+                }
+            }
+            for (int64_t choice = -1; choice <= sites; ++choice) {
+                for (const auto& boundary : result.boundaries) {
+                    for (int64_t byte : {-1, 0, 1}) {
+                        SmallVector<Integer> input;
+                        if (boundary.storageSpace) { input.push_back(Integer(byte)); }
+                        auto actual = fs::evaluateGeneralArithmeticSelector(
+                            boundary.selector, 1, input, {Integer(choice)});
+                        const bool reader = boundary.kind == Boundary::FirstReaderBeforeWrite ||
+                            boundary.kind == Boundary::LastReaderAfterWrite;
+                        const bool present = choice >= 0 && choice < sites && !reader &&
+                            (!boundary.site || *boundary.site == static_cast<std::size_t>(choice)) &&
+                            (!boundary.storageSpace || byte == 0);
+                        if (failed(actual) || actual->has_value() != present ||
+                            (present && ((*actual)->site != static_cast<std::size_t>(choice) ||
+                                         !(*actual)->coordinates.empty()))) { return false; }
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
 } // namespace
 int runArithmeticStorageSelectorChecks()
 {
-    if (!projectionCacheChecks() || !rationalCoverChecks() || !check() || !residueCheck() ||
-        !residueCheck(true) || !quotientImportCheck()) {
-        llvm::errs() << "arithmetic storage selector checks failed\n";
-        return 1;
+    for (const auto& test : std::vector<std::pair<const char*, bool(*)()>>{
+             {"projection cache", projectionCacheChecks}, {"rational cover", rationalCoverChecks},
+             {"occurrence oracle", check}, {"selective import", selectiveImportChecks},
+             {"absent order", absentOrderChecks},
+             {"residue", [] { return residueCheck(); }},
+             {"split residues", [] { return residueCheck(true); }}, {"quotient import", quotientImportCheck}}) {
+        if (!test.second()) {
+            llvm::errs() << "arithmetic storage selector checks failed: " << test.first << "\n";
+            return 1;
+        }
     }
     llvm::outs() << "arithmetic storage boundary selectors match independent byte lifetimes\n";
     return 0;

@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRegional.h"
 #include "SyncLogicalInsertionChecks.h"
+#include "NumericalLogicalTraceChecks.h"
 #include "SequenceBridgeChecks.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/InvocationPrefixCollection.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/CountedLoop.h"
@@ -30,6 +31,7 @@
 #include "mlir/IR/Verifier.h"
 #include "mlir/Pass/PassManager.h"
 #include "PTO/Transforms/Passes.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
@@ -385,7 +387,7 @@ LogicalResult runLogicalInsertionChecks(func::FuncOp function, pto::GMAliasPolic
     if (failed(analysis.initialize(policy))) {
         return failure();
     }
-    if (failed(analysis.prepareNumericCandidateExports())) {
+    if (failed(analysis.auditNumericCandidateExports())) {
         return failure();
     }
     const auto* program = analysis.result();
@@ -771,6 +773,76 @@ bool checkSymbolicArithmeticSiblings(func::FuncOp function, const pto::SyncInput
     auto whole = fs::composeRegionalSequence(function, arena, {pair, children[2]}, true, false);
     if (!whole.error.empty()) { llvm::errs() << whole.error << "\n"; return false; }
     auto regional = fs::sequenceRegionalResult(whole);
+    // The production original-region path must upgrade preparation without
+    // repeating the symbolic sibling composition. Weak exports deliberately
+    // retain the actual arithmetic mathematics but withhold endpoint owners.
+    auto sharedIndex = std::make_shared<fs::PhaseIndex>();
+    if (failed(sharedIndex->build(function, input))) { return false; }
+    auto program = fs::recognizeProgram(function, input, *sharedIndex, fs::ProgramRecognitionMode::Exhaustive);
+    if (failed(program)) { return false; }
+    unsigned weakRequests = 0, strongRequests = 0;
+    fs::SequenceRegionResolver resolver;
+    resolver.region = [&](std::size_t id, bool endpoints, std::string& diagnostic)
+        -> FailureOr<fs::RegionalAnalysis> {
+        if (id >= program->nodes.size()) { return failure(); }
+        const auto found = llvm::find_if(loops, [&](scf::ForOp loop) {
+            return loop.getOperation() == program->nodes[id].anchor;
+        });
+        if (found == loops.end()) { diagnostic = "expected an original arithmetic sibling"; return failure(); }
+        auto child = children[found - loops.begin()];
+        if (endpoints) { ++strongRequests; }
+        else {
+            ++weakRequests;
+            child.capabilities.endpointRecipes = false;
+            child.prepare = {}; child.prepareWithVisits = {}; child.prepareFiltered = {};
+        }
+        return child;
+    };
+    auto weak = fs::analyzeSequenceRegionWithResolver(
+        function, input, *program, 0, arena, sharedIndex, false, resolver);
+    if (!weak.error.empty() || !weak.state || !weak.state->relationalResult ||
+        !weak.state->relationalResult->relations || !weak.state->relationalResult->relations->preparation ||
+        weak.state->relationalResult->capabilities.endpointRecipes || weak.state->relationalCompositions != 1 ||
+        weakRequests != 3) {
+        llvm::errs() << "relational upgrade: original weak composition missing: " << weak.error << "\n";
+        return false;
+    }
+    const auto retainedRelation = weak.state->relationalResult->relations;
+    const auto retainedService = retainedRelation->preparation;
+    const auto nodesBeforeUpgrade = arena->size();
+    auto upgraded = fs::upgradeSequenceEndpoints(weak, 0, resolver);
+    if (!upgraded || !upgraded->error.empty() || !upgraded->state || !upgraded->state->relationalResult ||
+        upgraded->state->upgradeSource != weak.state || upgraded->state->relationalCompositions ||
+        upgraded->upgradeWork.reusedRelationalResults != 1 || upgraded->upgradeWork.replacedChildren ||
+        upgraded->upgradeWork.recomposedCrossings || strongRequests != 3 || arena->size() != nodesBeforeUpgrade ||
+        upgraded->state->relationalResult->relations != retainedRelation ||
+        upgraded->state->relationalResult->relations->preparation != retainedService ||
+        !upgraded->state->relationalResult->capabilities.endpointRecipes ||
+        weak.state->relationalResult->capabilities.endpointRecipes) {
+        llvm::errs() << "relational upgrade rebuilt or replaced retained mathematics\n"; return false;
+    }
+    auto changed = resolver;
+    changed.region = [&](std::size_t id, bool endpoints, std::string& diagnostic) -> FailureOr<fs::RegionalAnalysis> {
+        auto result = resolver(id, endpoints, diagnostic);
+        if (succeeded(result)) { result->firstOrdinal = arena->constant(1); }
+        return result;
+    };
+    if (fs::upgradeSequenceEndpoints(weak, 0, changed)) {
+        llvm::errs() << "relational upgrade accepted changed coordinates\n"; return false;
+    }
+    auto unexported = weak;
+    unexported.state = std::make_shared<fs::SequenceAnalysisState>(*weak.state);
+    unexported.state->relationalResult->relations = std::make_shared<fs::RegionalRelations>();
+    if (fs::upgradeSequenceEndpoints(unexported, 0, resolver)) {
+        llvm::errs() << "relational upgrade bypassed an unavailable initial export\n"; return false;
+    }
+    auto missing = resolver;
+    missing.region = [&](std::size_t id, bool, std::string& diagnostic) { return resolver(id, false, diagnostic); };
+    auto refused = fs::upgradeSequenceEndpoints(weak, 0, missing);
+    if (!refused || refused->error.empty()) {
+        llvm::errs() << "relational upgrade accepted missing endpoint owners\n"; return false;
+    }
+    auto upgradedRegional = fs::sequenceRegionalResult(*upgraded);
     auto verify = [&](const fs::RegionalAnalysis& region, unsigned stages) {
         if ((!region.arithmeticRelations && !region.relations) || region.anchors.size() != stages) {
             llvm::errs() << "symbolic siblings: stages=" << stages << " relations="
@@ -878,19 +950,64 @@ bool checkSymbolicArithmeticSiblings(func::FuncOp function, const pto::SyncInput
         }
         return true;
     };
-    if (!verify(pair, 2) || !verify(regional, 3)) { return false; }
-    auto prepared = fs::prepareSequenceInsertion(whole);
+    if (!verify(pair, 2) || !verify(regional, 3) || !verify(upgradedRegional, 3)) { return false; }
+    auto prepared = fs::prepareSequenceInsertion(*upgraded);
     if (failed(prepared)) {
-        llvm::errs() << "symbolic endpoint export: " << whole.insertionError << "\n"; return false;
+        llvm::errs() << "symbolic endpoint export: " << upgraded->insertionError << "\n"; return false;
     }
     if (failed(fs::insertLogicalSynchronization(function, **prepared)) || failed(mlir::verify(function))) {
         llvm::errs() << "symbolic siblings: insertion or IR verification failed\n";
         return false;
     }
-    auto trace = Interpreter(input.instructions()).run(function);
-    if (!trace.getString("error").value_or("missing trace").empty()) {
-        llvm::errs() << llvm::json::Value(std::move(trace)); return false;
+    if (!numerical_request_oracle::logicalSignatureControls()) { return false; }
+    const auto arguments = function->getAttr("test.trace_arguments");
+    auto restoreArguments = llvm::make_scope_exit([&]() { function->setAttr("test.trace_arguments", arguments); });
+    for (int64_t trips : {0, 1, 3, 5}) {
+        function->setAttr("test.trace_arguments", DenseI64ArrayAttr::get(function.getContext(), {trips}));
+        auto trace = Interpreter(input.instructions()).run(function);
+        auto* events = trace.getArray("events");
+        if (!events || !trace.getString("error").value_or("missing trace").empty() ||
+            trace.getInteger("payloads") != 3 * trips) {
+            llvm::errs() << llvm::json::Value(std::move(trace)); return false;
+        }
+        // This independent command graph has separate start/completion chains.
+        // It validates full logical matching and adds no textual SET->WAIT edge.
+        const auto signature = numerical_request_oracle::logicalSignature(trace);
+        const unsigned payloads = 3 * static_cast<unsigned>(trips), count = 2 * payloads;
+        if (!signature || signature->payloads.size() != payloads) { return false; }
+        std::vector<std::vector<bool>> required(count, std::vector<bool>(count));
+        for (unsigned a = 0; a < payloads; ++a) {
+            const auto stage = a / trips, ordinal = a % trips;
+            const auto pipe = static_cast<unsigned>(children[stage].anchors.front().phase->kPipeValue);
+            if (signature->payloads[a] != std::vector<int64_t>{static_cast<int64_t>(stage),
+                    static_cast<int64_t>(pipe), static_cast<int64_t>(ordinal)}) {
+                llvm::errs() << "relational upgraded payload order changed\n"; return false;
+            }
+            required[2*a][2*a+1] = true;
+            for (unsigned b = a + 1; b < payloads; ++b) {
+                const auto nextStage = b / trips, nextOrdinal = b % trips;
+                if (pipe == static_cast<unsigned>(children[nextStage].anchors.front().phase->kPipeValue)) {
+                    required[2*a][2*b] = required[2*a+1][2*b+1] = true;
+                }
+                const bool overlap = 4*ordinal < 4*nextOrdinal + 32 && 4*nextOrdinal < 4*ordinal + 32;
+                if ((overlap && (stage != 1 || nextStage != 1)) || (stage == 1 && nextStage == 1)) {
+                    required[2*a+1][2*b] = true;
+                }
+            }
+        }
+        for (unsigned middle = 0; middle < count; ++middle) {
+            for (unsigned from = 0; from < count; ++from) {
+                for (unsigned to = 0; to < count; ++to) {
+                    required[from][to] = required[from][to] || (required[from][middle] && required[middle][to]);
+                }
+            }
+        }
+        if (signature->reach != required) {
+            llvm::errs() << "relational upgraded emitted command closure differs from byte hazards\n"; return false;
+        }
     }
+    llvm::outs() << "relational endpoint upgrade: owned mathematics reused, "
+        "zero recomposition, exact matching passed\n";
     llvm::outs() << "symbolic arithmetic siblings: exact queries, covers, recursive exports, and endpoints passed\n";
     return true;
 }

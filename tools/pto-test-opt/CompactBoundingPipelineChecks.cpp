@@ -325,7 +325,7 @@ bool checkLateGuard(func::FuncOp function, const pto::SyncInput& input)
     if (analysis.hasWholeFunctionMinimumDemands() || failed(analysis.initialize(input.memory().gmPolicy()))) {
         return false;
     }
-    auto* demands = analysis.analyzeSequenceFunction();
+    auto* demands = analysis.auditSequenceFunction();
     if (!demands || !demands->error.empty() || !analysis.hasWholeFunctionMinimumDemands()) { return false; }
     auto region = fs::sequenceRegionalResult(*demands);
     if (region.anchors.size() != 2) { return false; }
@@ -334,7 +334,7 @@ bool checkLateGuard(func::FuncOp function, const pto::SyncInput& input)
     const auto query = fs::regionalReachability(region, writer, reader);
     if (!query || region.expressions->constantValue(*query) == 0 ||
         failed(fs::prepareSequenceInsertion(*demands)) ||
-        !analysis.hasWholeFunctionMinimumDemands() || analysis.analyzeSequenceFunction() != demands ||
+        !analysis.hasWholeFunctionMinimumDemands() || analysis.auditSequenceFunction() != demands ||
         fs::regionalReachability(region, writer, reader) != query) { return false; }
     auto prepared = fs::prepareFunctionSynchronization(function, input.memory().gmPolicy());
     if (failed(prepared) || before != render(function) || (*prepared)->compactBoundingOwner) { return false; }

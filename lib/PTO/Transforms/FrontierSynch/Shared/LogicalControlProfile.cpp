@@ -13,6 +13,7 @@
 #include "MixedFamilyInsertion.h"
 #include "PreparedControlLiveness.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PhysicalExecutedCounters.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 namespace mlir::pto::frontiersynch {
@@ -71,6 +72,21 @@ llvm::json::Object functionControl(func::FuncOp function)
     }
     return result;
 }
+llvm::json::Object executedInputs(const PreparedLogicalPlan& plan)
+{
+    auto counters = executedFamilyCounterCount(plan);
+    if (!counters) { return {}; }
+    uint64_t guards = 0, identities = 0, members = 0, coordinates = 0;
+    for (const auto& endpoint : plan.endpoints) {
+        guards += bool(endpoint.guard); identities += bool(endpoint.identity);
+        for (auto [index, value] : llvm::enumerate(endpoint.memberCoordinates)) {
+            if (index) { coordinates += bool(value); }
+            else { members += bool(value); }
+        }
+    }
+    return llvm::json::Object{{"counter_slots", *counters}, {"guard_inputs", guards},
+        {"ordinal_inputs", identities}, {"member_inputs", members}, {"matching_coordinate_inputs", coordinates}};
+}
 } // namespace
 void profileLogicalControl(func::FuncOp function, const PreparedLogicalPlan& plan, StringRef stage)
 {
@@ -94,6 +110,16 @@ void profileLogicalControl(func::FuncOp function, const PreparedLogicalPlan& pla
                             {"recipe_sites", plan.familyRecipe ? familyEndpointPieceCount(*plan.familyRecipe) : 0},
                             {"preparation", preparation(plan)},
                             {"recipe_forms", familyForms(plan)},
+                            {"executed_output", executedInputs(plan)},
+                            {"mapping_comparison", llvm::json::Object{
+                                {"candidates", plan.mappingWork.candidates},
+                                {"exact_footprints", plan.mappingWork.exactFootprints},
+                                {"complete_footprints", plan.mappingWork.completeFootprints},
+                                {"unavailable_preparation", plan.mappingWork.unavailablePreparation},
+                                {"input_dominance", plan.mappingWork.inputDominance},
+                                {"unknown_inputs", plan.mappingWork.unknownInputs},
+                                {"unknown_coalescing", plan.mappingWork.unknownCoalescing},
+                                {"selected", plan.mappingWork.selected}}},
                             {"prefix_expressions",
                              plan.privateState ? plan.privateState->expressionProfile() : llvm::json::Object{}},
                             {"family_materialization",
@@ -106,7 +132,11 @@ void profileLogicalControl(func::FuncOp function, const PreparedLogicalPlan& pla
                                  {"shared_imports", plan.familyWork.sharedImports},
                                  {"shared_candidates", plan.familyWork.sharedCandidates},
                                  {"local_entries", plan.familyWork.localEntries},
-                                 {"contexts", plan.familyWork.contexts}}},
+                                 {"contexts", plan.familyWork.contexts},
+                                 {"preparation_scalars", plan.familyWork.preparationScalars},
+                                 {"compaction_scalars", plan.familyWork.compactionScalars},
+                                 {"mapping_scalars", plan.familyWork.mappingScalars},
+                                 {"barrier_scalars", plan.familyWork.barrierScalars}}},
                             {"function_scope", staged ? "staged-invocation" : "original-or-inserted"},
                             {"function_control", functionControl(staged ? staged : function)}})
                  << "\n";

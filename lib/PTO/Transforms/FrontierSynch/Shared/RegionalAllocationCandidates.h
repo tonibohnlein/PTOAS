@@ -13,9 +13,10 @@ namespace mlir::pto::frontiersynch {
 // Optional lane sharing is a separate upgrade of the already-certified palette
 // graph. The existing split export still requests both stages.
 DictionaryAttr regionalBaseAllocationCertificate(const RegionalAnalysis& region,
-    const PreparedLogicalPlan& plan, AllocationProfile* profile = nullptr);
+    const PreparedLogicalPlan& plan, AllocationProfile* profile = nullptr, ArrayRef<int64_t> eligibleIds = {});
 DictionaryAttr strengthenRegionalAllocationCertificate(const RegionalAnalysis& region,
-    const PreparedLogicalPlan& plan, DictionaryAttr base, AllocationProfile* profile = nullptr);
+    const PreparedLogicalPlan& plan, DictionaryAttr base, AllocationProfile* profile = nullptr,
+    ArrayRef<int64_t> eligibleIds = {});
 // The caller owns the unchanged regional command plan and supplies the actual
 // eligible pool. Success freezes a self-contained certificate; failure retains
 // the incumbent plan. No source IR or endpoint arithmetic is materialized.

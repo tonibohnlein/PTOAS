@@ -181,7 +181,7 @@ std::shared_ptr<const ClosedCompletionChild> ClosedCompletionChild::import(
         // Physical IDs and hidden reservations are jointly closed by the child's
         // existing completed exit. The barrier-only parent allocates no IDs.
         bool logical = false;
-        callee.walk([&](Operation* op) { logical |= isa<LogicalSetOp, LogicalWaitOp>(op); });
+        callee.walk([&](Operation* op) { logical |= isa<LogicalFamilyOp, LogicalSetOp, LogicalWaitOp>(op); });
         if (logical) {
             error = "completion child requires physical allocation before closed import";
             return {};

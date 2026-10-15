@@ -8,6 +8,8 @@
 #include "SequenceAnalysisInternal.h"
 #include "InvocationPrefixCollection.h"
 #include "PrefixExpression.h"
+#include "PrefixExpressionProfile.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
 #include "PrefixDemand.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/IR/Dominance.h"
@@ -264,8 +266,8 @@ FailureOr<Expr> prefixCrossingRoot(
 }
 LogicalResult appendPrefixCrossing(
     const std::shared_ptr<SequenceAnalysisState>& owner, const Crossing& edge, InvocationPrefixCollection& collection,
-    PrefixIncomingSelector expression, PrefixOccurrenceCache& occurrences, PrimitiveCaptures& shared,
-    std::string& error)
+    PrefixIncomingSelector expression, const PrefixOccurrencePtr& originalSource,
+    const PrefixOccurrencePtr& selectedSource, PrimitiveCaptures& shared, std::string& error)
 {
     // The complete batch has already validated ports, cuts and presence before
     // any root is prepared. Share its producer-owned occurrence directory.
@@ -278,9 +280,34 @@ LogicalResult appendPrefixCrossing(
     if (p == q) {
         return appendPrefixIncoming(collection, targetCut, {p, q}, std::move(expression), {}, error);
     }
+    // Publications define the executed rank namespace. Even an unused capture
+    // leaf must retain its original publication and counter increment.
+    std::set<const PrefixOccurrence*> seen;
+    std::vector<PrefixOccurrencePtr> pending{originalSource};
+    while (!pending.empty()) {
+        auto node = pending.back(); pending.pop_back();
+        if (!node) { error = "prefix publication has an incomplete source choice"; return failure(); }
+        if (!seen.insert(node.get()).second) { continue; }
+        if (node->choose) {
+            if (*node->choose >= owner->arena->size() || !owner->arena->isBoolean(*node->choose)) {
+                error = "prefix publication has an invalid source choice"; return failure();
+            }
+            pending.push_back(node->no); pending.push_back(node->yes); continue;
+        }
+        if (!originalPrefixAnchor(node->anchor) || node->match >= owner->arena->size() ||
+            !owner->arena->isBoolean(node->match) || failed(collection.source(node->anchor.phase, {}, error))) {
+            if (error.empty()) { error = "prefix publication lacks its original source cut"; }
+            return failure();
+        }
+    }
+    if (!selectedSource) {
+        return appendPrefixIncoming(collection, targetCut, {p, q}, std::move(expression),
+            [targetCut](OpBuilder& builder, const IRMapping&, ArrayRef<Value>, std::string&) -> FailureOr<Value> {
+                return builder.create<arith::ConstantIndexOp>(targetCut->getLoc(), 0).getResult();
+            }, error);
+    }
     std::map<uint32_t, PrefixCapturedRank> captured;
-    auto sourceOccurrence = sequencePrefixOccurrence(owner, edge.source, occurrences, error);
-    auto sourceId = capturePrefixSource(owner, sourceOccurrence, targetCut, collection, captured, shared, error);
+    auto sourceId = capturePrefixSource(owner, selectedSource, targetCut, collection, captured, shared, error);
     if (failed(sourceId)) { return failure(); }
     return appendPrefixIncoming(
         collection, targetCut, {p, q}, std::move(expression),
@@ -289,6 +316,159 @@ LogicalResult appendPrefixCrossing(
             return selectedPrefixRank(source, captured, targetCut, b, mapping, state, error);
         },
         error);
+}
+std::string originalLocation(Operation* operation)
+{
+    if (!operation) { return {}; }
+    std::string result;
+    llvm::raw_string_ostream out(result);
+    out << operation->getName() << " ";
+    operation->getLoc().print(out);
+    return result;
+}
+std::string originalValue(Value value)
+{
+    if (auto result = dyn_cast<OpResult>(value)) {
+        return originalLocation(result.getOwner()) + " result " + std::to_string(result.getResultNumber());
+    }
+    auto argument = dyn_cast<BlockArgument>(value);
+    return argument ? originalLocation(argument.getOwner()->getParentOp()) +
+        " argument " + std::to_string(argument.getArgNumber()) : std::string{};
+}
+class QueryLineageSnapshots {
+public:
+    explicit QueryLineageSnapshots(const SequenceAnalysisState& owner) : owner(owner) {}
+    PrefixExpressionProfile::QueryEvent event(const SequenceAnalysisState::EventKey& key)
+    {
+        PrefixExpressionProfile::QueryEvent result;
+        const auto& [child, type, ordinal, kind, visits] = key;
+        result.type = type; result.kind = kind == PeriodicEventKind::Start ? "start" : "completion";
+        result.ordinal = coordinate(ordinal); result.visitCount = visits.size();
+        for (auto visit : ArrayRef<Expr>(visits).take_front(PrefixExpressionProfile::maxFrameCoordinates)) {
+            result.visits.push_back(coordinate(visit));
+        }
+        const auto& source = owner.children[child];
+        if (type < source.anchors.size() && source.anchors[type].phase) {
+            result.anchor = originalLocation(source.anchors[type].phase->elementOp);
+        }
+        const auto& region = source.regional;
+        if (type < region.occurrenceLoops.size()) {
+            auto loop = region.occurrenceLoops[type];
+            result.occurrenceLoop = originalLocation(loop.getOperation());
+        }
+        if (type < region.outerLoops.size()) {
+            result.outerLoopCount = region.outerLoops[type].size();
+            for (auto loop : ArrayRef<scf::ForOp>(region.outerLoops[type]).take_front(
+                     PrefixExpressionProfile::maxFrameCoordinates)) {
+                result.outerLoops.push_back(originalLocation(loop.getOperation()));
+            }
+        }
+        return result;
+    }
+private:
+    const SequenceAnalysisState& owner;
+    std::map<Expr, PrefixExpressionProfile::Coordinate> coordinates;
+    const PrefixExpressionProfile::Coordinate& coordinate(Expr root)
+    {
+        auto [position, fresh] = coordinates.try_emplace(root);
+        auto& result = position->second;
+        if (!fresh) { return result; }
+        result.expression = root; result.constant = owner.expressions.constantValue(root);
+        auto inputs = owner.expressions.referencedInputs(ArrayRef<Expr>(root), &result.nodes);
+        result.inputCount = inputs.size();
+        for (auto [id, value] : ArrayRef<std::pair<Expr, Value>>(inputs).take_front(
+                 PrefixExpressionProfile::maxCoordinateInputs)) {
+            PrefixExpressionProfile::CoordinateInput input;
+            input.expression = id; input.original = originalValue(value);
+            if (auto evaluation = owner.expressions.evaluation(id)) {
+                input.original = originalValue(evaluation->original);
+                input.evaluationLoop = originalLocation(evaluation->loop);
+                input.evaluationOrdinal = evaluation->ordinal;
+            }
+            result.inputs.push_back(std::move(input));
+        }
+        return result;
+    }
+};
+void annotateIncomingLineage(const SequenceAnalysisState& owner,
+    ArrayRef<std::pair<Operation*, std::size_t>> requests,
+    const std::map<Operation*, SmallVector<Expr>>& roots, InvocationPrefixCollection& collection)
+{
+    if (!collection.hasDetailedProfile() || !collection.recipe().expressionProfile) { return; }
+    using Label = std::tuple<uint32_t, std::string, std::string>;
+    std::map<Expr, std::map<Label, uint64_t>> queryOutputs;
+    using CacheEntry = decltype(owner.reachabilityCache)::value_type;
+    std::map<Expr, std::vector<const CacheEntry*>> queryPairs;
+    QueryLineageSnapshots snapshots(owner);
+    // Reuse the retained cache, including directly composed singleton bodies.
+    // Count same-child cached query pairs with nonconstant outputs. Interned
+    // aliases may share roots: these counts are not an exclusive work partition.
+    for (const auto& entry : owner.reachabilityCache) {
+        const auto& [pair, root] = entry;
+        const auto child = std::get<0>(pair.first);
+        if (child != std::get<0>(pair.second) || child >= owner.children.size() ||
+            owner.expressions.constantValue(root)) { continue; }
+        const auto& source = owner.children[child];
+        auto mathematics = source.prefixMathematics ? source.prefixMathematics :
+            source.regional.retainedMathematics.lock();
+        const auto producer = mathematics ? mathematics->backend : "unlabelled-regional";
+        const std::string kinds =
+            (std::get<3>(pair.first) == PeriodicEventKind::Start ? "start" : "completion") +
+            std::string("->") +
+            (std::get<3>(pair.second) == PeriodicEventKind::Start ? "start" : "completion");
+        accumulateCost(queryOutputs[root][{child, producer, kinds}], 1);
+        queryPairs[root].push_back(&entry);
+    }
+    std::map<Expr, PrefixExpressionProfile::SequenceLineage> byRoot;
+    for (std::size_t i = 0; i < requests.size(); ++i) {
+        const auto [cut, output] = requests[i];
+        const auto root = roots.at(cut)[output];
+        auto [position, fresh] = byRoot.try_emplace(root);
+        auto& lineage = position->second;
+        if (fresh) {
+            lineage.origin = owner.constructionOrigin;
+            lineage.anchor = originalLocation(owner.constructionAnchor);
+            if (owner.diagnosticRegion) { lineage.region = *owner.diagnosticRegion; }
+            for (auto loop : owner.requiredOuterLoops) {
+                lineage.frame.push_back(originalLocation(loop.getOperation()));
+            }
+            lineage.cachedQueries = owner.reachabilityCache.size();
+            lineage.entries = owner.crossingQueryWork.entries;
+            lineage.prefixQueries = owner.crossingQueryWork.prefixQueries;
+            lineage.suffixQueries = owner.crossingQueryWork.suffixQueries;
+            std::map<Label, uint64_t> groups;
+            lineage.sourceNodes = owner.expressions.visitReferenced(ArrayRef<Expr>(root), [&](Expr id) {
+                auto found = queryOutputs.find(id);
+                if (found == queryOutputs.end()) { return; }
+                for (const auto& [label, count] : found->second) {
+                    accumulateCost(groups[label], count);
+                    accumulateCost(lineage.reachableQueries, count);
+                }
+                for (const auto* entry : queryPairs.at(id)) {
+                    if (lineage.queries.size() == PrefixExpressionProfile::maxQueryDetails) {
+                        accumulateCost(lineage.omittedQueryDetails, 1); continue;
+                    }
+                    const auto child = std::get<0>(entry->first.first);
+                    const auto& source = owner.children[child];
+                    auto mathematics = source.prefixMathematics ? source.prefixMathematics :
+                        source.regional.retainedMathematics.lock();
+                    lineage.queries.push_back({child, id, mathematics ? mathematics->backend : "unlabelled-regional",
+                        snapshots.event(entry->first.first), snapshots.event(entry->first.second)});
+                }
+            });
+            lineage.queryGroups = groups.size();
+            std::vector<std::pair<Label, uint64_t>> ranked(groups.begin(), groups.end());
+            llvm::stable_sort(ranked, [](const auto& a, const auto& b) { return a.second > b.second; });
+            for (const auto& [label, count] : ranked) {
+                if (lineage.groups.size() == 16) { accumulateCost(lineage.omittedQueryPairs, count); continue; }
+                const auto& [child, producer, kinds] = label;
+                lineage.groups.push_back({child, count, producer, kinds});
+            }
+        }
+        const auto& port = owner.ports[owner.crossings[i].source];
+        lineage.source = originalLocation(owner.children[port.child].anchors[port.type].phase->elementOp);
+        collection.recipe().expressionProfile->annotateSequence(owner.arena.get(), root, cut, lineage);
+    }
 }
 } // namespace
 LogicalResult collectSequencePrefixChildren(
@@ -343,6 +523,9 @@ LogicalResult SequenceAnalysisState::collectPrefix(InvocationPrefixCollection& c
     PrefixOccurrenceCache occurrences;
     std::map<Operation*, SmallVector<Expr>> roots;
     std::vector<std::pair<Operation*, std::size_t>> requests;
+    struct SourceRequest { PrefixOccurrencePtr original, selected; };
+    std::vector<SourceRequest> sources;
+    PrefixOccurrenceRestrictionWork restrictionWork;
     for (const auto& edge : crossings) {
         auto root = prefixCrossingRoot(shared_from_this(), edge, certifiedPresence, occurrences, diagnostic);
         if (failed(root)) {
@@ -353,17 +536,28 @@ LogicalResult SequenceAnalysisState::collectPrefix(InvocationPrefixCollection& c
         auto& batch = roots[cut];
         requests.emplace_back(cut, batch.size());
         batch.push_back(*root);
+        SourceRequest source;
+        if (pipe(edge.source) != pipe(edge.target)) {
+            source.original = sequencePrefixOccurrence(shared_from_this(), edge.source, occurrences, diagnostic);
+            if (!source.original) { return failure(); }
+            source.selected = restrictPrefixOccurrence(expressions, source.original, *root, restrictionWork);
+        }
+        sources.push_back(std::move(source));
     }
     std::map<Operation*, std::vector<PrefixIncomingSelector>> expressionsAtCuts;
     for (const auto& [cut, outputs] : roots) {
         expressionsAtCuts.emplace(cut, preparePrefixExpressions(arena, outputs, cut, collection, "sequence-incoming"));
     }
+    annotateIncomingLineage(*this, requests, roots, collection);
+    if (collection.recipe().expressionProfile) {
+        collection.recipe().expressionProfile->recordOccurrenceRestriction(restrictionWork);
+    }
     PrimitiveCaptures captures;
     for (std::size_t i = 0; i < crossings.size(); ++i) {
         const auto [cut, output] = requests[i];
         if (failed(appendPrefixCrossing(
-                shared_from_this(), crossings[i], collection, expressionsAtCuts.at(cut)[output], occurrences, captures,
-                diagnostic))) {
+                shared_from_this(), crossings[i], collection, expressionsAtCuts.at(cut)[output],
+                sources[i].original, sources[i].selected, captures, diagnostic))) {
             return failure();
         }
     }

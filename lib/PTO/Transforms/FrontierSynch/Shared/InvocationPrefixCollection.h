@@ -22,8 +22,10 @@ struct SequenceAnalysisState;
 // cannot materialize it or silently mix direct commands in selected directions.
 class InvocationPrefixCollection {
 public:
-    explicit InvocationPrefixCollection(func::FuncOp original, std::shared_ptr<const SyncInput> input = {})
-        : original(original), input(std::move(input)) {}
+    explicit InvocationPrefixCollection(func::FuncOp original, std::shared_ptr<const SyncInput> input = {},
+                                        bool detailedProfile = false)
+        : original(original), input(std::move(input)), detailedProfile(detailedProfile) {}
+    bool hasDetailedProfile() const { return detailedProfile; }
     LogicalResult bindInput(std::shared_ptr<const SyncInput> owner, std::string& error);
     func::FuncOp function() const { return original; }
     InvocationPrefixRecipe& recipe() { return pending; }
@@ -40,6 +42,7 @@ public:
 private:
     func::FuncOp original;
     std::shared_ptr<const SyncInput> input;
+    bool detailedProfile = false;
     InvocationPrefixRecipe pending;
     std::map<const CompoundInstanceElement*, std::size_t> sources;
     std::map<std::pair<Operation*, uint32_t>, const CompoundInstanceElement*> sourceCuts;

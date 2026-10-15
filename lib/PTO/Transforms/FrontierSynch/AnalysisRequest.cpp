@@ -27,10 +27,68 @@
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 namespace mlir::pto::frontiersynch {
+AnalysisExports mathematicalExports(const MathematicalResult& demands)
+{
+    AnalysisExports available;
+    available.queries = demands.explicitDemands || demands.rotatingDemands ||
+        demands.guardedRotatingDemands || demands.numericNode || demands.sequenceDemands ||
+        demands.finiteGuardedDemands;
+    available.selectors = demands.explicitDemands || demands.sequenceDemands || demands.finiteGuardedDemands;
+    if (demands.sequenceDemands && demands.sequenceDemands->state &&
+        demands.sequenceDemands->state->partialStorage()) { available.selectors = false; }
+    if (demands.regionalDemands) {
+        available.queries = demands.regionalDemands->capabilities.exactQueries;
+        available.selectors = demands.regionalDemands->capabilities.exactSelectors;
+    }
+    if (demands.compactDemands) {
+        const auto& exports = demands.compactDemands->boundary->nativeExports();
+        available.queries = exports.capabilities.exactQueries;
+        available.selectors = exports.capabilities.exactSelectors;
+    }
+    if (demands.backend == "native-scalar" || demands.backend == "expanded-finite-guarded") { available = {}; }
+    return available;
+}
 AnalysisOutcome FrontierAnalysis::minimumDemands(std::size_t region, AnalysisNeeds exports)
 {
     exports.synchronization = false;
     return analyze({region, AnalysisMode::MinimumExact, exports});
+}
+AnalysisOutcome FrontierAnalysis::requestWholeFunctionBackend(AnalysisBackend backend)
+{
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    AnalysisProfileScope profile(sessionState->ledger, "request", 0, analysisBackendName(backend), true);
+    AnalysisOutcome result;
+    result.ledger = sessionState->ledger;
+    result.requestId = profile.requestId();
+    result.status = AnalysisStatus::UnmetObligation;
+    if (!storage || failed(recognizeStructure()) || program->nodes.empty()) {
+        result.obligations.push_back({AnalysisStage::Form, "whole-function original region is unavailable"});
+        return result;
+    }
+    result = requestBackend(backend, {});
+    result.ledger = sessionState->ledger;
+    result.requestId = profile.requestId();
+    return result;
+}
+LogicalResult FrontierAnalysis::analyzeExplicitFunction()
+{
+    const auto result = requestWholeFunctionBackend(AnalysisBackend::Explicit);
+    return success(result.status == AnalysisStatus::Ready && result.mathematical &&
+        result.mathematical->backend == "explicit");
+}
+LogicalResult FrontierAnalysis::analyzeArithmeticFunction()
+{
+    return success(requestWholeFunctionBackend(AnalysisBackend::Arithmetic).status == AnalysisStatus::Ready);
+}
+LogicalResult FrontierAnalysis::analyzeArithmeticPeriodicFunction()
+{
+    return success(requestWholeFunctionBackend(AnalysisBackend::ArithmeticPeriodic).status == AnalysisStatus::Ready);
+}
+SequenceAnalysis* FrontierAnalysis::auditSequenceFunction()
+{
+    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
+    AnalysisProfileScope profile(sessionState->ledger, "audit-sequence", 0, "concrete-composition", true);
+    return produceSequenceFunction();
 }
 AnalysisOutcome FrontierAnalysis::analyzeNumericalRegion(const AnalysisRequest& request)
 {
@@ -193,6 +251,7 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
     AnalysisProfileScope profile(sessionState->ledger, "backend-request", request.region,
         analysisBackendName(backend));
     auto& attempt = sessionState->attempts[request.region][backend];
+    RetainedAttemptPublication publication(*sessionState, attempt);
     if (attempt.produced) { profile.cacheHit(); }
     if (backend == AnalysisBackend::NumericalSequence) {
         const auto key = analysisRequestKey(request);
@@ -223,8 +282,8 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
         }
         if (descends) {
             sessionState->activeRegions.push_back(request.region);
-            attempt.mathematical = request.region == 0 ? produceBackend(backend, attempt.demandError) :
-                produceRegionBackend(backend, request.region, attempt.demandError);
+            attempt.mathematical = request.region == 0 ? produceBackend(backend, request, attempt.demandError) :
+                produceRegionBackend(backend, request, attempt.demandError);
             sessionState->activeRegions.pop_back();
         } else { attempt.demandError = "recursive request must descend to an original child"; }
     }
@@ -262,22 +321,7 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
                 "ordinary rotating form: " + recognitionName(diagnostic.issue).str()});
         }
     }
-    result.available.queries = demands.explicitDemands || demands.rotatingDemands ||
-        demands.guardedRotatingDemands || demands.numericNode || demands.sequenceDemands ||
-        demands.finiteGuardedDemands;
-    result.available.selectors = demands.explicitDemands || demands.sequenceDemands || demands.finiteGuardedDemands;
-    if (demands.sequenceDemands && demands.sequenceDemands->state &&
-        demands.sequenceDemands->state->partialStorage()) { result.available.selectors = false; }
-    if (demands.regionalDemands) {
-        result.available.queries = demands.regionalDemands->capabilities.exactQueries;
-        result.available.selectors = demands.regionalDemands->capabilities.exactSelectors;
-    }
-    if (demands.compactDemands) {
-        const auto& exports = demands.compactDemands->boundary->nativeExports();
-        result.available.queries = exports.capabilities.exactQueries;
-        result.available.selectors = exports.capabilities.exactSelectors;
-    }
-    if (demands.backend == "native-scalar" || demands.backend == "expanded-finite-guarded") { result.available = {}; }
+    result.available = mathematicalExports(demands);
     if (demands.boundedDemands && (request.needs.queries || request.needs.selectors)) {
         std::string error;
         result.regionalExports = boundedExports(demands, false, error);
@@ -399,17 +443,6 @@ std::vector<AnalysisBackend> FrontierAnalysis::exactAttemptFamilies(
     }
     return result;
 }
-bool FrontierAnalysis::visitExactFamily(const AnalysisRequest& request, AnalysisBackend family,
-    const std::function<bool(AnalysisBackend)>& attempt)
-{
-    // Arithmetic recognition remains lazy: earlier successful families never
-    // construct arithmetic forms merely to enumerate the dispatch order.
-    if (family != AnalysisBackend::ArithmeticPeriodic) { return attempt(family); }
-    for (auto method : arithmeticMethods(request)) {
-        if (attempt(method)) { return true; }
-    }
-    return false;
-}
 AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
 {
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
@@ -438,17 +471,79 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
         retained.requestId = profile.requestId();
         return retained;
     }
+    const auto exhaustedKey = sessionState->exhaustedKey(request);
+    bool descent = sessionState->activeRegions.empty();
+    if (!descent) {
+        auto ancestor = program->nodes[request.region].parent;
+        while (ancestor && *ancestor != sessionState->activeRegions.back()) {
+            ancestor = program->nodes[*ancestor].parent;
+        }
+        descent = ancestor.has_value();
+    }
+    if (descent) {
+        if (const auto* cached = sessionState->exhausted(exhaustedKey)) {
+            profile.cacheHit();
+            if (construction.exhaustedWalkHits != UINT64_MAX) { ++construction.exhaustedWalkHits; }
+            auto answer = cached->outcome;
+            answer.ledger = sessionState->ledger; answer.requestId = profile.requestId();
+            return answer;
+        }
+    }
+    bool exhaustedWalk = false;
     auto finish = [&](AnalysisOutcome answer) {
         answer.ledger = sessionState->ledger;
         answer.requestId = profile.requestId();
-        // Later exact evidence can supersede a fallback. Cache positive exact
-        // selections only, never an exhausted walk or a conservative answer.
+        // Positive exact selections remain independent of negative walk recipes.
+        // A fallback or missing export expires on any new retained evidence.
         if (answer.status == AnalysisStatus::Ready && answer.mathematical && !answer.completion &&
             !answer.mathematical->compactDemands) {
             sessionState->selectedAnswers.emplace(identity, answer);
+        } else if (exhaustedWalk && descent) {
+            sessionState->retainExhausted(exhaustedKey, answer);
         }
         return answer;
     };
+    if (request.needs.evaluation == AnalysisEvaluation::Uniform) {
+        // Complete immutable answers can satisfy a different capability subset.
+        // Preserve mode/audit context and exact-key precedence. This inspection
+        // neither dispatches candidates nor prepares a mutable logical plan.
+        const AnalysisOutcome* retained = nullptr;
+        const auto context = analysisRequestKey(request) & ~uint8_t{7};
+        auto begin = sessionState->selectedAnswers.lower_bound({request.region, uint8_t{0}, false});
+        for (auto it = begin; it != sessionState->selectedAnswers.end() &&
+             std::get<0>(it->first) == request.region; ++it) {
+            if ((std::get<1>(it->first) & ~uint8_t{7}) != context ||
+                std::get<2>(it->first) != sessionState->certifying) { continue; }
+            const auto& answer = it->second;
+            if (answer.status != AnalysisStatus::Ready || !answer.mathematical || answer.completion ||
+                answer.mathematical->compactDemands ||
+                (request.needs.queries && !answer.available.queries) ||
+                (request.needs.selectors && !answer.available.selectors) ||
+                (request.needs.synchronization && !answer.available.synchronization)) { continue; }
+            if (!retained || (!retained->mathematical->explicitDemands && answer.mathematical->explicitDemands)) {
+                retained = &answer;
+            }
+        }
+        // A failed stronger Explicit export may still answer this weaker
+        // request. Leave it first in ordinary dispatch rather than bypassing it
+        // with another family's cached selection.
+        if (retained && !retained->mathematical->explicitDemands) {
+            auto region = sessionState->attempts.find(request.region);
+            if (region != sessionState->attempts.end()) {
+                auto explicitAttempt = region->second.find(AnalysisBackend::Explicit);
+                if (explicitAttempt != region->second.end() && explicitAttempt->second.mathematical &&
+                    explicitAttempt->second.mathematical->explicitDemands &&
+                    (!request.needs.synchronization || explicitAttempt->second.endpoints.value_or(true))) {
+                    retained = nullptr;
+                }
+            }
+        }
+        if (retained) {
+            profile.cacheHit();
+            return finish(*retained);
+        }
+    }
+    if (construction.requestWalks != UINT64_MAX) { ++construction.requestWalks; }
     if (request.needs.evaluation == AnalysisEvaluation::Stateful) {
         auto uniform = request;
         uniform.needs.evaluation = AnalysisEvaluation::Uniform;
@@ -458,10 +553,20 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
         retained.status = AnalysisStatus::UnmetObligation;
         retained.stage = AnalysisStage::Demands;
         retained.obligations.push_back({retained.stage, "stateful evaluation is unavailable"});
-        return retained;
+        exhaustedWalk = true;
+        return finish(std::move(retained));
     }
     auto attemptBackend = [&](AnalysisBackend backend) {
         auto attempt = requestBackend(backend, request);
+        if (sessionState->ledger->profiling) {
+            for (auto& selected : sessionState->ledger->selections) {
+                if (selected.request == profile.requestId() && selected.region == request.region &&
+                    selected.method == analysisBackendName(backend)) {
+                    selected.attempted = true;
+                    selected.failureStage = attempt.status == AnalysisStatus::Ready ? 0 : unsigned(attempt.stage);
+                }
+            }
+        }
         // Native protection proves an empty exact demand set, but is not a
         // finite-list certificate. Keep it while trying actual class forms.
         if (attempt.status == AnalysisStatus::Ready && sessionState->certifying &&
@@ -489,18 +594,27 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
     }
     const auto forms = exactForms(request);
     const bool alternative = forms.size() > 1;
-    auto attemptForm = [&](AnalysisForm form) {
-        sessionState->formAttempts[{request.region, form}] = 1;
-        for (auto backend : exactAttemptFamilies(request, form, alternative)) {
-            if (visitExactFamily(request, backend, attemptBackend)) { return true; }
-        }
-        return false;
-    };
-    for (auto form : forms) {
-        if (attemptForm(form)) {
-            return finish(std::move(result));
+    std::vector<AnalysisBackend> candidates;
+    std::map<AnalysisBackend, AnalysisForm> candidateForms;
+    for (const auto form : forms) {
+        for (const auto family : exactAttemptFamilies(request, form, alternative)) {
+            const auto methods = family == AnalysisBackend::ArithmeticPeriodic ? arithmeticMethods(request) :
+                std::vector<AnalysisBackend>{family};
+            for (const auto backend : methods) {
+                if (candidateForms.emplace(backend, form).second) { candidates.push_back(backend); }
+            }
         }
     }
+    while (!candidates.empty()) {
+        // A failed export can retain useful mathematics or qualifications.
+        // Reprice only remaining candidates against that new immutable work.
+        const auto order = rankExactCandidates(request, candidates);
+        const auto backend = order.front();
+        sessionState->formAttempts[{request.region, candidateForms.at(backend)}] = 1;
+        if (attemptBackend(backend)) { return finish(std::move(result)); }
+        candidates.erase(llvm::find(candidates, backend));
+    }
+    exhaustedWalk = true;
     // A missing export can never authorize weakening an exact whole-region order.
     if (!result.mathematical && request.mode == AnalysisMode::Fallback && request.region == 0) {
         auto conservative = requestBackend(AnalysisBackend::CompactBounding, request);
@@ -584,6 +698,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical
         return attempt.second.mathematical == result.mathematical;
     });
     if (retained == attempts.end()) { return failure(); }
+    RetainedAttemptPublication publication(*sessionState, retained->second);
     AnalysisProfileScope profile(sessionState->ledger, "logical-preparation", result.mathematical->region,
         result.mathematical->backend, false, result.requestId);
     if (retained->second.pendingLogical) {
@@ -810,15 +925,12 @@ void FrontierAnalysis::invalidate()
     // Dropping modeled input makes all old handles ineligible for preparation.
     // initialize rebuilds every dependent cache before accepting another request.
     explicitAnalysis.reset();
-    boundedAnalysis.reset();
     sequenceAnalysis.reset();
     arithmeticAnalysis.reset();
     generalArithmeticAnalysis.reset();
-    arithmeticGeneratorStage.reset();
     arithmeticForms.clear();
     arithmeticPeriodicAnalysis.reset();
     finiteVisitAnalyses.clear();
-    periodicExports = {};
     nativeScalarOnly = false;
     sessionState.reset();
     program.reset();

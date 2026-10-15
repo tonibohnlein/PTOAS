@@ -24,9 +24,13 @@
 #include <unordered_map>
 #include <vector>
 namespace mlir::pto::frontiersynch {
+namespace detail { class ScalarConstruction; struct ScalarToken; struct RegionConstructionAccess; }
 class CutExpressionRecipe;
 // Structural cache identity only; never reconstruct an executable value from it.
 void appendCutExpressionKey(const CutExpressionRecipe& recipe, SmallVectorImpl<uint64_t>& key);
+uint32_t cutExpressionRoot(const CutExpressionRecipe& recipe);
+// Exact shared dependencies after specialization at the original cut.
+ArrayRef<uint32_t> cutExpressionSharedExpressions(const CutExpressionRecipe& recipe);
 class RegionExpressions {
 public:
     using Id = uint32_t;
@@ -79,8 +83,18 @@ public:
         }
         inputOwners.push_back(std::move(owner));
     }
+    // Owned executable archive of the reachable DAG. Value bindings are supplied
+    // by the original-IR codec; evaluation placeholders are deliberately refused.
+    // Decode validates topology/types through the ordinary checked constructors.
+    FailureOr<DictionaryAttr> archive(ArrayRef<Id> roots, MLIRContext* context,
+        llvm::function_ref<Attribute(Value)> encodeValue) const;
+    FailureOr<SmallVector<Id>> restoreArchive(DictionaryAttr data,
+        llvm::function_ref<Value(Attribute)> decodeValue);
     // Diagnostic DAG serialization preserves sharing and never evaluates inputs.
     void printExpression(Id expression, llvm::raw_ostream& out) const;
+    // Read-only DAG traversal for diagnostics and live-input slicing. Visits
+    // each valid reachable node once; no evaluation, preparation or new nodes.
+    uint64_t visitReferenced(ArrayRef<Id> roots, llvm::function_ref<void(Id)> visitor) const;
     // Inputs reachable from one circuit root, in DAG order.
     SmallVector<std::pair<Id, Value>> referencedInputs(Id expression) const;
     // One live slice for a multi-output request. Visits count distinct nodes,
@@ -235,6 +249,7 @@ public:
     // memory-effect-free, region-free and speculatable. Pure alone does not
     // establish deterministic duplication (for example, LLVM freeze).
     // Payloads are registered explicitly and may never be replayed.
+    const llvm::DenseSet<Operation*>& prohibitedRecomputation() const { return forbiddenRecomputation; }
     void forbidRecomputation(Operation* operation) { forbiddenRecomputation.insert(operation); }
     // Plan cofactoring and deterministic replay without creating generated SSA.
     // The immutable recipe borrows this append-only arena and unchanged original
@@ -260,12 +275,15 @@ public:
     FailureOr<Value> emitContextual(Id expression, OpBuilder& builder, Operation* cut, CutEmission& context);
 
 private:
-    void importSharedBindings(const CutExpressionRecipe& recipe, CutEmission& context,
-                              const SharedCutBindings& shared);
+    friend struct detail::RegionConstructionAccess;
     // The cleanup qualifier shares one narrow predicate interpreter between
     // retained arena expressions and emitted SSA; it never changes the DAG.
     friend class CutPredicate;
-    enum class Kind { Constant, Input, Add, Sub, Div, Rem, Lt, Le, Eq, SLt, SLe, And, Or, Not, Select, Integer };
+    // Stable opcodes for expression archive version 1. Append new kinds only;
+    // changing an existing meaning requires a new archive version.
+    enum class Kind { Constant = 0, Input = 1, Add = 2, Sub = 3, Div = 4, Rem = 5,
+        Lt = 6, Le = 7, Eq = 8, SLt = 9, SLe = 10, And = 11, Or = 12,
+        Not = 13, Select = 14, Integer = 15 };
     struct IntegerRecipe;
     class RelationBuilder;
     struct Node {
@@ -290,8 +308,8 @@ private:
     Id rebuildInteger(const Node& node, const llvm::DenseMap<Id, Id>& bindings);
     Id internInteger(std::shared_ptr<IntegerRecipe> recipe);
     std::optional<uint64_t> foldInteger(const IntegerRecipe& recipe) const;
-    Value emitInteger(const Node& node, OpBuilder& builder, Location location,
-                      const llvm::DenseMap<Id, Value>& memo) const;
+    detail::ScalarToken constructInteger(const Node& node, detail::ScalarConstruction& construction,
+        MLIRContext* context, llvm::function_ref<detail::ScalarToken(Id)> lookup) const;
     Id reject(const char* message);
     bool valid(Id id) const { return id < nodes.size(); }
     Id binary(Kind kind, Id a, Id b);
@@ -308,6 +326,9 @@ private:
                          const llvm::DenseMap<Id, Value>& memo, SmallVectorImpl<Id>& order);
     Value emitNode(const Node& node, OpBuilder& builder, Location location,
                    const llvm::DenseMap<Id, Value>& memo) const;
+    detail::ScalarToken constructNode(const Node& node, detail::ScalarConstruction& construction,
+        MLIRContext* context, llvm::function_ref<detail::ScalarToken(Id)> lookup,
+        const detail::ScalarToken* input = nullptr) const;
     Id cofactorAtCut(Id expression, Operation* cut, llvm::DenseMap<Id, Id>& memo,
                      llvm::function_ref<bool(Id)> shared);
     std::vector<std::shared_ptr<void>> inputOwners;

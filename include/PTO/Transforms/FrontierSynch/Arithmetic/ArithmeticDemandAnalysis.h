@@ -34,6 +34,11 @@ template<class System>
 using TypedArithmeticRelation = std::map<ArithmeticRelationKey, std::vector<System>>;
 using ArithmeticRelation = TypedArithmeticRelation<DifferenceBoundSystem>;
 using GeneralArithmeticRelation = TypedArithmeticRelation<IntegerSystem>;
+struct AnalysisLedger;
+struct ArithmeticDemandProfile {
+    std::shared_ptr<AnalysisLedger> ledger;
+    std::size_t region = 0;
+};
 struct ArithmeticAnalysisCost {
     uint64_t primitivePieces = 0;
     uint64_t importQueryRequests = 0, importQueryHits = 0, importQueryBuilds = 0;
@@ -41,6 +46,7 @@ struct ArithmeticAnalysisCost {
     uint64_t projections = 0;
     uint64_t relationCompositions = 0;
     uint64_t differences = 0;
+    IntegerDifferenceCost integerDifference;
     uint64_t outputPieces = 0;
     uint64_t implicationCacheHits = 0, rationalImplications = 0;
     uint64_t integerCounterexamples = 0, exactImplicationChecks = 0;
@@ -145,7 +151,7 @@ class StructuredProtection;
 ArithmeticDemandAnalysis analyzeArithmeticDemandsWithProtection(const ArithmeticProgram& program,
                                                                const StructuredProtection& protection);
 GeneralArithmeticDemandAnalysis analyzeGeneralArithmeticDemandsWithProtection(const ArithmeticProgram& program,
-                                                                             const StructuredProtection& protection);
+    const StructuredProtection& protection, ArithmeticDemandProfile profile = {});
 ArithmeticDemandAnalysis analyzeArithmeticDemands(const ArithmeticProgram& program);
 // Exact integer projection extends the same relational engine to recognized
 // octagons and bounded coefficients. Projected unions retain their congruences;

@@ -25,6 +25,7 @@
 #include <set>
 #include <tuple>
 namespace mlir::pto::frontiersynch {
+bool sameOriginalCoordinates(const RegionalAnalysis& a, const RegionalAnalysis& b);
 RegionalAnalysis guardRegionalArm(RegionalAnalysis body, RegionExpressions::Id guard);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> maskRegionalArmPlan(
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepared,
@@ -77,18 +78,29 @@ struct Crossing { uint32_t source = 0, target = 0; Expr guard = 0; };
 struct SequenceNumericalNode;
 struct SequenceCrossingPresence;
 struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisState> {
+    // Primitive child adapters may capture their original composer's address.
+    // An endpoint upgrade owns that immutable source while reusing its children.
+    std::shared_ptr<const SequenceAnalysisState> upgradeSource;
     // Closure seals the endpoint-existence invariant of its retained crossings.
     // Source semantics are immutable after closure; only query caches and
     // prepare/prepareWithVisits/prepareFiltered may change. Semantic callbacks
     // (including endpointEventGuard) stay frozen. Adapters construct a new state.
     bool hasCertifiedCrossingPresence() const;
     LogicalResult collectPrefix(InvocationPrefixCollection& collection, std::string& error);
+    const ArithmeticRegionalAllocationPolicy allocationPolicy;
     func::FuncOp function;
     const SyncInput* input = nullptr;
     const ProgramRecognition* program = nullptr;
     std::shared_ptr<PhaseIndex> indexOwner;
     PhaseIndex& index;
     bool indexReady = false;
+    // Semantic original-region identity for capability upgrades. Specialized
+    // compositions have no such identity and retain their own exact route.
+    std::optional<std::size_t> originalRegionId;
+    // Diagnostic origin only; does not participate in proof/cache identity.
+    std::string constructionOrigin = "direct-composition";
+    std::optional<std::size_t> diagnosticRegion;
+    Operation* constructionAnchor = nullptr;
     bool completeInvocation = true;
     bool reconstructPrerequisites = true;
     bool requireEndpoints = true;
@@ -119,12 +131,16 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     } crossingOrderWork;
     struct CrossingQueryWork {
         uint64_t entries = 0, aliases = 0, suffixQueries = 0, zeroTails = 0, prefixQueries = 0;
+        uint64_t correlatedChoices = 0;
+        uint64_t incomingRequests = 0, incomingFacts = 0, incomingProofVisits = 0;
+        uint64_t incomingArms = 0, incomingCoordinates = 0, incomingResidual = 0;
     } crossingQueryWork;
     void summarizeBoundaries(SequenceAnalysis& result);
     std::vector<Child> children;
     // A symbolic crossing relation cannot be represented as a sampled finite
     // port graph. Retain its exact regional adapter as a separate result.
     std::optional<RegionalAnalysis> relationalResult;
+    uint64_t relationalCompositions = 0;
     // Pair-local finite crossing support does not cover the full symbolic effects.
     using StoragePair = std::tuple<uint32_t, std::size_t, uint32_t, std::size_t>;
     std::set<StoragePair> finiteCrossingPairs;
@@ -152,11 +168,14 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     std::vector<NativeSelectors> nativeFirst, nativeLast;
     uint64_t childPreparationOperations = 0, crossingPreparationOperations = 0;
     explicit SequenceAnalysisState(func::FuncOp f, const SyncInput& i, const ProgramRecognition& p)
-        : function(f), input(&i), program(&p), indexOwner(std::make_shared<PhaseIndex>()), index(*indexOwner),
+        : allocationPolicy(p.allocationPolicy), function(f), input(&i), program(&p),
+          indexOwner(std::make_shared<PhaseIndex>()), index(*indexOwner),
           arena(std::make_shared<RegionExpressions>()), expressions(*arena) {}
     SequenceAnalysisState(func::FuncOp f, std::shared_ptr<RegionExpressions> a,
-                          std::shared_ptr<PhaseIndex> shared = {})
-        : function(f), indexOwner(shared ? shared : std::make_shared<PhaseIndex>()), index(*indexOwner),
+                          std::shared_ptr<PhaseIndex> shared = {},
+                          ArithmeticRegionalAllocationPolicy policy = ArithmeticRegionalAllocationPolicy::SingleId)
+        : allocationPolicy(policy), function(f), indexOwner(shared ? shared : std::make_shared<PhaseIndex>()),
+          index(*indexOwner),
           indexReady(bool(shared)), arena(std::move(a)), expressions(*arena) {}
     Expr yes() { return expressions.boolean(true); }
     Expr no() { return expressions.boolean(false); }
@@ -263,6 +282,8 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
         std::string& diagnostic, ArrayRef<scf::ForOp> enclosing, ArrayRef<uint32_t> typeBases,
         const SequenceEndpointResolver& resolver = {});
 private:
+    friend std::optional<SequenceAnalysis> upgradeSequenceEndpoints(
+        const SequenceAnalysis&, std::size_t, SequenceRegionResolver);
     // False retains per-crossing qualifications for one mixed ordered batch; no partial plan is adopted.
     FailureOr<bool> prepareFiniteCrossings(PreparedLogicalPlan& plan,
         std::vector<RegionalAllocationGroup>& allocation, ArrayRef<uint32_t> typeOffsets,

@@ -32,6 +32,27 @@ namespace {
 void recordSequenceCosts(AnalysisSessionState& session, const SequenceAnalysis& sequence, std::size_t region)
 {
     if (!sequence.state) { return; }
+    if (sequence.state->upgradeSource) {
+        if (session.ledger->profiling && !session.ledger->activeStages.empty()) {
+            const auto parent = session.ledger->stages[session.ledger->activeStages.back()];
+            AnalysisStageRecord record;
+            record.id = session.ledger->stages.size() + 1;
+            record.parent = parent.id;
+            record.request = record.parentRequest = parent.request;
+            record.region = region;
+            record.stage = "sequence-endpoint-upgrade";
+            record.method = sequence.upgradeWork.replacedChildren ? "changed-coordinate-closure" : "retained-closure";
+            record.work = {{"retained-children", sequence.upgradeWork.retainedChildren},
+                {"replaced-children", sequence.upgradeWork.replacedChildren},
+                {"reused-crossings", sequence.upgradeWork.reusedCrossings},
+                {"recomposed-crossings", sequence.upgradeWork.recomposedCrossings},
+                {"reused-relational-results", sequence.upgradeWork.reusedRelationalResults},
+                {"relational-compositions", sequence.state->relationalCompositions}};
+            session.ledger->stages.push_back(std::move(record));
+        }
+        // Old closure counters describe retained construction, not this upgrade.
+        if (!sequence.upgradeWork.replacedChildren) { return; }
+    }
     if (session.ledger->profiling && !session.ledger->activeStages.empty()) {
         const auto& work = sequence.state->crossingOrderWork;
         const auto parent = session.ledger->stages[session.ledger->activeStages.back()];
@@ -56,7 +77,10 @@ void recordSequenceCosts(AnalysisSessionState& session, const SequenceAnalysis& 
         queryRecord.method = "same-occurrence-tail-pruning";
         queryRecord.work = {{"entries", queries.entries}, {"aliases", queries.aliases},
             {"suffix-queries", queries.suffixQueries}, {"zero-tails", queries.zeroTails},
-            {"prefix-queries", queries.prefixQueries}};
+            {"prefix-queries", queries.prefixQueries}, {"correlated-choice-queries", queries.correlatedChoices},
+            {"incoming-requests", queries.incomingRequests}, {"incoming-facts", queries.incomingFacts},
+            {"incoming-proof-visits", queries.incomingProofVisits}, {"incoming-selected-arms", queries.incomingArms},
+            {"incoming-coordinates", queries.incomingCoordinates}, {"incoming-residual", queries.incomingResidual}};
         session.ledger->stages.push_back(std::move(queryRecord));
     }
     for (auto record : sequence.state->crossingMethods) {
@@ -119,6 +143,7 @@ std::shared_ptr<const NormalizedControlDescription> normalizedInput(AnalysisSess
     if (!session.originalControl) { session.originalControl = buildNormalizedControlTree(function, index, input); }
     auto description = normalizeSmallCountControl(originalContext(function, program, region), index, input,
         {}, session.originalControl);
+    session.retainedEvidencePublished();
     return session.normalizedInputs.emplace(region, std::move(description)).first->second;
 }
 } // namespace
@@ -155,26 +180,17 @@ const NumericTemplate& FrontierAnalysis::materializeNumericRegion(std::size_t re
             preflightNumericTemplate(cast<scf::ForOp>(node.anchor), *structuralIndex, *storage, {}, false, {}, {},
                 normalizedInput(*sessionState, function, *program, region, *structuralIndex, *storage)));
         found = sessionState->numericTemplatePlans.emplace(std::make_pair(region, false), std::move(plan)).first;
+        sessionState->retainedEvidencePublished();
     }
     node.numericTemplate = materializeNumericTemplate(*found->second, *structuralIndex, *storage);
+    sessionState->retainedEvidencePublished();
     return *node.numericTemplate;
 }
 void FrontierAnalysis::recordWholeRegion(AnalysisBackend backend)
 {
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
     sessionState->requestsStarted = true;
-    sessionState->wholeRegionEvidence.insert(backend);
-}
-FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRotatingFunction(bool guarded)
-{
-    if (failed(recognizeStructure())) { return failure(); }
-    if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
-    sessionState->requestsStarted = true;
-    auto result = requestBackend(guarded ? AnalysisBackend::GuardedRotating : AnalysisBackend::Rotating, {});
-    if (result.status != AnalysisStatus::Ready) { return failure(); }
-    auto prepared = prepareLogical(result);
-    if (succeeded(prepared)) { (void)attachAllocation(result, **prepared); }
-    return prepared;
+    if (sessionState->wholeRegionEvidence.insert(backend).second) { sessionState->retainedEvidencePublished(); }
 }
 namespace {
 const FiniteExpansionPlan& expansionPlan(AnalysisSessionState& session,
@@ -188,6 +204,7 @@ const FiniteExpansionPlan& expansionPlan(AnalysisSessionState& session,
     auto plan = std::make_shared<const FiniteExpansionPlan>(
         preflightFiniteExpansion(context, index, input, {}, std::move(normalized)));
     auto inserted = session.finiteExpansionPlans.emplace(identity, std::move(plan));
+    session.retainedEvidencePublished();
     return *inserted.first->second;
 }
 const StructureNode* wholeLoop(func::FuncOp function, const SyncInput& input,
@@ -245,6 +262,7 @@ const NumericTemplatePlan* FrontierAnalysis::numericalPreflight(std::size_t regi
         auto plan = std::make_shared<const NumericTemplatePlan>(preflightNumericTemplate(
             cast<scf::ForOp>(node->anchor), *structuralIndex, *storage, {}, true, {}, {}, normalizedRegion(original)));
         found = sessionState->numericTemplatePlans.emplace(key, std::move(plan)).first;
+        sessionState->retainedEvidencePublished();
     }
     return found->second.get();
 }
@@ -256,6 +274,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceExpandedFinit
     }
     auto normalized = normalizedRegion(region);
     auto& cached = sessionState->expandedAttempts[normalized.get()];
+    RetainedAttemptPublication publication(*sessionState, cached);
     if (!cached.produced) {
         cached.produced = true;
         const auto& plan = expansionPlan(*sessionState, *structuralIndex, *storage, normalized);
@@ -294,6 +313,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
     }
     const auto original = static_cast<std::size_t>(node - program->nodes.data());
     auto& attempt = sessionState->loopAttempts[{original, backend}];
+    RetainedAttemptPublication publication(*sessionState, attempt);
     if (!attempt.produced) {
         attempt.produced = true;
         attempt.mathematical = constructLoopBackend(backend, original, attempt.demandError);
@@ -303,7 +323,6 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceLoopBackend(
     if (!attempt.mathematical) { return {}; }
     auto result = std::make_shared<MathematicalResult>(*attempt.mathematical);
     result->region = region;
-    if (region == 0 && result->boundedDemands) { boundedAnalysis = result->boundedDemands; }
     return result;
 }
 std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend(
@@ -477,6 +496,7 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::varyingExports(
     if (!demands.varyingNode || !demands.varyingBoundaryDemands) { return {}; }
     auto id = *demands.varyingNode;
     auto& attempt = sessionState->loopAttempts[{id, AnalysisBackend::VaryingBoundary}];
+    RetainedAttemptPublication publication(*sessionState, attempt);
     AnalysisProfileScope queryProfile(sessionState->ledger, "queries", demands.region, "varying-boundary");
     if (attempt.varyingQueriesAttempted) { queryProfile.cacheHit(); }
     if (!attempt.varyingQueriesAttempted) {
@@ -486,9 +506,10 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::varyingExports(
         attempt.varyingExports = buildVaryingQueries(function, *program->nodes[id].varyingRotating,
             *structuralIndex, *storage, sessionState->expressions, demands.varyingBoundaryDemands,
             attempt.varyingQueryError, storage);
+        if (attempt.varyingExports) { attempt.varyingQueries = varyingQueryResult(*attempt.varyingExports); }
     }
     if (!attempt.varyingExports) { error = attempt.varyingQueryError; return {}; }
-    if (!selectors) { return varyingQueryResult(*attempt.varyingExports); }
+    if (!selectors) { return attempt.varyingQueries; }
     AnalysisProfileScope selectorProfile(sessionState->ledger, "selectors", demands.region, "varying-boundary");
     if (attempt.varyingSelectorsAttempted) { selectorProfile.cacheHit(); }
     if (!attempt.varyingSelectorsAttempted) {
@@ -496,7 +517,8 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::varyingExports(
         attempt.varyingSelectorsAttempted = true;
         if (construction.varyingSelectorBuilds != UINT64_MAX) { ++construction.varyingSelectorBuilds; }
     }
-    return varyingSelectedResult(*attempt.varyingExports, *storage, error);
+    attempt.varyingSelectors = varyingSelectedResult(*attempt.varyingExports, *storage, error);
+    return attempt.varyingSelectors;
 }
 std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::boundedExports(
     const MathematicalResult& demands, bool selectors, std::string& error)
@@ -510,6 +532,7 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::boundedExports(
     if (!node.boundedLifetime) { return {}; }
     const auto loopRegion = static_cast<std::size_t>(std::distance(program->nodes.begin(), original));
     auto& attempt = sessionState->loopAttempts[{loopRegion, AnalysisBackend::BoundedLifetime}];
+    RetainedAttemptPublication publication(*sessionState, attempt);
     AnalysisProfileScope queryProfile(sessionState->ledger, "queries", demands.region, "bounded-lifetime");
     if (attempt.boundedQueriesAttempted) { queryProfile.cacheHit(); }
     if (!attempt.boundedQueriesAttempted) {
@@ -544,6 +567,7 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::arithmeticExports(
 {
     if (!demands.arithmeticRegionalDemands) { return {}; }
     auto& attempt = sessionState->arithmeticRegionAttempts[demands.region];
+    RetainedAttemptPublication publication(*sessionState, attempt);
     AnalysisProfileScope queryProfile(sessionState->ledger, "queries", demands.region, "arithmetic");
     if (attempt.arithmeticQueriesAttempted) { queryProfile.cacheHit(); }
     if (!attempt.arithmeticQueriesAttempted) {
@@ -551,7 +575,7 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::arithmeticExports(
         attempt.arithmeticQueriesAttempted = true;
         if (construction.arithmeticQueryBuilds != UINT64_MAX) { ++construction.arithmeticQueryBuilds; }
         auto queries = exportArithmeticRegion(*demands.arithmeticRegionalDemands,
-            sessionState->expressions, false, attempt.arithmeticQueryError, storage);
+            sessionState->expressions, false, attempt.arithmeticQueryError, storage, arithmeticAllocationPolicy());
         if (succeeded(queries)) {
             attempt.arithmeticQueries = std::make_shared<const RegionalAnalysis>(std::move(*queries));
         }
@@ -565,7 +589,7 @@ std::shared_ptr<const RegionalAnalysis> FrontierAnalysis::arithmeticExports(
         attempt.arithmeticSelectorsAttempted = true;
         if (construction.arithmeticSelectorBuilds != UINT64_MAX) { ++construction.arithmeticSelectorBuilds; }
         auto selected = exportArithmeticRegion(*demands.arithmeticRegionalDemands,
-            sessionState->expressions, true, attempt.arithmeticSelectorError, storage);
+            sessionState->expressions, true, attempt.arithmeticSelectorError, storage, arithmeticAllocationPolicy());
         if (succeeded(selected)) {
             attempt.arithmeticSelectors = std::make_shared<const RegionalAnalysis>(std::move(*selected));
         }
@@ -619,6 +643,7 @@ std::shared_ptr<const ArithmeticRegionalRelations> FrontierAnalysis::specialized
         auto ownedMathematics = std::make_shared<ArithmeticRegionalRelations>(*mathematics);
         ownedMathematics->inputOwner = storage; ownedMathematics->indexOwner = structuralIndex;
         attempt.mathematics = std::move(ownedMathematics);
+        sessionState->retainedEvidencePublished();
     }
     error = attempt.error;
     auto result = attempt.mathematics;
@@ -717,6 +742,7 @@ std::shared_ptr<const GuardedRotatingMathematics> FrontierAnalysis::specializedG
     } else { error = "guarded rotating form is unavailable in this specialization"; }
     if (!error.empty()) { mathematics->demands.error = error; }
     variants.push_back({request.sliced, request.choices, request.guards, std::move(bindings), mathematics, error});
+    if (error.empty()) { sessionState->retainedEvidencePublished(); }
     return mathematics;
 }
 std::shared_ptr<GuardedRotatingMathematics> FrontierAnalysis::instantiateGuardedDemands(
@@ -788,6 +814,7 @@ std::shared_ptr<const NumericBodyMathematics> FrontierAnalysis::specializedNumer
     if (demands) {
         attempt.mathematics = std::make_shared<const NumericBodyMathematics>(
             NumericBodyMathematics{std::move(body), std::move(demands), storage, structuralIndex, normalized});
+        sessionState->retainedEvidencePublished();
     }
     error = attempt.error;
     auto result = attempt.mathematics; variants.push_back(std::move(attempt)); return result;
@@ -806,6 +833,7 @@ FailureOr<RegionalAnalysis> FrontierAnalysis::finiteArithmeticRegion(std::size_t
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
     sessionState->requestsStarted = true;
     auto& cached = sessionState->arithmeticRegionAttempts[region];
+    RetainedAttemptPublication publication(*sessionState, cached);
     if (!cached.finiteArithmeticStorage) {
         const auto* form = recognizeArithmeticRegion(region);
         if (!form) { cached.finiteArithmeticStorageError = "original arithmetic form is unavailable"; }
@@ -823,6 +851,7 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver(
     std::shared_ptr<const MathematicalResult> retainedNumerical)
 {
     SequenceRegionResolver resolver;
+    resolver.allocationPolicy = arithmeticAllocationPolicy();
     auto tagged = [this](const RegionalAnalysis& source, std::shared_ptr<const MathematicalResult> owner) {
         RegionalAnalysis exported = source;
         const std::weak_ptr<const MathematicalResult> empty;
@@ -965,8 +994,9 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::adaptNumericalSequen
     return owned;
 }
 std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend(
-    AnalysisBackend backend, std::size_t region, std::string& error)
+    AnalysisBackend backend, const AnalysisRequest& request, std::string& error)
 {
+    const auto region = request.region;
     if (backend == AnalysisBackend::NumericalPeriodic || backend == AnalysisBackend::Rotating ||
         backend == AnalysisBackend::GuardedRotating || backend == AnalysisBackend::BoundedLifetime ||
         backend == AnalysisBackend::FiniteVisit || backend == AnalysisBackend::VaryingBoundary) {
@@ -980,11 +1010,36 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend
     if (backend == AnalysisBackend::NumericalSequence) { return adaptNumericalSequence(region, error); }
     if (backend == AnalysisBackend::Sequence || backend == AnalysisBackend::SequenceEndpoints) {
         const bool endpoints = backend == AnalysisBackend::SequenceEndpoints;
-        if (auto identity = produceIdentitySequence(region, endpoints, error)) { return identity; }
+        if (auto identity = produceIdentitySequence(request, endpoints, error)) { return identity; }
         error.clear();
-        auto sequence = std::make_shared<SequenceAnalysis>(analyzeSequenceRegionWithResolver(
-            function, *storage, *program, region, sessionState->expressions, structuralIndex,
-            endpoints, regionalResolver()));
+        std::optional<SequenceAnalysis> upgraded;
+        if (endpoints) {
+            const auto scope = sessionState->attempts.find(region);
+            if (scope != sessionState->attempts.end()) {
+                const auto weak = scope->second.find(AnalysisBackend::Sequence);
+                if (weak != scope->second.end() && weak->second.mathematical &&
+                    weak->second.mathematical->sequenceDemands) {
+                    upgraded = upgradeSequenceEndpoints(*weak->second.mathematical->sequenceDemands,
+                        region, regionalResolver());
+                }
+            }
+        }
+        if (endpoints && !upgraded && sessionState->ledger->profiling &&
+            !sessionState->ledger->activeStages.empty()) {
+            const auto parent = sessionState->ledger->stages[sessionState->ledger->activeStages.back()];
+            AnalysisStageRecord record;
+            record.id = sessionState->ledger->stages.size() + 1;
+            record.parent = parent.id;
+            record.request = record.parentRequest = parent.request;
+            record.region = region;
+            record.stage = "sequence-endpoint-upgrade";
+            record.method = "no-applicable-retained-sequence";
+            record.work = {{"full-exact-recomposition", 1}};
+            sessionState->ledger->stages.push_back(std::move(record));
+        }
+        auto sequence = std::make_shared<SequenceAnalysis>(upgraded ? std::move(*upgraded) :
+            analyzeSequenceRegionWithResolver(function, *storage, *program, region,
+                sessionState->expressions, structuralIndex, endpoints, regionalResolver()));
         recordSequenceCosts(*sessionState, *sequence, region);
         if (!sequence->error.empty()) { error = sequence->error; return {}; }
         if (region == 0) {
@@ -1017,6 +1072,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceArithmeticReg
     std::size_t region, std::string& error)
 {
     auto& cached = sessionState->arithmeticRegionAttempts[region];
+    RetainedAttemptPublication publication(*sessionState, cached);
     if (!cached.produced) {
         cached.produced = true;
         const auto& node = program->nodes[region];
@@ -1032,7 +1088,8 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceArithmeticReg
             if (sessionState->arithmeticRegionBuilds != UINT64_MAX) { ++sessionState->arithmeticRegionBuilds; }
             const auto* form = recognizeArithmeticRegion(region);
             owned->arithmeticRegionalDemands = analyzeArithmeticRegionDemands(
-                {function, node.anchor}, *structuralIndex, *storage, form, cached.demandError);
+                {function, node.anchor}, *structuralIndex, *storage, form, cached.demandError,
+                {sessionState->ledger->profiling ? sessionState->ledger : nullptr, region});
             if (!owned->arithmeticRegionalDemands) { recordArithmeticFormFailure(cached.failure, form); }
             if (owned->arithmeticRegionalDemands) { cached.mathematical = std::move(owned); }
         }
@@ -1042,14 +1099,14 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceArithmeticReg
     return cached.mathematical;
 }
 std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
-    AnalysisBackend backend, std::string& error)
+    AnalysisBackend backend, const AnalysisRequest& request, std::string& error)
 {
     auto owned = std::make_shared<MathematicalResult>();
     owned->input = storage;
     owned->recognition = program;
     switch (backend) {
     case AnalysisBackend::Explicit:
-        if (failed(analyzeExplicitFunction())) {
+        if (failed(produceExplicitFunction())) {
             if (nativeScalarOnly) {
                 owned->explicitDemands = std::make_shared<ExplicitAnalysis>();
                 owned->backend = "native-scalar";
@@ -1091,11 +1148,11 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
     case AnalysisBackend::NumericalSequence:
         return adaptNumericalSequence(0, error);
     case AnalysisBackend::SequenceEndpoints:
-        return produceRegionBackend(backend, 0, error);
+        return produceRegionBackend(backend, request, error);
     case AnalysisBackend::Sequence: {
-        if (auto identity = produceIdentitySequence(0, false, error)) { return identity; }
+        if (auto identity = produceIdentitySequence(request, false, error)) { return identity; }
         error.clear();
-        const auto* sequence = analyzeSequenceFunction();
+        const auto* sequence = produceSequenceFunction();
         if (sequence) { recordSequenceCosts(*sessionState, *sequence, 0); }
         const bool complete = sequence && sequence->error.empty() && program->sequenceContract &&
             program->sequenceContract->membership == ContractStatus::Established &&
@@ -1110,7 +1167,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
         return owned;
     }
     case AnalysisBackend::ArithmeticPeriodic:
-        if (failed(analyzeArithmeticPeriodicFunction())) {
+        if (failed(produceArithmeticPeriodicFunction())) {
             recordArithmeticFormFailure(sessionState->attempts[0][backend].failure,
                 program->arithmetic ? &*program->arithmetic : nullptr);
             error = arithmeticPeriodicAnalysis ? arithmeticPeriodicAnalysis->conversion.diagnostic :
@@ -1121,7 +1178,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
         owned->backend = "arithmetic-periodic";
         return owned;
     case AnalysisBackend::Arithmetic:
-        if (failed(analyzeArithmeticFunction())) {
+        if (failed(produceArithmeticFunction())) {
             recordArithmeticFormFailure(sessionState->attempts[0][backend].failure,
                 program->arithmetic ? &*program->arithmetic : nullptr);
             return {};

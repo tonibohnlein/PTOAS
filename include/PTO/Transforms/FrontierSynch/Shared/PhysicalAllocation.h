@@ -14,6 +14,7 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Dominance.h"
+#include "llvm/ADT/DenseMap.h"
 #include <optional>
 namespace mlir::pto::frontiersynch {
 inline constexpr llvm::StringLiteral CyclicAllocationAttr = "pto.cyclic_allocation";
@@ -43,6 +44,8 @@ struct PhysicalRecordAllocation {
     uint32_t targetPipe = 0;
     uint64_t stride = 0;
     uint64_t phase = 0;
+    // Ordered certified slot-to-ID assignment. Nonconflicting slots may
+    // repeat a physical ID; cyclic and tuple offsets index the full table.
     SmallVector<int64_t> ids;
     std::optional<PhysicalTupleRule> tupleRule;
 };
@@ -52,7 +55,10 @@ struct PhysicalAllocationPlan {
 };
 // Common hardware/input admission before either physical-output route.
 LogicalResult preflightPhysicalOutput(func::FuncOp function, DictionaryAttr certificate);
-bool physicalCandidateFits(DictionaryAttr certificate, std::size_t capacity);
+// Validate grouped command provenance using the same family/cut/tuple checks as
+// pure allocation. Singleton records are returned without rewriting identities.
+FailureOr<llvm::DenseMap<Operation*, int64_t>> resolveExecutedFamilyCommands(
+    func::FuncOp function, const PhysicalAllocationPlan& records);
 // Both retained and serialized plans use this pure mapping planner. The
 // supplied allocation is already certified; fitting only re-expresses it.
 class PhysicalEndpointMap;
@@ -64,6 +70,20 @@ uint64_t physicalMapTupleArity(const PhysicalEndpointMap& mapping);
 // Sufficient equality of complete total maps, independent of record labels.
 bool equivalentPhysicalMaps(const PhysicalEndpointMap& a, const PhysicalEndpointMap& b);
 std::optional<uint64_t> physicalMapCost(const PhysicalEndpointMap& mapping);
+// Actual scalar construction before optional CSE/hoisting, using the emission
+// schedule with symbolic tokens. Includes constants, selectors and tuple dispatch;
+// constructs no SSA and excludes already prepared matching/guard inputs.
+std::optional<uint64_t> physicalMapConstructionOperations(const PhysicalEndpointMap& mapping);
+enum class PhysicalMapComparisonKind { Unknown, ExactFootprint, InputDominance };
+// Identical live input masks cancel frozen upstream preparation; different
+// selectors/tuple dispatch use exact shared-schedule counts. A residual dominance
+// proof allows removing inputs/selectors without counting exclusive savings.
+// The caller must preserve the physical-site/coalescing partition. Strictly
+// smaller construction then proves a complete improvement at that frozen site.
+// Unknown is not a cost or permission to replace an incumbent; no SSA is built.
+std::optional<std::pair<uint64_t, uint64_t>> comparePhysicalMapConstruction(
+    const PhysicalEndpointMap& incumbent, const PhysicalEndpointMap& candidate,
+    PhysicalMapComparisonKind* kind = nullptr);
 // Lowering is infallible for a validated immutable map and preflighted bindings.
 // Matching coordinates exclude the provenance label: source ordinal first,
 // followed by enclosing invocation coordinates. Lower only inside exact activity.

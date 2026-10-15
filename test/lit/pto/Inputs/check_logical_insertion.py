@@ -212,7 +212,10 @@ def main():
         empty_certificate = ('pto.cyclic_allocation = {budget = 0 : i64, entries = [], '
                              'order_exact = true, plan = 0 : i64, strategy = "directed-cycle-cover", '
                              'version = 3 : i64}, ')
-        assert empty_certificate in empty_inserted
+        empty_regional_certificate = ('pto.finite_allocation = {groups = [], kind = "finite", '
+                                      'lane_evidence = {lanes = []}, macro_reservations, plan = 0 : i64, '
+                                      'strategy = "regional-palettes", version = 2 : i64}, ')
+        assert empty_certificate in empty_inserted or empty_regional_certificate in empty_inserted
         assert without_function_metadata(empty_inserted) == without_function_metadata(
             invoke(tool, "--roundtrip", path))
         empty_trace = json.loads(invoke(tool, "--insertion-trace", path))

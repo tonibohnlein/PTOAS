@@ -32,7 +32,11 @@ struct RegionalRelationData {
     ArithmeticStorageSelectors selectors;
     std::vector<ArithmeticOccurrenceDomain> occurrences;
 };
+struct RegionalRelationPreparation;
 struct RegionalRelations {
+    explicit RegionalRelations(ArithmeticRegionalAllocationPolicy policy =
+        ArithmeticRegionalAllocationPolicy::SingleId) : allocationPolicy(policy) {}
+    const ArithmeticRegionalAllocationPolicy allocationPolicy;
     RegionalRelationData data;
     GeneralArithmeticRelation newCrossings;
     std::string exportObligation;
@@ -40,6 +44,9 @@ struct RegionalRelations {
     // compact demand representation is not an integer relation.
     std::vector<RegionalAnalysis> children;
     std::vector<std::shared_ptr<Block>> auxiliaryOwners;
+    // The immutable service retains the already exported crossing mathematics.
+    // Fresh child preparation owners may be rebound without recomposing it.
+    std::shared_ptr<const RegionalRelationPreparation> preparation;
 };
 RegionalRelationData arithmeticRelationData(const ArithmeticRegionalRelations& input);
 FailureOr<RegionalRelationData> composeRegionalRelationData(
@@ -49,6 +56,7 @@ FailureOr<RegionalRelationData> composeRegionalRelationData(
 // export obligation; the supplied child analyses are never changed or rerun.
 FailureOr<RegionalAnalysis> composeSymbolicRegionalSequence(
     ArrayRef<RegionalAnalysis> children, func::FuncOp function, const SyncInput& input,
-    const PhaseIndex& index, std::string& error);
+    const PhaseIndex& index, std::string& error,
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId);
 } // namespace mlir::pto::frontiersynch
 #endif

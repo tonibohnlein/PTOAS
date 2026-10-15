@@ -8,6 +8,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_REPEATEDPHASES_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_REPEATEDPHASES_H
 #include "PTO/Transforms/FrontierSynch/Shared/RepeatedRegion.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticAllocationPolicy.h"
 namespace mlir::pto::frontiersynch {
 struct RepeatedStorageTypesResult;
 // Explicit phase views are charged descriptions, not unfolded loop iterations.
@@ -25,6 +26,7 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
     ArrayRef<scf::ForOp> enclosing = {},
     RegionExpressions::Id begin = RegionExpressions::invalid,
     std::optional<uint64_t> maximumLength = std::nullopt,
-    std::shared_ptr<const RepeatedStorageTypesResult> storage = {});
+    std::shared_ptr<const RepeatedStorageTypesResult> storage = {},
+    ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId);
 } // namespace mlir::pto::frontiersynch
 #endif
