@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PhysicalMapInputs.h"
 #include "PrefixLifetimes.h"
+#include "ClosedCompletionChild.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalExecutedCounters.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
@@ -24,6 +25,7 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Verifier.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -1555,7 +1557,7 @@ void emitPhysicalCommand(
         }
     }
 }
-LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> eligibleIds)
+static LogicalResult allocatePhysicalEventIdsImpl(func::FuncOp function, ArrayRef<int64_t> eligibleIds)
 {
     if (!function) {
         return failure();
@@ -1671,6 +1673,32 @@ LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> 
     if (!endpoints->empty() && !function->hasAttr(ActiveContextAttr)) {
         compactGeneratedArithmetic(function, original, dominance);
     }
+    return success();
+}
+LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> eligibleIds)
+{
+    if (!function || !function->hasAttr("pto.closed_completion")) {
+        return allocatePhysicalEventIdsImpl(function, eligibleIds);
+    }
+    std::string error;
+    auto previous = decodeClosedCompletionExport(function, error);
+    if (failed(previous)) {
+        return function.emitError(error);
+    }
+    // Closed exports forbid symbol users. Stage this function with only its
+    // immutable target attributes, never clone/read concurrently edited siblings.
+    OwningOpRef<ModuleOp> staged = ModuleOp::create(function.getLoc());
+    if (auto parent = function->getParentOfType<ModuleOp>()) {
+        (*staged)->setAttrs(parent->getAttrs());
+    }
+    auto clone = cast<func::FuncOp>(function->clone());
+    staged->getBody()->push_back(clone);
+    if (failed(allocatePhysicalEventIdsImpl(clone, eligibleIds)) ||
+        failed(emitClosedCompletionExport(clone, *previous)) || failed(verify(*staged))) {
+        return failure();
+    }
+    function.getBody().takeBody(clone.getBody());
+    function->setAttrs(clone->getAttrs());
     return success();
 }
 } // namespace mlir::pto::frontiersynch

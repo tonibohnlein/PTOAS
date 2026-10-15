@@ -30,6 +30,9 @@ class SyncStorageEffects;
 class SyncDescriptorState;
 class SyncScalarFacts;
 enum class SyncInstructionView { TranslatorStages, PipeEnvelopes };
+// Coarse completion consumers use declared modes and phase facts only. Fine
+// storage geometry/alias/cell queries are unavailable, not an empty effect set.
+enum class SyncInputDetail { FineStorage, CoarseCompletion };
 
 class SyncInput {
 public:
@@ -42,7 +45,9 @@ public:
   // Source MLIR must outlive the borrowed operation and value anchors.
   // Failure exposes no partial records. Geometry is a summary, not a full-write proof.
   LogicalResult build(func::FuncOp function);
-  LogicalResult build(func::FuncOp function, SyncInstructionView view);
+  LogicalResult build(
+      func::FuncOp function, SyncInstructionView view, SyncInputDetail detail = SyncInputDetail::FineStorage);
+  bool hasFineStorage() const { return detail == SyncInputDetail::FineStorage; }
   SyncIRs &ir() { return nodes; }
   const SyncIRs &ir() const { return nodes; }
   const Buffer2MemInfoMap &buffers() const { return storage; }
@@ -62,6 +67,7 @@ public:
   const MemoryDependentAnalyzer &memory() const { return analyzer; }
 private:
   LogicalResult buildPipeEnvelopes(func::FuncOp function);
+  SyncInputDetail detail = SyncInputDetail::FineStorage;
   MemoryDependentAnalyzer analyzer;
   Buffer2MemInfoMap storage;
   SyncIRs nodes;

@@ -51,56 +51,80 @@ const SyncStorageEffects& SyncInput::accesses() const { return *resolvedAccesses
 LogicalResult SyncInput::build(func::FuncOp function) {
   return build(function, SyncInstructionView::TranslatorStages);
 }
-LogicalResult SyncInput::build(func::FuncOp function, SyncInstructionView view) {
-  resolvedAccesses = std::make_unique<SyncStorageEffects>();
-  descriptors.reset();
-  scalars = std::make_shared<SyncScalarFacts>();
-  declaredEffects.clear();
-  phases.clear();
-  macroEnvelopes.clear();
-  nodes.clear();
-  storage.clear();
-  if (function.isDeclaration()) {
-    return success();
-  }
-  PTOIRTranslator translator(nodes, storage, function, SyncAnalysisMode::NORMALSYNC);
-  if (failed(translator.Build())) {
-    return failure();
-  }
-  if (view == SyncInstructionView::TranslatorStages) {
-    for (const auto& node : nodes) {
-      if (auto* phase = dyn_cast<CompoundInstanceElement>(node.get())) { phases.push_back(phase); }
+LogicalResult SyncInput::build(func::FuncOp function, SyncInstructionView view, SyncInputDetail requestedDetail)
+{
+    detail = requestedDetail;
+    resolvedAccesses = std::make_unique<SyncStorageEffects>();
+    descriptors.reset();
+    scalars = std::make_shared<SyncScalarFacts>();
+    declaredEffects.clear();
+    phases.clear();
+    macroEnvelopes.clear();
+    nodes.clear();
+    storage.clear();
+    if (function.isDeclaration()) {
+        return success();
     }
-  } else {
-    if (failed(buildPipeEnvelopes(function))) { return failure(); }
-  }
-  SmallVector<SyncDescriptorState::Query> queries;
-  auto queryMemory = [&](const CompoundInstanceElement* phase, const BaseMemInfo* memory) {
-    if (!memory) { return; }
-    queries.emplace_back(phase->elementOp, memory->rootBuffer);
-    // Physical mapping can consult compact strides on enclosing descriptors,
-    // including view ancestors that are not literal operands of this access.
-    for (Value value = memory->baseBuffer; value;) {
-      queries.emplace_back(phase->elementOp, value);
-      auto view = dyn_cast_or_null<ViewLikeOpInterface>(value.getDefiningOp());
-      if (!view || view.getViewSource() == value) { break; }
-      value = view.getViewSource();
+    PTOIRTranslator translator(nodes, storage, function, SyncAnalysisMode::NORMALSYNC);
+    if (failed(translator.Build())) {
+        return failure();
     }
-  };
-  for (const auto* phase : phases) {
-    for (const auto* memory : phase->useVec) { queryMemory(phase, memory); }
-    for (const auto* memory : phase->defVec) { queryMemory(phase, memory); }
-  }
-  descriptors = std::make_shared<SyncDescriptorState>(function, queries, scalars);
-  function.walk([&](Operation* operation) {
-    if (getContextualLocalAccessEffects(operation, declaredEffects[operation], [&](Value value) {
-          return descriptors->constantShape(value, operation);
-        })) { return; }
-    if (auto interface = dyn_cast<MemoryEffectOpInterface>(operation)) {
-      interface.getEffects(declaredEffects[operation]);
+    if (view == SyncInstructionView::TranslatorStages) {
+        for (const auto& node : nodes) {
+            if (auto* phase = dyn_cast<CompoundInstanceElement>(node.get())) {
+                phases.push_back(phase);
+            }
+        }
+    } else {
+        if (failed(buildPipeEnvelopes(function))) {
+            return failure();
+        }
     }
-  });
-  return resolvedAccesses->build(*this);
+    if (detail == SyncInputDetail::CoarseCompletion) {
+        function.walk([&](Operation* operation) {
+            if (auto interface = dyn_cast<MemoryEffectOpInterface>(operation)) {
+                interface.getEffects(declaredEffects[operation]);
+            }
+        });
+        return success();
+    }
+    SmallVector<SyncDescriptorState::Query> queries;
+    auto queryMemory = [&](const CompoundInstanceElement* phase, const BaseMemInfo* memory) {
+        if (!memory) {
+            return;
+        }
+        queries.emplace_back(phase->elementOp, memory->rootBuffer);
+        // Physical mapping can consult compact strides on enclosing descriptors,
+        // including view ancestors that are not literal operands of this access.
+        for (Value value = memory->baseBuffer; value;) {
+            queries.emplace_back(phase->elementOp, value);
+            auto view = dyn_cast_or_null<ViewLikeOpInterface>(value.getDefiningOp());
+            if (!view || view.getViewSource() == value) {
+                break;
+            }
+            value = view.getViewSource();
+        }
+    };
+    for (const auto* phase : phases) {
+        for (const auto* memory : phase->useVec) {
+            queryMemory(phase, memory);
+        }
+        for (const auto* memory : phase->defVec) {
+            queryMemory(phase, memory);
+        }
+    }
+    descriptors = std::make_shared<SyncDescriptorState>(function, queries, scalars);
+    function.walk([&](Operation* operation) {
+        if (getContextualLocalAccessEffects(operation, declaredEffects[operation], [&](Value value) {
+                return descriptors->constantShape(value, operation);
+            })) {
+            return;
+        }
+        if (auto interface = dyn_cast<MemoryEffectOpInterface>(operation)) {
+            interface.getEffects(declaredEffects[operation]);
+        }
+    });
+    return resolvedAccesses->build(*this);
 }
 LogicalResult SyncInput::buildPipeEnvelopes(func::FuncOp function) {
   // The shared macro descriptions are access envelopes, not a serial list of

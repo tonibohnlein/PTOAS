@@ -8,6 +8,7 @@
 // Analyze only the actual coordinator protocol. Existing full-prefix waits and
 // ALL barriers may certify reuse; this stage never inserts additional ordering.
 #include "PrefixLifetimes.h"
+#include "ProtocolSeal.h"
 #include "InvocationSourceBounds.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
@@ -15,9 +16,6 @@
 #include "PTO/IR/PTOSyncUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
-#include "mlir/IR/AsmState.h"
-#include "llvm/Support/SHA256.h"
-#include "llvm/ADT/StringExtras.h"
 #include "mlir/IR/Verifier.h"
 #include <map>
 #include <set>
@@ -217,28 +215,6 @@ FailureOr<Inventory> planned(func::FuncOp function, std::string& error)
     }
     return result;
 }
-class BodyDigest : public llvm::raw_ostream {
-public:
-    BodyDigest() : llvm::raw_ostream(true) {}
-    std::string result() { return llvm::toHex(hash.final()); }
-
-private:
-    llvm::SHA256 hash;
-    uint64_t position = 0;
-    void write_impl(const char* data, std::size_t size) override
-    {
-        hash.update(StringRef(data, size));
-        position += size;
-    }
-    uint64_t current_pos() const override { return position; }
-};
-std::string bodyDigest(func::FuncOp function)
-{
-    BodyDigest stream;
-    AsmState state(function, OpPrintingFlags().useLocalScope().printGenericOpForm());
-    function.front().print(stream, state);
-    return stream.result();
-}
 DictionaryAttr encode(func::FuncOp function, const Inventory& inventory)
 {
     Builder b(function.getContext());
@@ -254,7 +230,7 @@ DictionaryAttr encode(func::FuncOp function, const Inventory& inventory)
     }
     return b.getDictionaryAttr(
         {b.getNamedAttr("version", b.getI64IntegerAttr(1)), b.getNamedAttr("directions", b.getArrayAttr(directions)),
-         b.getNamedAttr("body_sha256", b.getStringAttr(bodyDigest(function)))});
+         b.getNamedAttr("body_sha256", b.getStringAttr(protocolBodySeal(function)))});
 }
 LogicalResult lower(func::FuncOp function, const Inventory& inventory, ArrayRef<int64_t> eligible)
 {

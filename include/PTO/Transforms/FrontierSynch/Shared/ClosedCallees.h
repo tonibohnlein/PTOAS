@@ -32,6 +32,7 @@ ClosedCalleeModule recognizeClosedCallees(ModuleOp module);
 // Ordinary direct calls and original physical-core guards remain in the IR.
 using PrepareCallee =
     llvm::function_ref<FailureOr<std::unique_ptr<PreparedLogicalPlan>>(func::FuncOp, GMAliasPolicy, bool)>;
-LogicalResult insertModuleSynchronization(ModuleOp module, GMAliasPolicy policy, PrepareCallee prepare);
+LogicalResult insertModuleSynchronization(
+    ModuleOp module, GMAliasPolicy policy, PrepareCallee prepare, bool completionOnly = false);
 } // namespace mlir::pto::frontiersynch
 #endif

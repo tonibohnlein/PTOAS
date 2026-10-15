@@ -435,6 +435,11 @@ GuardedRotatingAnalysis analyzeGuardedRotatingImpl(scf::ForOp loop, const SyncIn
     const GuardedRecognition& recognition, std::shared_ptr<RegionExpressions> expressions,
     const DenseMap<Value, RegionExpressions::Id>& guardBindings, const PhaseIndex* index)
 {
+    if (!input.hasFineStorage()) {
+        GuardedRotatingAnalysis failure;
+        failure.error = "guarded periodic analysis requires fine storage facts";
+        return failure;
+    }
     if (!expressions && !guardBindings.empty()) {
         GuardedRotatingAnalysis failure;
         failure.error = "guard substitutions require their originating expression arena";
