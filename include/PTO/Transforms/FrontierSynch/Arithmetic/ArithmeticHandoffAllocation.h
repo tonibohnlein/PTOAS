@@ -59,13 +59,14 @@ ArithmeticCoordinateHandoffAllocation buildArithmeticCoordinateHandoffAllocation
 // of relational compositions (successor powers have exponent at most six).
 // Fixed class/coordinate bounds bound elimination depth; no
 // occurrence or parameter enumeration and no minimum hardware-pool claim.
+// Profiling is borrowed for the call and never changes proof qualification.
 ArithmeticHandoffAllocation buildArithmeticHandoffAllocation(
     const GeneralArithmeticDemandAnalysis& analysis, llvm::ArrayRef<uint32_t> pipes,
-    unsigned maxWidth = 6);
+    unsigned maxWidth = 6, AllocationProfile* profile = nullptr);
 // Exact DBM-to-integer conversion of the already completed F* and H. No
 // recognition or transitive closure is rerun; the same reuse proof is applied.
 ArithmeticHandoffAllocation buildArithmeticHandoffAllocation(
     const ArithmeticDemandAnalysis& analysis, llvm::ArrayRef<uint32_t> pipes,
-    unsigned maxWidth = 6);
+    unsigned maxWidth = 6, AllocationProfile* profile = nullptr);
 } // namespace mlir::pto::frontiersynch
 #endif

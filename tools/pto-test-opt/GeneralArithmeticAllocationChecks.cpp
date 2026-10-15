@@ -11,6 +11,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/AnalysisSessionInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticHandoffProof.h"
 #include "mlir/IR/MLIRContext.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 namespace fs = mlir::pto::frontiersynch;
 namespace {
@@ -125,6 +126,39 @@ bool activeSuccessors(uint64_t period)
         }
     }
     auto one = fs::buildArithmeticHandoffAllocation(analysis, {0, 1}, 1);
+    // The same insufficient one-ID obligation is observed with profiling on
+    // and off. A malformed required relation exercises construction failure,
+    // which must remain distinct from a constructed but uncovered relation.
+    auto unavailable = analysis;
+    unavailable.requiredOrder.begin()->second = {fs::IntegerSystem{}};
+    for (bool malformed : {false, true}) {
+        const auto& input = malformed ? unavailable : analysis;
+        const auto baseline = fs::buildArithmeticHandoffAllocation(input, {0, 1}, 1);
+        const std::string outcome = malformed ? "construction-unavailable" : "reuse-uncovered-within-bound";
+        if (baseline.error.find("stage one-id-difference, outcome " + outcome) == std::string::npos) {
+            return false;
+        }
+        for (bool enabled : {false, true}) {
+            auto ledger = std::make_shared<fs::AnalysisLedger>();
+            ledger->profiling = enabled;
+            fs::ArithmeticHandoffAllocation observed;
+            {
+                fs::AnalysisProfileScope request(ledger, "allocation", 0, "single-id-refusal-profile");
+                fs::AllocationProfile profile(ledger);
+                observed = fs::buildArithmeticHandoffAllocation(input, {0, 1}, 1, &profile);
+            }
+            if (observed.error != baseline.error || !observed.families.empty() ||
+                observed.cost.pieceJoins != baseline.cost.pieceJoins ||
+                observed.cost.projections != baseline.cost.projections ||
+                observed.cost.relationCompositions != baseline.cost.relationCompositions ||
+                observed.cost.differences != baseline.cost.differences) { return false; }
+            unsigned refusals = 0;
+            for (const auto& stage : ledger->stages) {
+                if (stage.method == "arithmetic-handoff-refusal:one-id-difference:" + outcome) { ++refusals; }
+            }
+            if (enabled ? refusals != 1 : !ledger->stages.empty()) { return false; }
+        }
+    }
     auto two = fs::buildArithmeticHandoffAllocation(analysis, {0, 1}, 2);
     if (one.error.empty() || !two.error.empty() || two.families.size() != 1 || two.families[0].width != 2) {
         return false;
@@ -300,14 +334,25 @@ bool boundedConstructionProfile()
         analysis.minimumDemands[{{source, fs::ArithmeticEvent::Completion, {}},
             {source + 1, fs::ArithmeticEvent::Start, {}}, {}}] = {fs::IntegerSystem{}};
     }
-    for (bool enabled : {false, true}) {
+    for (bool coordinate : {false, true}) { for (bool enabled : {false, true}) {
         auto ledger = std::make_shared<fs::AnalysisLedger>();
         ledger->profiling = enabled;
         {
             fs::AnalysisProfileScope request(ledger, "allocation", 0, "bounded-coordinate-profile");
             fs::AllocationProfile profile(ledger);
-            auto proof = fs::buildArithmeticCoordinateHandoffAllocation(analysis, pipes, 1, &profile);
-            if (!proof.error.empty() || proof.families.size() != 32) { return false; }
+            if (coordinate) {
+                auto proof = fs::buildArithmeticCoordinateHandoffAllocation(analysis, pipes, 1, &profile);
+                if (!proof.error.empty() || proof.families.size() != 32 ||
+                    llvm::any_of(proof.families, [](const auto& family) { return family.lifetime.width != 1; })) {
+                    return false;
+                }
+            } else {
+                auto proof = fs::buildArithmeticHandoffAllocation(analysis, pipes, 1, &profile);
+                if (!proof.error.empty() || proof.families.size() != 32 ||
+                    llvm::any_of(proof.families, [](const auto& family) { return family.width != 1; })) {
+                    return false;
+                }
+            }
         }
         unsigned workRecords = 0;
         for (const auto& stage : ledger->stages) {
@@ -317,7 +362,7 @@ bool boundedConstructionProfile()
             (enabled && (workRecords != 1 || ledger->stages.size() > fs::AllocationProfile::Count + 2))) {
             return false;
         }
-    }
+    } }
     return true;
 }
 bool coupledCompositionCoverage()

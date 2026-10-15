@@ -318,24 +318,70 @@ struct State : ArithmeticRegionalRelations {
         const auto previousError = error;
         bool accepted = false;
         auto restore = llvm::make_scope_exit([&] { if (!accepted) { error = previousError; } });
+        const auto refuse = [&](const char* stage) -> std::shared_ptr<RegionalAllocationSummary> {
+            if (plan.allocationProfile && plan.allocationProfile->enabled()) {
+                const bool coordinate = allocationPolicy == ArithmeticRegionalAllocationPolicy::CoordinateCandidate;
+                plan.allocationProfile->recordWork(std::string("arithmetic-export-refusal:") + stage,
+                    {{"coordinate-policy", coordinate}});
+            }
+            return {};
+        };
         std::map<std::pair<std::size_t, std::size_t>, uint32_t> records;
+        uint64_t bindingCount = 0, bindingSamples = 0;
         {
             AllocationProfile::Scope qualification(plan.allocationProfile, AllocationProfile::PublicationQualification);
             for (const auto& family : plan.families) {
                 // This proof covers the paired demand relation, not alternative
                 // publication/cleanup protocols with additional live notifications.
-                if (family.sourceChoices || family.targetChoices) { return {}; }
+                if (family.sourceChoices || family.targetChoices) {
+                    return refuse("alternative-publication-or-cleanup");
+                }
                 for (const auto& member : family.members) {
                     records[{member.source, member.target}] = member.record;
+                    if (plan.allocationProfile && plan.allocationProfile->enabled()) {
+                        accumulateCost(bindingCount, 1);
+                        // This is a diagnostic sample bound, never a proof or
+                        // admission bound. Every family is still constructed.
+                        if (bindingSamples == 16) { continue; }
+                        ++bindingSamples;
+                        // Site indices belong to this exact retained arithmetic
+                        // program. Bind them to original operations, never a flat
+                        // payload walk or the parent's translated type numbers.
+                        std::string binding;
+                        llvm::raw_string_ostream text(binding);
+                        text << "arithmetic-family-binding:";
+                        for (auto site : {member.source, member.target}) {
+                            if (site < program.sites.size() && program.sites[site].phase &&
+                                program.sites[site].phase->elementOp) {
+                                auto* op = program.sites[site].phase->elementOp;
+                                text << " " << op->getName().getStringRef().take_front(128);
+                                if (auto location = dyn_cast<FileLineColLoc>(op->getLoc())) {
+                                    const auto filename = location.getFilename().getValue();
+                                    text << " " << filename.take_front(160);
+                                    if (filename.size() > 160) { text << "<truncated>"; }
+                                    text << ":" << location.getLine() << ":" << location.getColumn();
+                                } else { text << " <non-file-location>"; }
+                            } else { text << " unavailable-original-site"; }
+                        }
+                        text.flush();
+                        plan.allocationProfile->recordWork(std::move(binding),
+                            {{"record", member.record}, {"source", member.source}, {"target", member.target},
+                             {"coordinate-policy",
+                              allocationPolicy == ArithmeticRegionalAllocationPolicy::CoordinateCandidate}});
+                    }
                 }
             }
+        }
+        if (plan.allocationProfile && plan.allocationProfile->enabled()) {
+            plan.allocationProfile->recordWork("arithmetic-family-binding-inventory",
+                {{"total", bindingCount}, {"sampled", bindingSamples}, {"omitted", bindingCount - bindingSamples}});
         }
         if (!handoffAllocation) {
             if (allocationPolicy == ArithmeticRegionalAllocationPolicy::CoordinateCandidate) {
                 handoffAllocation = buildArithmeticCoordinateHandoffAllocation(analysis, pipes, 6,
                                                                                 plan.allocationProfile);
             } else {
-                auto single = buildArithmeticHandoffAllocation(analysis, pipes, 1);
+                auto single = buildArithmeticHandoffAllocation(analysis, pipes, 1, plan.allocationProfile);
                 handoffAllocation.emplace();
                 handoffAllocation->cost = single.cost;
                 handoffAllocation->error = std::move(single.error);
@@ -344,7 +390,9 @@ struct State : ArithmeticRegionalRelations {
                 }
             }
         }
-        if (!handoffAllocation->error.empty()) { return {}; }
+        if (!handoffAllocation->error.empty()) {
+            return refuse(handoffAllocation->error.c_str());
+        }
         // Coordinate placement consumes exact matching-source tuple evidence.
         // Qualify only after the final invocation contract is established; an
         // identity parent may still set completeInvocation during preparation.
@@ -354,9 +402,9 @@ struct State : ArithmeticRegionalRelations {
             })) {
             if (plan.familyRecipe && plan.endpoints.empty()) {
                 auto shapes = familyMatchingShapes(*plan.familyRecipe);
-                if (failed(shapes)) { return {}; }
+                if (failed(shapes)) { return refuse("matching-source-shapes"); }
                 matchingShapes.emplace(std::move(*shapes));
-            } else if (failed(materializeLogicalFamilies(plan))) { return {}; }
+            } else if (failed(materializeLogicalFamilies(plan))) { return refuse("matching-source-materialization"); }
         }
         AllocationProfile::Scope exportTiming(plan.allocationProfile, AllocationProfile::ArithmeticSelectorExport);
         auto result = std::make_shared<RegionalAllocationSummary>();
@@ -364,7 +412,9 @@ struct State : ArithmeticRegionalRelations {
             const auto& family = candidate.lifetime;
             auto record = records.find({family.sourceSite, family.targetSite});
             auto first = selected(family.firstSource), last = selected(family.lastTarget);
-            if (record == records.end() || first.size() != 1 || last.size() != 1) { return {}; }
+            if (record == records.end() || first.size() != 1 || last.size() != 1) {
+                return refuse("record-or-unique-lifetime-selector");
+            }
             RegionalAllocationGroup group;
             group.sourcePipe = pipes[family.sourceSite]; group.targetPipe = pipes[family.targetSite];
             group.budget = family.width;
@@ -378,21 +428,25 @@ struct State : ArithmeticRegionalRelations {
                 // Physical tuples exclude the record selector prepended to
                 // memberCoordinates: identity zero, then ORIGINAL source IV,
                 // including at WAIT's selected partner.
-                if (*candidate.sourceCoordinate != 0 || member.tupleRule->coordinateCount != 2) { return {}; }
+                if (*candidate.sourceCoordinate != 0 || member.tupleRule->coordinateCount != 2) {
+                    return refuse("coordinate-tuple-arity");
+                }
                 if (matchingShapes) {
                     auto shape = matchingShapes->find(member.record);
                     if (shape == matchingShapes->end() || shape->second.coordinateCount != 2 ||
-                        !shape->second.hasSet || !shape->second.hasWait || shape->second.hasLocal) { return {}; }
+                        !shape->second.hasSet || !shape->second.hasWait || shape->second.hasLocal) {
+                        return refuse("matching-source-side-shapes");
+                    }
                 } else {
                     unsigned sides = 0;
                     for (const auto& endpoint : plan.endpoints) {
                         if (!llvm::is_contained(endpoint.records, member.record)) { continue; }
                         if (endpoint.kind == LogicalCommandKind::Barrier || endpoint.memberCoordinates.size() != 2) {
-                            return {};
+                            return refuse("concrete-matching-source-arity");
                         }
                         sides |= endpoint.kind == LogicalCommandKind::Set ? 1 : 2;
                     }
-                    if (sides != 3) { return {}; }
+                    if (sides != 3) { return refuse("concrete-matching-source-sides"); }
                 }
                 member.tupleRule->terms.push_back({1, 1, 0, family.width, 1});
             }
@@ -404,7 +458,7 @@ struct State : ArithmeticRegionalRelations {
             result->groups.push_back(std::move(group));
         }
         const bool failedExport = !error.empty() || !arena->constructionError().empty();
-        if (failedExport) { return {}; }
+        if (failedExport) { return refuse("selector-expression-construction"); }
         transaction.commit(); accepted = true;
         return result;
     }
