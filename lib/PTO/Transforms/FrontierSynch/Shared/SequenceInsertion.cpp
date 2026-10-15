@@ -10,6 +10,7 @@
 #include "OccurrenceBinding.h"
 #include "MixedFamilyInsertion.h"
 #include "OriginalCutFacts.h"
+#include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
 #include "PTO/Transforms/FrontierSynch/Shared/GuardedPublication.h"
@@ -402,7 +403,16 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
                 }
                 allocation = child.fallback;
             }
-            if (!allocation) { return {}; }
+            if (!allocation) {
+                if (plan.allocationProfile && plan.allocationProfile->enabled()) {
+                    plan.allocationProfile->recordWork("sequence-allocation-child-export-unavailable",
+                        {{"child", i}, {"type-base", child.typeBase}, {"record-base", child.recordBase},
+                         {"strength", static_cast<uint64_t>(strength)},
+                         {"coordinate-policy",
+                          owner->allocationPolicy == ArithmeticRegionalAllocationPolicy::CoordinateCandidate}});
+                }
+                return {};
+            }
             inputs.push_back(std::move(allocation));
         }
         return cache.request(inputs, [&]() -> AllocationPreparation::Summary {

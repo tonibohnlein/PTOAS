@@ -349,11 +349,19 @@ bool valid(const Key& key, const GeneralArithmeticDemandAnalysis& analysis, Arra
         key.parameterResidues.size() == analysis.parameterCount && residues(key.source.residues) &&
         residues(key.target.residues) && residues(key.parameterResidues);
 }
+// Diagnostic state describes the last attempted exact operation, not a new
+// admission condition. A failed sufficient reuse proof is not a capacity bound.
+struct FamilyProgress {
+    const char* stage = "supports";
+    const char* outcome = "construction-unavailable";
+};
 FailureOr<ArithmeticHandoffFamily> family(Proof& proof, const Pair& sites, const Relation& demands,
-                                        const Relation& required, unsigned maxWidth, bool coordinateMapping)
+                                        const Relation& required, unsigned maxWidth, bool coordinateMapping,
+                                        FamilyProgress& progress)
 {
     auto source = proof.endpoints(demands, false), target = proof.endpoints(demands, true);
     if (failed(source) || failed(target)) { return failure(); }
+    progress.stage = "source-order-and-inverse";
     auto order = proof.order(*source, coordinateMapping), inverse = proof.inverse(demands);
     if (failed(order) || failed(inverse)) { return failure(); }
     // Preserve the inexpensive one-ID proof before constructing successors.
@@ -361,48 +369,63 @@ FailureOr<ArithmeticHandoffFamily> family(Proof& proof, const Pair& sites, const
     // all-pairs test has the same obligation for the certified strict order.
     unsigned width = 0;
     if (coordinateMapping) {
+        progress.stage = "one-id-containment";
         auto covered = proof.compositionCovered(*inverse, *order, required);
         if (failed(covered)) { return failure(); }
         width = *covered ? 1 : 0;
     } else {
+        progress.stage = "one-id-composition";
         auto allReuse = proof.compose(*inverse, *order);
         if (failed(allReuse)) { return failure(); }
+        progress.stage = "one-id-difference";
         auto uncovered = proof.subtract(*allReuse, required);
         if (failed(uncovered)) { return failure(); }
         width = uncovered->empty() ? 1 : 0;
     }
     if (!width && maxWidth > 1 && coordinateMapping) {
+        progress.stage = "coordinate-nonnegative";
         auto nonnegative = proof.nonnegativeCoordinate(*source);
-        if (failed(nonnegative) || !*nonnegative) { return failure(); }
+        if (failed(nonnegative)) { return failure(); }
+        if (!*nonnegative) { progress.outcome = "coordinate-premise-not-proved"; return failure(); }
         for (unsigned candidate = 2; candidate <= maxWidth; ++candidate) {
+            progress.stage = "coordinate-distance";
             auto separated = proof.coordinateDistance(*order, candidate);
             if (failed(separated)) { return failure(); }
+            progress.stage = "coordinate-containment";
             auto covered = proof.compositionCovered(*inverse, *separated, required);
             if (failed(covered)) { return failure(); }
             if (*covered) { width = candidate; break; }
         }
     } else if (!width && maxWidth > 1) {
+        progress.stage = "successor-square";
         auto square = proof.compose(*order, *order);
         if (failed(square)) { return failure(); }
+        progress.stage = "successor-difference";
         auto successor = proof.subtract(*order, *square);
         if (failed(successor)) { return failure(); }
         // Separate SET/WAIT counters denote the same handoff rank only if
         // matching preserves order. F* already supplies unique partners.
+        progress.stage = "consumer-order";
         auto monotone = proof.orderedConsumers(demands, *inverse, *successor, *target);
-        if (failed(monotone) || !*monotone) { return failure(); }
+        if (failed(monotone)) { return failure(); }
+        if (!*monotone) { progress.outcome = "consumer-order-not-proved"; return failure(); }
         Relation power = *successor;
         for (unsigned candidate = 2; candidate <= maxWidth; ++candidate) {
+            progress.stage = "successor-power";
             auto next = proof.compose(power, *successor);
             if (failed(next)) { return failure(); }
             power = std::move(*next);
+            progress.stage = "executed-rank-composition";
             auto reuse = proof.compose(*inverse, power);
             if (failed(reuse)) { return failure(); }
+            progress.stage = "executed-rank-difference";
             auto missing = proof.subtract(*reuse, required);
             if (failed(missing)) { return failure(); }
             if (missing->empty()) { width = candidate; break; }
         }
     }
-    if (!width) { return failure(); }
+    if (!width) { progress.outcome = "reuse-uncovered-within-bound"; return failure(); }
+    progress.stage = "lifetime-extrema";
     auto first = proof.extremum(*source, true), last = proof.extremum(*target, false);
     if (failed(first) || failed(last)) { return failure(); }
     return ArithmeticHandoffFamily{sites.first, sites.second, width, std::move(*first), std::move(*last)};
@@ -447,10 +470,20 @@ ArithmeticHandoffAllocation buildAllocation(
     };
     for (const auto& [sites, demands] : families) {
         if (demands.empty()) { continue; }
-        auto built = family(proof, sites, demands, analysis.requiredOrder, maxWidth, coordinateMapping);
+        FamilyProgress progress;
+        auto built = family(proof, sites, demands, analysis.requiredOrder, maxWidth, coordinateMapping, progress);
         if (failed(built)) {
             recordWork(sites);
-            result.error = "no certified uniform arithmetic handoff width within the supplied bound";
+            result.error = "no certified uniform arithmetic handoff width within the supplied bound: family " +
+                std::to_string(sites.first) + " -> " + std::to_string(sites.second) + ", stage " + progress.stage +
+                ", outcome " + progress.outcome;
+            if (profile && profile->enabled()) {
+                const auto method =
+                    std::string("arithmetic-handoff-refusal:") + progress.stage + ":" + progress.outcome;
+                profile->recordWork(method,
+                    {{"source", sites.first}, {"target", sites.second}, {"max-width", maxWidth},
+                     {"coordinate-policy", coordinateMapping}});
+            }
             result.families.clear(); return result;
         }
         result.families.push_back(std::move(*built));
@@ -471,9 +504,10 @@ FailureOr<bool> detail::handoffCompositionCovered(const GeneralArithmeticRelatio
     return Proof(1, parameters, cost, profile).compositionCovered(left, right, required);
 }
 ArithmeticHandoffAllocation buildArithmeticHandoffAllocation(
-    const GeneralArithmeticDemandAnalysis& analysis, ArrayRef<uint32_t> pipes, unsigned maxWidth)
+    const GeneralArithmeticDemandAnalysis& analysis, ArrayRef<uint32_t> pipes, unsigned maxWidth,
+    AllocationProfile* profile)
 {
-    return buildAllocation(analysis, pipes, maxWidth, false, nullptr);
+    return buildAllocation(analysis, pipes, maxWidth, false, profile);
 }
 ArithmeticCoordinateHandoffAllocation buildArithmeticCoordinateHandoffAllocation(
     const GeneralArithmeticDemandAnalysis& analysis, ArrayRef<uint32_t> pipes, unsigned maxWidth,
@@ -512,7 +546,7 @@ FailureOr<GeneralArithmeticRelation> convert(const ArithmeticRelation& relation)
 }
 } // namespace
 ArithmeticHandoffAllocation buildArithmeticHandoffAllocation(
-    const ArithmeticDemandAnalysis& analysis, ArrayRef<uint32_t> pipes, unsigned maxWidth)
+    const ArithmeticDemandAnalysis& analysis, ArrayRef<uint32_t> pipes, unsigned maxWidth, AllocationProfile* profile)
 {
     GeneralArithmeticDemandAnalysis converted;
     converted.period = analysis.period; converted.parameterCount = analysis.parameterCount;
@@ -522,6 +556,6 @@ ArithmeticHandoffAllocation buildArithmeticHandoffAllocation(
         ArithmeticHandoffAllocation result; result.error = "completed arithmetic DBM conversion failed"; return result;
     }
     converted.minimumDemands = std::move(*demands); converted.requiredOrder = std::move(*required);
-    return buildArithmeticHandoffAllocation(converted, pipes, maxWidth);
+    return buildArithmeticHandoffAllocation(converted, pipes, maxWidth, profile);
 }
 } // namespace mlir::pto::frontiersynch
