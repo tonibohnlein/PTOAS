@@ -46,13 +46,14 @@ draft obligation; its excess formula must not authorize a production decision.
 | R4a (numerical and qualified repeated paths implemented) | Ordered periodic/repeated first-reuse sweeps | Certified applicability, linear query counts, exact capacity and finite-restriction checks | M2/M4; Propositions 7.8/7.10 |
 | R4b (implemented for numerical periodic certificates) | Linear periodic allocation from suffix thresholds | Independent command-graph reuse/width oracle; no general assignment matrix on this route | M2/M4; Proposition 7.12 |
 | R4c (shared span extraction and qualified rotating exports implemented) | Direct modulo-lane span extraction and qualified boundary export | Exact span/presence agreement without generation expansion; parent retry preserved | M2/M4; Proposition 7.13, Corollary 7.14 |
-| R5 | Binding-aware multi-output control construction and producer query slicing | Less total constructed/live control, unchanged matching and payload order; Delta lifetime gate separate | M3/M4 |
-| R6 | Normalized logical graph allocation, owned session and closed-child completion import | Shared unified/split stages, allocation before scalar materialization, deleted superseded paths | M3/M4/M5/M6; Sections 6/8 |
-| R7 | Pinned pipeline, scaling and device closure | Distinct logical/physical/C++/device outcomes and reproducible receipts | M1/M6 |
+| R5 (qualified paths implemented) | Binding-aware multi-output control construction and producer query slicing | Less total constructed/live control, unchanged matching and payload order; Delta lifetime gate separate | M3/M4 |
+| R6 (qualified pipeline/children implemented) | Normalized logical graph allocation, owned session and closed-child completion import | Shared unified/split stages, allocation before scalar materialization, deleted superseded paths | M3/M4/M5/M6; Sections 6/8 |
+| R7 (compiler/oracle campaign recorded; device separate) | Pinned pipeline, scaling and device closure | Distinct logical/physical/C++/device outcomes and reproducible receipts | M1/M6 |
 
 R1 transfer, R2 frontiers, qualifying R3 scans and the B1 Section 7 routes are implemented.
-R5–R7 and the remaining capability migrations stay open. Continue through the
-batched execution order below; implemented specializations do not imply universal coverage.
+The qualified R5/R6 paths and B6 compiler/oracle campaign are recorded below.
+Remaining capability migrations and device qualification stay explicit;
+implemented specializations do not imply universal coverage.
 Run focused integration checks at each step; do not defer all production
 validation to R7. A newly measured bottleneck may justify resequencing, recorded
 with evidence rather than another untracked fallback.
@@ -72,7 +73,7 @@ instrumentation and test fixes belong to the batch they support.
 | B3 (accepted): compact guarded control and constructive exports | Address the remaining large guard/query roots through shared producer construction, restricted incoming queries where qualified, early multi-output slicing and binding-aware lowering. Finish applicable guarded/relational occurrence and capture transport through the common interface. Include residual read/read avoidance and complete control-cost attribution. | Independent demand/query/selector agreement, preserved invocation/history semantics, structural scaling and paired full preparation measurements; no speedup claim from deferred work alone. |
 | B4 (accepted for qualified protocols): physical lifetime export for prefix protocols | Export publication, acquisition, terminal cleanup and invocation lifetimes for the actual prefix command plan; integrate them with allocation and reservations. | Matching and consumption-before-republication proofs on empty, guarded and repeated executions; certify supported finite-ID assignments and distinguish infeasibility from unavailable evidence. Delta logical success alone does not complete this batch. |
 | B5 (accepted for qualified children): Section 6 production integration | Import qualified closed selectively synchronized children into SCC-local completion composition and provide coarse shared input for completion requests. Preserve child synchronization and carry outstanding effects across boundaries. | Concrete summary/coverage oracle, closed matching and joint resource certification, no automatic boundary drains, transactional failure and hardware/readiness restrictions. |
-| B6: pinned production and scaling closure | Run the eleven-kernel pipeline and remaining phased/corpus checks with pinned inputs/tools. Compare control, preparation, allocation and backend outcomes; retain failures and feed actionable defects back into the owning batch. | Reproducible stage-separated receipts, independent semantic traces, scaling results and paired timings. Device results remain a separate qualification gate supplied by device runs. |
+| B6 (accepted for compiler/oracle closure): pinned production and scaling closure | Run the eleven-kernel pipeline and remaining phased/corpus checks with pinned inputs/tools. Compare control, preparation, allocation and backend outcomes; retain failures and feed actionable defects back into the owning batch. | Reproducible stage-separated receipts, independent semantic traces, scaling results and paired timings. Device results remain a separate qualification gate supplied by device runs. |
 
 Proceed B1 -> B2 -> B3 -> B4 -> B5 -> B6, with focused production integration
 at each batch. Use incremental builds at coherent batch boundaries and at most
@@ -2696,3 +2697,94 @@ Correctness and architecture reviewers independently rehashed the 27-code-file
 manifest and accepted the scoped implementation and compiled receipts. Continue
 with B6; general closed-child contracts and device qualification remain explicit
 limitations rather than inferred successes.
+
+
+### B6: pinned compiler, control and scaling closure
+
+The [final campaign snapshot](frontier-sections5-8-validation.json) pins native
+revision `8759ae296`, all eleven prepared input hashes, the current planner and
+allocator, and the separately retained compatibility C++ backend. An audit of
+1,365 tracked native source/build files found no root/build-mirror mismatch;
+the canonical source manifest is
+`fbc3166eba0c651026bd720bddd8a70b1f8fb589787fafc5be0baf7ccd284421`.
+This binds the tool receipts to source provenance rather than inferring a
+binary's source revision from the current checkout.
+
+All eleven logical compilations succeed; seven allocate with eligible IDs 0–5
+and emit C++. The same seven also compile through retained combined physical
+output. GroupNorm and causal-convolution decode remain uncertified within the
+pool; prefill lacks its allocation export; Delta's actual prefix lifetime export
+has no certified reusable assignment. None is a minimum-capacity lower bound.
+No device compiler or device execution was run.
+
+The wider campaign executes the same 786 input hashes against both B1
+`d42907306` and the final native revision with the same flags, six-ID pool,
+45-second per-stage watchdog, 4-GiB address-space ceiling and compatibility
+backend. Every per-input stage outcome agrees: 656 logical successes, 631
+physical successes and 630 C++ outputs. Six logical attempts reach the watchdog;
+124 emit a failure diagnostic. Allocation has 25 diagnostic failures, and the
+one allocated input without C++ is the existing mixed-kernel fixture requiring
+an explicit address in the compatibility backend. No process signal/crash is
+recorded. The [per-input record](frontier-sections5-8-corpus.jsonl) preserves
+names, hashes, successful/failed stages and skipped downstream stages.
+
+There are no observed B1 stage gains or losses under these measurement limits.
+Eleven inputs lost historical m8 successes before B1; the complete B1 replay
+reproduces their current outcomes. The older totals/configuration are reference
+history, not evidence of a B3–B5 regression or a new coverage improvement.
+Raw successes include preexisting manual synchronization and skips; they are
+not counts of newly recognized or independently verified kernels. Watchdogs
+remain censored measurements, not class exclusions.
+
+Ten scaling/oracle suites pass, covering periodic frontiers and allocation,
+writer-centered guarded reduction, bridge-frontier work, composed mappings,
+expression construction, prefix lifetime reuse and measurement process limits.
+Composed and carried phase closures also pass, including partial/zero trips,
+nonunit coordinates and invocation resets. Repeated-phase tracing still reaches
+its inner 90-second watchdog; varying-length and phase-owned suites reach their
+120-second watchdogs. A preserved repeated fixture also times out after 30
+seconds in public analysis-only, logical-only and full requests; the B1
+analysis-only replay times out too. These remain open costs/validation gaps,
+not passing tests or proof that allocation alone is responsible.
+
+Three alternating, uncontended serial pairs against retained B2 show Persistent
+medians of 1.523 and 1.511 seconds, establishing no planning improvement. Delta
+medians are 26.559 and 21.142 seconds; this confirms the B3 guarded-control gain
+at the final native revision, not an independent B6 optimization. Delta retains
+456,242 raw arithmetic operations and a large sequence-incoming root. It is
+still not physically or device qualified.
+
+Independent complete command traces and causal reuse checks agree for
+Persistent on cores 0, 15, 16 and 19 across B2, final split and final combined
+output. The executions retain 5,011 or 4,625 matched pairs and their order/IDs.
+Split arithmetic visits remain 4,933,582/4,554,120; combined visits remain
+1,224,490/1,130,348. Combined output has 2,114 raw arithmetic operations versus
+4,606 after split allocation, an existing B2 representation improvement.
+These are command/control observations, not device-latency measurements.
+
+The three historical `decode_build_swa_metadata` guard-equivalence gaps in
+DecodeA3, DecodeA5 and FlashDsparkA5 remain unproved; this campaign adds no
+corpus-wide semantic proof. General repeated relational transport, general
+prefix reuse and broader closed-child contracts also remain outside the
+qualified implementation. The primary exact-demand/payload-order objective
+has not been replaced by a command-count or allocation-cost objective.
+
+The reusable Linux compiler-only runner is
+`test/npu_validation/benchmarks/auto_sync/measure_control.py`. It preserves
+streamed stage logs, immutable output directories, input/tool hashes, watchdog
+and signal outcomes, configured CPU/address-space limits and checkout provenance.
+The address-space ceiling is not measured peak RSS. Textual record labels are
+not mathematical demand counts. The five process-execution prefilter findings
+are path-classification false positives: the runner uses resolved argument
+vectors, explicit limits and checked outcomes as required by G.EDV.02/.04/.05.
+The final safety lit check and an empty-program CLI roundtrip pass; no native
+rebuild was needed for the measurement-only changes.
+
+Detailed receipts, frozen executed runner versions, manifests and comparisons
+are retained under `.local/b6-pipeline/`; their hashes accompany the snapshot.
+
+Correctness and architecture reviewers independently verified the seven-file
+manifest `111e4a77b4b494b560c6bf9e18df6a0551a747b88645c02d3f5bbabe3d4638e3`
+and every referenced receipt hash, and accepted B6 for compiler/oracle closure.
+B1–B6 are accepted within their documented qualifying contracts. The unresolved
+capabilities and device qualification above are not reclassified as completed.
