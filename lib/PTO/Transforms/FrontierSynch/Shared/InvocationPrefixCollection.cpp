@@ -6,6 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "InvocationPrefixCollection.h"
+#include "PrefixDemand.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
 #include "PTO/Transforms/FrontierSynch/Finite/ExplicitAnalysis.h"
@@ -26,8 +28,9 @@ LogicalResult InvocationPrefixCollection::bindInput(std::shared_ptr<const SyncIn
 std::shared_ptr<const RegionalPrefixContribution> sequencePrefixContribution(
     const RegionalAnalysis& region, std::shared_ptr<SequenceAnalysisState> state)
 {
-    if (!state || !state->error.empty() || state->relationalResult ||
-        !region.expressions || region.expressions != state->arena) { return {}; }
+    if (!state || !state->error.empty() || !region.expressions || region.expressions != state->arena) {
+        return {};
+    }
     std::shared_ptr<const SyncInput> input;
     for (const auto& child : state->children) {
         auto owner = child.regional.invocationPrefix ? child.regional.invocationPrefix->input :
@@ -45,6 +48,12 @@ std::shared_ptr<const RegionalPrefixContribution> sequencePrefixContribution(
     // publish a detached prefix capability without a retained semantic owner.
     if (!input || (state->input && state->input != input.get()) ||
         (region.accessModel && region.accessModel != &input->accesses())) { return {}; }
+    if (state->relationalResult) {
+        return relationalPrefixContribution(
+            region, std::move(input), [state](InvocationPrefixCollection& collection, std::string& error) {
+                return collectSequencePrefixChildren(*state, collection, error);
+            });
+    }
     auto result = std::make_shared<RegionalPrefixContribution>();
     result->input = std::move(input);
     result->expressions = region.expressions;
@@ -73,12 +82,10 @@ LogicalResult collectRegionalInvocationPrefix(const RegionalAnalysis& region,
     return contribution->collect(collection, error);
 }
 LogicalResult InvocationPrefixCollection::source(
-    const CompoundInstanceElement* phase,
-    std::function<LogicalResult(OpBuilder&, const IRMapping&, llvm::MutableArrayRef<Value>, Value, std::string&)>
-        snapshot,
-    std::string& error)
+    const CompoundInstanceElement* phase, PrefixSourceSnapshot snapshot, std::string& error)
 {
-    if (!original || !phase || !phase->elementOp || !original->isProperAncestor(phase->elementOp)) {
+    if (!original || !phase || !phase->elementOp || !original->isProperAncestor(phase->elementOp) ||
+        pending.sources.size() != sourceBatches.size()) {
         error = "prefix source phase belongs to a foreign invocation";
         return failure();
     }
@@ -91,29 +98,32 @@ LogicalResult InvocationPrefixCollection::source(
     sourceCuts.emplace(key, phase);
     auto [entry, inserted] = sources.emplace(phase, pending.sources.size());
     if (inserted) {
-        pending.sources.push_back({phase->elementOp, key.second, std::move(snapshot)});
-        return success();
+        auto batch = std::make_shared<std::vector<PrefixSourceSnapshot>>();
+        sourceBatches.push_back(batch);
+        pending.sources.push_back(
+            {phase->elementOp, key.second,
+             [batch](
+                 OpBuilder& b, const IRMapping& mapping, MutableArrayRef<Value> state, Value ordinal,
+                 std::string& error) {
+                 for (const auto& snapshot : *batch) {
+                     if (failed(snapshot(b, mapping, state, ordinal, error))) {
+                         return failure();
+                     }
+                 }
+                 return success();
+             }});
     }
-    if (!snapshot) {
-        return success();
+    if (snapshot) {
+        sourceBatches[entry->second]->push_back(std::move(snapshot));
     }
-    auto previous = std::move(pending.sources[entry->second].snapshot);
-    pending.sources[entry->second].snapshot = [previous, snapshot](
-                                                  OpBuilder& b, const IRMapping& mapping,
-                                                  llvm::MutableArrayRef<Value> state, Value ordinal,
-                                                  std::string& error) {
-        if (previous && failed(previous(b, mapping, state, ordinal, error))) {
-            return failure();
-        }
-        return snapshot(b, mapping, state, ordinal, error);
-    };
     return success();
 }
 LogicalResult InvocationPrefixCollection::consumer(
     Operation* anchor, PrefixDirection direction, PrefixIncomingSelector selector, std::string& error)
 {
-    const bool valid =
-        anchor && original->isProperAncestor(anchor) && selector && direction.sourcePipe != direction.targetPipe;
+    const bool valid = original && anchor && original->isProperAncestor(anchor) && selector &&
+                       direction.sourcePipe != direction.targetPipe &&
+                       pending.consumers.size() == consumerBatches.size();
     if (!valid) {
         error = "prefix consumer has invalid invocation or direction";
         return failure();
@@ -123,27 +133,89 @@ LogicalResult InvocationPrefixCollection::consumer(
     }
     auto [entry, inserted] = consumers.emplace(std::make_pair(anchor, direction), pending.consumers.size());
     if (inserted) {
-        pending.consumers.push_back({anchor, direction, std::move(selector)});
+        auto batch = std::make_shared<std::vector<PrefixIncomingSelector>>();
+        consumerBatches.push_back(batch);
+        pending.consumers.push_back(
+            {anchor, direction,
+             [batch, anchor](OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error)
+                 -> FailureOr<Value> {
+                 Value result;
+                 for (const auto& selector : *batch) {
+                     auto value = selector(b, mapping, state, error);
+                     if (failed(value) || !*value || !(*value).getType().isIndex()) {
+                         if (error.empty()) {
+                             error = "prefix incoming selector must produce an index rank";
+                         }
+                         return failure();
+                     }
+                     if (!result) {
+                         result = *value;
+                         continue;
+                     }
+                     auto later = b.create<arith::CmpIOp>(anchor->getLoc(), arith::CmpIPredicate::ugt, result, *value);
+                     result = b.create<arith::SelectOp>(anchor->getLoc(), later, result, *value);
+                 }
+                 return result;
+             }});
+    }
+    consumerBatches[entry->second]->push_back(std::move(selector));
+    return success();
+}
+LogicalResult appendPrefixIncoming(
+    InvocationPrefixCollection& collection, Operation* cut, PrefixDirection direction, PrefixIncomingSelector active,
+    PrefixIncomingSelector sourceRank, std::string& error)
+{
+    if (!collection.function() || !cut || !collection.function()->isProperAncestor(cut) || !active) {
+        error = "prefix requirement has no valid original consumer or exact activity";
+        return failure();
+    }
+    if (direction.sourcePipe == direction.targetPipe) {
+        if (direction.sourcePipe == static_cast<uint32_t>(PIPE::PIPE_S)) {
+            error = "scalar prefix completion requires its native prerequisite certificate";
+            return failure();
+        }
+        collection.recipe().actions.push_back(
+            {cut, PrivateStateCut::Before,
+             [active = std::move(active), cut, pipe = direction.sourcePipe](
+                 OpBuilder& b, const IRMapping& mapping, MutableArrayRef<Value> state, std::string& error) {
+                 auto guard = active(b, mapping, state, error);
+                 if (failed(guard) || !*guard || !(*guard).getType().isInteger(1)) {
+                     return failure();
+                 }
+                 if (matchPattern(*guard, m_Zero())) {
+                     return success();
+                 }
+                 auto branch = b.create<scf::IfOp>(cut->getLoc(), *guard, false);
+                 OpBuilder::InsertionGuard restore(b);
+                 b.setInsertionPointToStart(branch.thenBlock());
+                 b.create<BarrierOp>(cut->getLoc(), PipeAttr::get(b.getContext(), static_cast<PIPE>(pipe)));
+                 return success();
+             }});
         return success();
     }
-    auto previous = std::move(pending.consumers[entry->second].incoming);
-    pending.consumers[entry->second].incoming = [previous, selector, anchor](
-                                                    OpBuilder& b, const IRMapping& mapping, llvm::ArrayRef<Value> state,
-                                                    std::string& error) -> FailureOr<Value> {
-        auto a = previous(b, mapping, state, error);
-        if (failed(a)) {
-            return failure();
-        }
-        auto c = selector(b, mapping, state, error);
-        const bool valid =
-            succeeded(a) && succeeded(c) && *a && *c && (*a).getType().isIndex() && (*c).getType().isIndex();
-        if (!valid) {
-            return failure();
-        }
-        auto later = b.create<arith::CmpIOp>(anchor->getLoc(), arith::CmpIPredicate::ugt, *a, *c);
-        return b.create<arith::SelectOp>(anchor->getLoc(), later, *a, *c).getResult();
-    };
-    return success();
+    if (!sourceRank) {
+        error = "prefix requirement has no constructive source rank";
+        return failure();
+    }
+    return collection.consumer(
+        cut, direction,
+        [active = std::move(active), sourceRank = std::move(sourceRank), cut](
+            OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error) -> FailureOr<Value> {
+            auto guard = active(b, mapping, state, error);
+            if (failed(guard) || !*guard || !(*guard).getType().isInteger(1)) {
+                return failure();
+            }
+            auto zero = b.create<arith::ConstantIndexOp>(cut->getLoc(), 0);
+            if (matchPattern(*guard, m_Zero())) {
+                return zero.getResult();
+            }
+            auto rank = sourceRank(b, mapping, state, error);
+            if (failed(rank) || !*rank || !(*rank).getType().isIndex()) {
+                return failure();
+            }
+            return b.create<arith::SelectOp>(cut->getLoc(), *guard, *rank, zero).getResult();
+        },
+        error);
 }
 LogicalResult appendExplicitPrefixRealization(
     const ExplicitAnalysis& retained, InvocationPrefixCollection& collection, std::string& error)

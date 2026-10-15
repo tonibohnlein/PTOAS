@@ -12,12 +12,12 @@
 #include "../../InsertSync/SyncScalarReplay.h"
 #include "mlir/IR/IRMapping.h"
 namespace mlir::pto::frontiersynch::detail {
-inline void bindMappedCutInputs(RegionExpressions& arena, RegionExpressions::Id root,
-    Operation* cut, const IRMapping& mapping, DominanceInfo& dominance,
-    RegionExpressions::CutEmission& context)
+inline void bindMappedCutInputList(
+    ArrayRef<std::pair<RegionExpressions::Id, Value>> inputs, Operation* cut, const IRMapping& mapping,
+    DominanceInfo& dominance, RegionExpressions::CutEmission& context, uint64_t* traversed = nullptr)
 {
     SmallVector<Value> pending;
-    for (auto [id, original] : arena.referencedInputs(root)) {
+    for (auto [id, original] : inputs) {
         if (context.values.count(id)) { continue; }
         pending.push_back(original);
         auto value = mapping.lookupOrNull(original);
@@ -40,6 +40,20 @@ inline void bindMappedCutInputs(RegionExpressions& arena, RegionExpressions::Id 
         } else if (auto* definition = value.getDefiningOp(); mlir::pto::detail::canReplayScalar(definition)) {
             llvm::append_range(pending, definition->getOperands());
         }
+    }
+    if (traversed) {
+        *traversed = inputs.size() > UINT64_MAX - seen.size() ? UINT64_MAX : inputs.size() + seen.size();
+    }
+}
+inline void bindMappedCutInputs(
+    RegionExpressions& arena, RegionExpressions::Id root, Operation* cut, const IRMapping& mapping,
+    DominanceInfo& dominance, RegionExpressions::CutEmission& context, uint64_t* traversed = nullptr)
+{
+    uint64_t nodes = 0, inputsVisited = 0;
+    auto inputs = arena.referencedInputs(ArrayRef<RegionExpressions::Id>(root), &nodes);
+    bindMappedCutInputList(inputs, cut, mapping, dominance, context, &inputsVisited);
+    if (traversed) {
+        *traversed = nodes > UINT64_MAX - inputsVisited ? UINT64_MAX : nodes + inputsVisited;
     }
 }
 } // namespace mlir::pto::frontiersynch::detail

@@ -12,6 +12,10 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrefixExpressionProfile.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
+#include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
+#include "mlir/Parser/Parser.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
@@ -149,6 +153,8 @@ struct Execution {
         } else if (auto sub = dyn_cast<arith::SubIOp>(op)) {
             values[sub] = (APInt(64, uint64_t(get(sub.getLhs()))) -
                            APInt(64, uint64_t(get(sub.getRhs())))).getSExtValue();
+        } else if (isa<arith::IndexCastOp, arith::ExtUIOp, arith::ExtSIOp, arith::TruncIOp>(op)) {
+            values[op.getResult(0)] = get(op.getOperand(0));
         } else if (auto both = dyn_cast<arith::AndIOp>(op)) {
             values[both] = get(both.getLhs()) & get(both.getRhs());
         } else if (auto either = dyn_cast<arith::OrIOp>(op)) {
@@ -178,7 +184,9 @@ struct Execution {
                 values[compare] = uint64_t(a) < uint64_t(b);
             } else if (compare.getPredicate() == arith::CmpIPredicate::eq) { values[compare] = a == b; }
             else { return false; }
-        } else { return false; }
+        } else {
+            return false;
+        }
         return true;
     }
     SmallVector<int64_t> block(Block& body) {
@@ -655,8 +663,8 @@ bool historicalExpression(MLIRContext& context, unsigned mode)
     } else if (mode == 3 || mode == 7 || mode >= 9) {
         root = arena->land(arena->slt(arena->constant(mode == 12 ? uint64_t(-2) : 0), arena->input(upper)), first);
     }
-    auto emit = fs::preparePrefixExpression(arena, root, cut, collection);
-    auto complement = fs::preparePrefixExpression(arena, arena->lnot(root), cut, collection);
+    auto outputs = fs::preparePrefixExpressions(arena, {root, arena->lnot(root)}, cut, collection);
+    auto emit = outputs[0], complement = outputs[1];
     std::optional<std::size_t> validity;
     if (mode == 7) {
         std::string message;
@@ -740,6 +748,7 @@ bool historicalExpression(MLIRContext& context, unsigned mode)
     }
     return beforeText == render(module->getOperation());
 }
+#include "RelationalPrefixChecks.h"
 } // namespace
 bool runInvocationPrefixChecks() {
     MLIRContext context; context.disableMultithreading();
@@ -748,6 +757,9 @@ bool runInvocationPrefixChecks() {
         if (!historicalExpression(context, mode)) {
             llvm::errs() << "historical expression mode " << mode << " failed\n"; return false;
         }
+    }
+    if (!relationalPrefixCases(context) || !flatPrefixBatches(context) || !productionRelationalPrefix(context)) {
+        return false;
     }
     unsigned cases = 0;
     const bool invalid332 = !runCases(context, false, cases) || !runCases(context, true, cases) ||

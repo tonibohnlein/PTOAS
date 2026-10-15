@@ -683,7 +683,11 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
 {
     RegionalAnalysis out;
     if (!analysis.state || !analysis.error.empty()) { return out; }
-    if (analysis.state->relationalResult) { return *analysis.state->relationalResult; }
+    if (analysis.state->relationalResult) {
+        out = *analysis.state->relationalResult;
+        out.invocationPrefix = sequencePrefixContribution(out, analysis.state);
+        return out;
+    }
     auto owned = std::make_shared<SequenceAnalysis>(analysis);
     auto state = analysis.state;
     out.expressions = state->arena;

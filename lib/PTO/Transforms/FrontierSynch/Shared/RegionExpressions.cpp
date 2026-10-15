@@ -803,14 +803,22 @@ void RegionExpressions::printExpression(Id root, llvm::raw_ostream& out) const
 }
 SmallVector<std::pair<RegionExpressions::Id, Value>> RegionExpressions::referencedInputs(Id root) const
 {
+    return referencedInputs(ArrayRef<Id>(root));
+}
+SmallVector<std::pair<RegionExpressions::Id, Value>> RegionExpressions::referencedInputs(
+    ArrayRef<Id> roots, uint64_t* visits) const
+{
     SmallVector<std::pair<Id, Value>> result;
-    SmallVector<Id> pending{root};
+    SmallVector<Id> pending(roots.begin(), roots.end());
     llvm::DenseSet<Id> seen;
     while (!pending.empty()) {
         auto id = pending.pop_back_val();
         if (!valid(id) || !seen.insert(id).second) { continue; }
         if (nodes[id].kind == Kind::Input) { result.push_back({id,nodes[id].value}); }
         appendOperands(nodes[id],pending);
+    }
+    if (visits) {
+        *visits = seen.size();
     }
     llvm::sort(result,[](const auto& a,const auto& b) { return a.first < b.first; });
     return result;

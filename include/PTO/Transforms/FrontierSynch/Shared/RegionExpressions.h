@@ -82,6 +82,9 @@ public:
     void printExpression(Id expression, llvm::raw_ostream& out) const;
     // Inputs reachable from one circuit root, in DAG order.
     SmallVector<std::pair<Id, Value>> referencedInputs(Id expression) const;
+    // One live slice for a multi-output request. Visits count distinct nodes,
+    // including inputs; no transitive input-set cache is copied per DAG node.
+    SmallVector<std::pair<Id, Value>> referencedInputs(ArrayRef<Id> roots, uint64_t* visits = nullptr) const;
     // Simultaneous, typed DAG substitution. Bindings are immutable; the memo
     // belongs to this context and one arena. Replacement expressions are not
     // themselves substituted, so coordinate shifts never recursively expand.
@@ -97,7 +100,7 @@ public:
         llvm::DenseMap<Id, Id> memo;
         const RegionExpressions* owner = nullptr;
     };
-    Id substitute(Id expression, Substitution& context);
+    Id substitute(Id expression, Substitution& context, uint64_t* nodeVisits = nullptr);
     // Import only the roots' reachable typed DAG from another arena. No memo
     // escapes the call, so rollback cannot leave stale cross-arena bindings.
     // Successful roots belong to this arena; failure publishes no new IDs.
@@ -177,7 +180,7 @@ public:
     std::optional<uint64_t> constantUnder(Id premise, Id expression, uint64_t* nodeVisits = nullptr);
     struct ThresholdProofCost {
         uint64_t dagVisits = 0, families = 0, cells = 0;
-        uint64_t substitutionVisits = 0, proofRequests = 0;
+        uint64_t substitutionVisits = 0, proofRequests = 0, proofVisits = 0;
     };
     // Sufficient uniform inactivity proof. Partition one integer Input at its
     // direct constant-comparison thresholds, rebuild under each exact cell,

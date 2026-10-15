@@ -9,7 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include "llvm/ADT/STLExtras.h"
 namespace mlir::pto::frontiersynch {
-RegionExpressions::Id RegionExpressions::substitute(Id expression, Substitution& context)
+RegionExpressions::Id RegionExpressions::substitute(Id expression, Substitution& context, uint64_t* nodeVisits)
 {
     if (!valid(expression) || (context.owner && context.owner != this)) {
         return reject("regional substitution requires a valid root in its owning arena");
@@ -29,6 +29,9 @@ RegionExpressions::Id RegionExpressions::substitute(Id expression, Substitution&
     SmallVector<Id> pending{expression}, order;
     llvm::DenseSet<Id> seen;
     while (!pending.empty()) {
+        if (nodeVisits && *nodeVisits != UINT64_MAX) {
+            ++*nodeVisits;
+        }
         const Id next = pending.pop_back_val();
         if (context.memo.count(next) || !seen.insert(next).second) { continue; }
         order.push_back(next);
@@ -36,6 +39,9 @@ RegionExpressions::Id RegionExpressions::substitute(Id expression, Substitution&
     }
     llvm::sort(order);
     for (Id id : order) {
+        if (nodeVisits && *nodeVisits != UINT64_MAX) {
+            ++*nodeVisits;
+        }
         const auto node = nodes[id]; // Rebuilding can grow the arena.
         Id result = id;
         if (node.kind == Kind::Integer) {

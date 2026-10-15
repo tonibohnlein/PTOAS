@@ -207,16 +207,20 @@ FailureOr<SmallVector<Value>> guards(const std::shared_ptr<Owner>& owner,
     detached.setInsertionPointToEnd(&scratch);
     SmallVector<Value> values;
     SmallVector<uint64_t> constructed;
+    std::map<uint64_t, SmallVector<Id>> inputRoots, translatedRoots;
+    std::map<uint64_t, PrefixExpressionProfile::Entry*> firstWork;
     for (const auto& record : records) {
-        const auto edge = record.edge;
-        auto& work = *record.work;
-        accumulateCost(work.emissions, 1);
-        const auto distance = edge.target / demands.anchors.size();
-        auto& binding = contexts[distance];
-        if (!binding) { binding = std::make_unique<Context>(e, demands.base, demands.ordinal, distance); }
-        auto& context = binding->emission;
-        for (auto [id, original] : e.referencedInputs(edge.guard)) {
-            if (context.values.count(id)) { continue; }
+        const auto distance = record.edge.target / demands.anchors.size();
+        inputRoots[distance].push_back(record.edge.guard);
+        firstWork.try_emplace(distance, record.work);
+    }
+    // A lookback is one binding environment. Discover its live input union
+    // once, bind each historical evaluation once, and retain one translation
+    // memo. Other lookbacks and private-state versions never share these maps.
+    for (const auto& [distance, roots] : inputRoots) {
+        auto binding = std::make_unique<Context>(e, demands.base, demands.ordinal, distance);
+        uint64_t nodes = 0;
+        for (auto [id, original] : e.referencedInputs(roots, &nodes)) {
             auto found = leaves.find(id);
             if (found == leaves.end()) { continue; }
             const auto& leaf = *found->second;
@@ -226,19 +230,44 @@ FailureOr<SmallVector<Value>> guards(const std::shared_ptr<Owner>& owner,
             }
             auto read = owner->history->read(leaf.requirement, distance - leaf.offset, cut, mapping, state, error);
             if (failed(read)) { return failure(); }
-            context.values[id] = read->value;
-            context.cofactors[id] = id;
+            binding->emission.values[id] = read->value;
+            binding->emission.cofactors[id] = id;
         }
-        auto root = e.substitute(edge.guard, binding->translation);
+        accumulateCost(firstWork.at(distance)->preparationNodes, nodes);
+        contexts.emplace(distance, std::move(binding));
+    }
+    SmallVector<Id> outputs;
+    for (const auto& record : records) {
+        const auto distance = record.edge.target / demands.anchors.size();
+        auto& binding = *contexts.at(distance);
+        auto root = e.substitute(record.edge.guard, binding.translation, &record.work->historySubstitution);
         root = e.land(e.le(e.constant(distance), demands.ordinal), root);
-        detail::bindMappedCutInputs(e, root, cut, mapping, dominance, context);
+        outputs.push_back(root);
+        translatedRoots[distance].push_back(root);
+    }
+    for (const auto& [distance, roots] : translatedRoots) {
+        uint64_t nodes = 0, traversed = 0;
+        auto inputs = e.referencedInputs(roots, &nodes);
+        auto& work = *firstWork.at(distance);
+        accumulateCost(work.preparationNodes, nodes);
+        accumulateCost(work.preparationInputs, inputs.size());
+        detail::bindMappedCutInputList(inputs, cut, mapping, dominance, contexts.at(distance)->emission, &traversed);
+        accumulateCost(work.bindingNodes, traversed);
+    }
+    for (std::size_t i = 0; i < records.size(); ++i) {
+        auto& work = *records[i].work;
+        accumulateCost(work.emissions, 1);
+        const auto distance = records[i].edge.target / demands.anchors.size();
+        auto& context = contexts.at(distance)->emission;
         const auto before = scratch.getOperations().size();
-        auto emitted = e.emitContextual(root, detached, cut, context);
+        auto emitted = e.emitContextual(outputs[i], detached, cut, context);
         const auto operations = scratch.getOperations().size() - before;
         accumulateCost(work.attempts, 1);
         accumulateCost(work.constructed, operations);
         if (failed(emitted)) {
-            if (error.empty()) { error = e.lastEmissionError(); }
+            if (error.empty()) {
+                error = e.lastEmissionError();
+            }
             return failure();
         }
         values.push_back(*emitted);

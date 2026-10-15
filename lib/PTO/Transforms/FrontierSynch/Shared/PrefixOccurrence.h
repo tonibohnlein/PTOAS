@@ -22,6 +22,8 @@ struct PrefixOccurrence {
     std::optional<RegionExpressions::Id> choose;
     PrefixOccurrencePtr yes, no;
 };
+// Shared immutable export-frame identity, including retained mathematical owners.
+bool samePrefixOccurrenceFrame(const RegionalAnalysis& a, const RegionalAnalysis& b);
 using PrefixOccurrenceCache = std::map<uint32_t, PrefixOccurrencePtr>;
 PrefixOccurrencePtr sequencePrefixOccurrence(const std::shared_ptr<SequenceAnalysisState>& owner,
     uint32_t port, PrefixOccurrenceCache& cache, std::string& error);
@@ -29,6 +31,9 @@ std::optional<RegionExpressions::Id> prefixOccurrenceMatch(RegionExpressions& ex
     const PrefixOccurrencePtr& root);
 // Only the already certified singleton wrapper may forward collection without
 // adding intervisit demands. Lift every primitive occurrence through its frame.
+// Only the actual original SCF arm may preserve collection through its guard.
+// Generic predicate overlays continue to invalidate occurrence capabilities.
+RegionalAnalysis guardOriginalArm(RegionalAnalysis body, RegionExpressions::Id guard, Region& arm);
 void liftSingletonPrefixContribution(const RegionalAnalysis& body, RegionalAnalysis& lifted);
 void attachSequenceOccurrenceRecipes(const RegionalAnalysis& region,
     const std::shared_ptr<SequenceAnalysisState>& state, struct RegionalPrefixContribution& result);

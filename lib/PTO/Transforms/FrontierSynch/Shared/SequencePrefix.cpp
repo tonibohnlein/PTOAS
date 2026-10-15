@@ -8,6 +8,7 @@
 #include "SequenceAnalysisInternal.h"
 #include "InvocationPrefixCollection.h"
 #include "PrefixExpression.h"
+#include "PrefixDemand.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
@@ -159,7 +160,7 @@ LogicalResult capturePrimitivePrefixSource(
                 return success();
             }});
     }
-    auto expression = preparePrefixExpression(owner->arena, guard, sourceCut, collection);
+    auto expression = preparePrefixExpression(owner->arena, guard, sourceCut, collection, "sequence-source-match");
     if (failed(collection.source(anchor.phase,
         [expression, sourceCut, slot](OpBuilder& b, const IRMapping& mapping,
             MutableArrayRef<Value> state, Value ordinal, std::string& diagnostic) {
@@ -192,7 +193,8 @@ FailureOr<uint32_t> capturePrefixSource(
             auto yes = visit(node->yes), no = visit(node->no);
             if (failed(yes) || failed(no)) { return failure(); }
             rank.yes = *yes; rank.no = *no;
-            rank.choose = preparePrefixExpression(owner->arena, *node->choose, targetCut, collection);
+            rank.choose =
+                preparePrefixExpression(owner->arena, *node->choose, targetCut, collection, "sequence-source-choice");
         }
         if (ids.size() >= UINT32_MAX) { error = "prefix occurrence identity overflow"; return failure(); }
         const auto id = static_cast<uint32_t>(ids.size());
@@ -222,9 +224,9 @@ FailureOr<Value> selectedPrefixRank(uint32_t root,
     }
     return values.at(root);
 }
-LogicalResult appendPrefixCrossing(
-    const std::shared_ptr<SequenceAnalysisState>& owner, const Crossing& edge, InvocationPrefixCollection& collection,
-    std::string& error, bool certifiedPresence, PrimitiveCaptures& shared)
+FailureOr<Expr> prefixCrossingRoot(
+    const std::shared_ptr<SequenceAnalysisState>& owner, const Crossing& edge, bool certifiedPresence,
+    PrefixOccurrenceCache& occurrences, std::string& error)
 {
     auto& e = owner->expressions;
     if (edge.source >= owner->ports.size() || edge.target >= owner->ports.size()) {
@@ -253,77 +255,46 @@ LogicalResult appendPrefixCrossing(
             return failure();
         }
     }
-    auto p = static_cast<uint32_t>(aa.phase->kPipeValue), q = static_cast<uint32_t>(ab.phase->kPipeValue);
-    PrefixOccurrenceCache occurrences;
-    auto targetOccurrence = sequencePrefixOccurrence(owner, edge.target, occurrences, error);
-    auto target = prefixOccurrenceMatch(e, targetOccurrence);
+    auto target = prefixOccurrenceMatch(e, sequencePrefixOccurrence(owner, edge.target, occurrences, error));
     if (!target) {
         if (error.empty()) { error = "prefix crossing has unavailable original coordinates"; }
         return failure();
     }
+    return e.select(edge.guard, *target, e.boolean(false));
+}
+LogicalResult appendPrefixCrossing(
+    const std::shared_ptr<SequenceAnalysisState>& owner, const Crossing& edge, InvocationPrefixCollection& collection,
+    PrefixIncomingSelector expression, PrefixOccurrenceCache& occurrences, PrimitiveCaptures& shared,
+    std::string& error)
+{
+    // The complete batch has already validated ports, cuts and presence before
+    // any root is prepared. Share its producer-owned occurrence directory.
+    const auto& a = owner->ports[edge.source];
+    const auto& b = owner->ports[edge.target];
+    const auto& aa = owner->children[a.child].anchors[a.type];
+    const auto& ab = owner->children[b.child].anchors[b.type];
+    auto p = static_cast<uint32_t>(aa.phase->kPipeValue), q = static_cast<uint32_t>(ab.phase->kPipeValue);
     auto* targetCut = ab.phase->elementOp;
-    auto expression = preparePrefixExpression(
-        owner->arena, e.select(edge.guard, *target, e.boolean(false)), targetCut, collection);
     if (p == q) {
-        if (p == static_cast<uint32_t>(PIPE::PIPE_S)) {
-            error = "scalar crossing requires its native prerequisite contract";
-            return failure();
-        }
-        collection.recipe().actions.push_back(
-            {targetCut, PrivateStateCut::Before,
-             [expression, targetCut, p](
-                 OpBuilder& b, const IRMapping& mapping, MutableArrayRef<Value> state, std::string& error) {
-                 auto active = expression(b, mapping, state, error);
-                 if (failed(active)) {
-                     return failure();
-                 }
-                 if (matchPattern(*active, m_Zero())) { return success(); }
-                 auto branch = b.create<scf::IfOp>(targetCut->getLoc(), *active, false);
-                 OpBuilder::InsertionGuard restore(b);
-                 b.setInsertionPointToStart(branch.thenBlock());
-                 b.create<BarrierOp>(targetCut->getLoc(), PipeAttr::get(b.getContext(), static_cast<PIPE>(p)));
-                 return success();
-             }});
-        return success();
+        return appendPrefixIncoming(collection, targetCut, {p, q}, std::move(expression), {}, error);
     }
     std::map<uint32_t, PrefixCapturedRank> captured;
     auto sourceOccurrence = sequencePrefixOccurrence(owner, edge.source, occurrences, error);
     auto sourceId = capturePrefixSource(owner, sourceOccurrence, targetCut, collection, captured, shared, error);
     if (failed(sourceId)) { return failure(); }
-    return collection.consumer(
-        targetCut, {p, q},
-        [expression, targetCut, source = *sourceId, captured = std::move(captured)](
-            OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error) -> FailureOr<Value> {
-            auto selected = expression(b, mapping, state, error);
-            if (failed(selected)) {
-                return failure();
-            }
-            if (matchPattern(*selected, m_Zero())) {
-                return b.create<arith::ConstantIndexOp>(targetCut->getLoc(), 0).getResult();
-            }
-            auto rank = selectedPrefixRank(source, captured, targetCut, b, mapping, state, error);
-            if (failed(rank)) { return failure(); }
-            auto zero = b.create<arith::ConstantIndexOp>(targetCut->getLoc(), 0);
-            return b.create<arith::SelectOp>(targetCut->getLoc(), *selected, *rank, zero).getResult();
+    return appendPrefixIncoming(
+        collection, targetCut, {p, q}, std::move(expression),
+        [targetCut, source = *sourceId, captured = std::move(captured)](
+            OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error) {
+            return selectedPrefixRank(source, captured, targetCut, b, mapping, state, error);
         },
         error);
 }
 } // namespace
-LogicalResult SequenceAnalysisState::collectPrefix(InvocationPrefixCollection& collection, std::string& diagnostic)
+LogicalResult collectSequencePrefixChildren(
+    const SequenceAnalysisState& state, InvocationPrefixCollection& collection, std::string& diagnostic)
 {
-    if (function != collection.function()) {
-        diagnostic = "sequence prefix collection belongs to a different invocation";
-        return failure();
-    }
-    if (!error.empty()) {
-        diagnostic = "sequence prefix collection retains an analysis failure: " + error;
-        return failure();
-    }
-    if (relationalResult) {
-        diagnostic = "sequence prefix collection requires a retained relational crossing adapter";
-        return failure();
-    }
-    for (const auto& child : children) {
+    for (const auto& child : state.children) {
         if (child.regional.invocationPrefix) {
             if (failed(collectRegionalInvocationPrefix(child.regional, collection, diagnostic))) { return failure(); }
         } else if (child.prefixMathematics) {
@@ -339,14 +310,60 @@ LogicalResult SequenceAnalysisState::collectPrefix(InvocationPrefixCollection& c
             return failure();
         }
     }
+    return success();
+}
+LogicalResult SequenceAnalysisState::collectPrefix(InvocationPrefixCollection& collection, std::string& diagnostic)
+{
+    if (function != collection.function()) {
+        diagnostic = "sequence prefix collection belongs to a different invocation";
+        return failure();
+    }
+    if (!error.empty()) {
+        diagnostic = "sequence prefix collection retains an analysis failure: " + error;
+        return failure();
+    }
+    if (relationalResult) {
+        auto contribution = sequencePrefixContribution(*relationalResult, shared_from_this());
+        if (!contribution) {
+            diagnostic = "sequence prefix collection requires a supported relational crossing adapter";
+            return failure();
+        }
+        if (failed(collection.bindInput(contribution->input, diagnostic))) {
+            return failure();
+        }
+        return contribution->collect(collection, diagnostic);
+    }
+    if (failed(collectSequencePrefixChildren(*this, collection, diagnostic))) {
+        return failure();
+    }
     // Check the sealed context once. Uncertified or changed graphs retain the
     // ordinary checked path. This evidence does not certify executable guards,
     // source ordinals, original cuts, or rank transport across invocations.
     const bool certifiedPresence = hasCertifiedCrossingPresence();
-    PrimitiveCaptures captures;
+    PrefixOccurrenceCache occurrences;
+    std::map<Operation*, SmallVector<Expr>> roots;
+    std::vector<std::pair<Operation*, std::size_t>> requests;
     for (const auto& edge : crossings) {
+        auto root = prefixCrossingRoot(shared_from_this(), edge, certifiedPresence, occurrences, diagnostic);
+        if (failed(root)) {
+            return failure();
+        }
+        const auto& target = ports[edge.target];
+        auto* cut = children[target.child].anchors[target.type].phase->elementOp;
+        auto& batch = roots[cut];
+        requests.emplace_back(cut, batch.size());
+        batch.push_back(*root);
+    }
+    std::map<Operation*, std::vector<PrefixIncomingSelector>> expressionsAtCuts;
+    for (const auto& [cut, outputs] : roots) {
+        expressionsAtCuts.emplace(cut, preparePrefixExpressions(arena, outputs, cut, collection, "sequence-incoming"));
+    }
+    PrimitiveCaptures captures;
+    for (std::size_t i = 0; i < crossings.size(); ++i) {
+        const auto [cut, output] = requests[i];
         if (failed(appendPrefixCrossing(
-                shared_from_this(), edge, collection, diagnostic, certifiedPresence, captures))) {
+                shared_from_this(), crossings[i], collection, expressionsAtCuts.at(cut)[output], occurrences, captures,
+                diagnostic))) {
             return failure();
         }
     }

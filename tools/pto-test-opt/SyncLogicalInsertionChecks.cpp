@@ -1311,15 +1311,20 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
     }
     auto analysis = fs::analyzeSequence(function, input, *program);
     if (function->hasAttr("test.boundary_summary_only")) {
-        llvm::outs() << llvm::json::Value(llvm::json::Object{
-            {"error", analysis.error}, {"children", analysis.cost.children},
-            {"bridge_candidates", fs::sequenceBridgeWork(analysis).candidates},
-            {"bridge_remasked", fs::sequenceBridgeWork(analysis).remasked},
-            {"bridge_retained", fs::sequenceBridgeWork(analysis).retained},
-            {"native_candidates", analysis.state ? analysis.state->nativeFrontierWork.candidates : 0},
-            {"native_remasked", analysis.state ? analysis.state->nativeFrontierWork.remasked : 0},
-            {"native_links", analysis.state ? analysis.state->nativeFrontierWork.retained : 0},
-            {"boundary_summary_visits", fs::sequenceBoundarySummaryVisits(analysis)}}) << "\n";
+        llvm::outs() << llvm::json::Value(
+                            llvm::json::Object{
+                                {"error", analysis.error},
+                                {"children", analysis.cost.children},
+                                {"bridge_candidates", fs::sequenceBridgeWork(analysis).candidates},
+                                {"bridge_remasked", fs::sequenceBridgeWork(analysis).remasked},
+                                {"bridge_retained", fs::sequenceBridgeWork(analysis).retained},
+                                {"residual_candidates", fs::sequenceBridgeWork(analysis).residualCandidates},
+                                {"native_candidates",
+                                 analysis.state ? analysis.state->nativeFrontierWork.candidates : 0},
+                                {"native_remasked", analysis.state ? analysis.state->nativeFrontierWork.remasked : 0},
+                                {"native_links", analysis.state ? analysis.state->nativeFrontierWork.retained : 0},
+                                {"boundary_summary_visits", fs::sequenceBoundarySummaryVisits(analysis)}})
+                     << "\n";
         return success(analysis.error.empty());
     }
     const bool preparationRetry = !function->hasAttr("test.preparation_retry") ||
@@ -1381,41 +1386,58 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
     std::string after;
     llvm::raw_string_ostream current(after);
     function.print(current);
-    llvm::outs() << llvm::json::Value(llvm::json::Object{
-        {"function", function.getSymName()}, {"error", analysis.error},
-        {"bounded_cached_regions", boundedRegions}, {"bounded_cached_demands", boundedRecords},
-        {"bounded_cache_stable", boundedCacheStable},
-        {"insertion_error", analysis.insertionError},
-        {"preparation_retry", preparationRetry},
-        {"prepared", succeeded(prepared)},
-        {"nested_matching", succeeded(prepared) && (**prepared).nestedIdentities},
-        {"symbolic_storage_effects", regional.symbolicStorageEffects.size()},
-        {"storage_selector_interface", bool(regional.storageSelectors)},
-        {"allocation_interface", failed(prepared) ? "no-logical-plan" :
-            ((**prepared).regionalAllocation || (**prepared).allocationCertificate ? "constructed" : "unavailable")},
-        {"queries_available", validQueries}, {"unchanged", before == after}, {"contract_audit", contractAudit},
-        {"slice_prerequisite", checkSlicePrerequisite(function, input)},
-        {"region_scope", checkRegionScope ? llvm::json::Value(regionScope) : llvm::json::Value(nullptr)},
-        {"arithmetic_entry_prerequisite", checkArithmeticEntryPrerequisite(function, input)},
-        {"children", analysis.cost.children}, {"cells", analysis.cost.cells},
-        {"ports", analysis.cost.ports}, {"crossings", analysis.cost.crossings},
-        {"physical_fragments", analysis.cost.physicalFragments},
-        {"arithmetic_regions", analysis.cost.arithmeticRegions}, {"boundary_bytes", analysis.cost.boundaryBytes},
-        {"child_preparation", fs::sequencePreparationCounts(analysis).first},
-        {"crossing_preparation", fs::sequencePreparationCounts(analysis).second},
-        {"rotating_residues", analysis.cost.rotatingResidues}, {"numeric_visits", analysis.cost.numericVisits},
-        {"repeated_regions", analysis.cost.repeatedRegions}, {"phase_descriptions", analysis.cost.phaseDescriptions},
-        {"selector_comparisons", analysis.cost.selectorComparisons},
-        {"crossing_candidates", analysis.cost.crossingCandidates},
-        {"bridge_candidates", fs::sequenceBridgeWork(analysis).candidates},
-        {"bridge_remasked", fs::sequenceBridgeWork(analysis).remasked},
-        {"bridge_retained", fs::sequenceBridgeWork(analysis).retained},
-        {"native_candidates", analysis.state ? analysis.state->nativeFrontierWork.candidates : 0},
-        {"native_remasked", analysis.state ? analysis.state->nativeFrontierWork.remasked : 0},
-        {"native_links", analysis.state ? analysis.state->nativeFrontierWork.retained : 0},
-        {"boundary_summary_visits", fs::sequenceBoundarySummaryVisits(analysis)},
-        {"implication_checks", analysis.cost.implicationChecks},
-        {"expressions", expressions ? expressions->size() : 0}, {"emitted", emitted}}) << "\n";
+    llvm::outs() << llvm::json::Value(
+                        llvm::json::Object{
+                            {"function", function.getSymName()},
+                            {"error", analysis.error},
+                            {"bounded_cached_regions", boundedRegions},
+                            {"bounded_cached_demands", boundedRecords},
+                            {"bounded_cache_stable", boundedCacheStable},
+                            {"insertion_error", analysis.insertionError},
+                            {"preparation_retry", preparationRetry},
+                            {"prepared", succeeded(prepared)},
+                            {"nested_matching", succeeded(prepared) && (**prepared).nestedIdentities},
+                            {"symbolic_storage_effects", regional.symbolicStorageEffects.size()},
+                            {"storage_selector_interface", bool(regional.storageSelectors)},
+                            {"allocation_interface",
+                             failed(prepared) ? "no-logical-plan" :
+                                                ((**prepared).regionalAllocation || (**prepared).allocationCertificate ?
+                                                     "constructed" :
+                                                     "unavailable")},
+                            {"queries_available", validQueries},
+                            {"unchanged", before == after},
+                            {"contract_audit", contractAudit},
+                            {"slice_prerequisite", checkSlicePrerequisite(function, input)},
+                            {"region_scope",
+                             checkRegionScope ? llvm::json::Value(regionScope) : llvm::json::Value(nullptr)},
+                            {"arithmetic_entry_prerequisite", checkArithmeticEntryPrerequisite(function, input)},
+                            {"children", analysis.cost.children},
+                            {"cells", analysis.cost.cells},
+                            {"ports", analysis.cost.ports},
+                            {"crossings", analysis.cost.crossings},
+                            {"physical_fragments", analysis.cost.physicalFragments},
+                            {"arithmetic_regions", analysis.cost.arithmeticRegions},
+                            {"boundary_bytes", analysis.cost.boundaryBytes},
+                            {"child_preparation", fs::sequencePreparationCounts(analysis).first},
+                            {"crossing_preparation", fs::sequencePreparationCounts(analysis).second},
+                            {"rotating_residues", analysis.cost.rotatingResidues},
+                            {"numeric_visits", analysis.cost.numericVisits},
+                            {"repeated_regions", analysis.cost.repeatedRegions},
+                            {"phase_descriptions", analysis.cost.phaseDescriptions},
+                            {"selector_comparisons", analysis.cost.selectorComparisons},
+                            {"crossing_candidates", analysis.cost.crossingCandidates},
+                            {"bridge_candidates", fs::sequenceBridgeWork(analysis).candidates},
+                            {"bridge_remasked", fs::sequenceBridgeWork(analysis).remasked},
+                            {"bridge_retained", fs::sequenceBridgeWork(analysis).retained},
+                            {"residual_candidates", fs::sequenceBridgeWork(analysis).residualCandidates},
+                            {"native_candidates", analysis.state ? analysis.state->nativeFrontierWork.candidates : 0},
+                            {"native_remasked", analysis.state ? analysis.state->nativeFrontierWork.remasked : 0},
+                            {"native_links", analysis.state ? analysis.state->nativeFrontierWork.retained : 0},
+                            {"boundary_summary_visits", fs::sequenceBoundarySummaryVisits(analysis)},
+                            {"implication_checks", analysis.cost.implicationChecks},
+                            {"expressions", expressions ? expressions->size() : 0},
+                            {"emitted", emitted}})
+                 << "\n";
     return success(before == after && regionScope && contractAudit && boundedCacheStable && preparationRetry);
 }
 

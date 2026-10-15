@@ -13,7 +13,14 @@
 namespace mlir::pto::frontiersynch {
 // Layout snapshots before state materialization. Emission/proofs remain lazy.
 // Unknown availability refuses the recipe; no opaque producer is replayed.
-PrefixIncomingSelector preparePrefixExpression(std::shared_ptr<RegionExpressions> arena,
-    RegionExpressions::Id root, Operation* cut, InvocationPrefixCollection& collection);
+// A batch shares live-input discovery and historical snapshot qualification at
+// one arena/cut. Binding environments still distinguish every emitted state
+// version; union preparation does not imply availability of any individual root.
+std::vector<PrefixIncomingSelector> preparePrefixExpressions(
+    std::shared_ptr<RegionExpressions> arena, ArrayRef<RegionExpressions::Id> roots, Operation* cut,
+    InvocationPrefixCollection& collection, StringRef producer = "regional");
+PrefixIncomingSelector preparePrefixExpression(
+    std::shared_ptr<RegionExpressions> arena, RegionExpressions::Id root, Operation* cut,
+    InvocationPrefixCollection& collection, StringRef producer = "regional");
 } // namespace mlir::pto::frontiersynch
 #endif

@@ -40,13 +40,14 @@ bool sameFrame(scf::ForOp loop, Operation* cut, DominanceInfo& dominance)
     }
     return true;
 }
-std::vector<Binding> collectBindings(const std::shared_ptr<RegionExpressions>& owner, Expr root, Operation* cut,
-                                    InvocationPrefixCollection& collection)
+std::vector<Binding> collectBindings(
+    const std::shared_ptr<RegionExpressions>& owner, ArrayRef<std::pair<Expr, Value>> inputs, Operation* cut,
+    InvocationPrefixCollection& collection)
 {
     auto& arena = *owner;
     std::vector<Binding> bindings;
     DominanceInfo dominance(collection.function());
-    for (auto [id, unused] : arena.referencedInputs(root)) {
+    for (auto [id, unused] : inputs) {
         auto evaluation = arena.evaluation(id);
         if (!evaluation) { continue; }
         auto loop = dyn_cast_or_null<scf::ForOp>(evaluation->loop);
@@ -64,10 +65,20 @@ std::vector<Binding> collectBindings(const std::shared_ptr<RegionExpressions>& o
     }
     return bindings;
 }
+bool inactive(RegionExpressions& arena, Expr root, PrefixExpressionProfile::Entry& work)
+{
+    RegionExpressions::ThresholdProofCost cost;
+    const bool result = arena.inactiveByThresholds(root, &cost);
+    accumulateCost(work.thresholdDiscovery, cost.dagVisits);
+    accumulateCost(work.thresholdSubstitution, cost.substitutionVisits);
+    accumulateCost(work.proofVisits, cost.proofVisits);
+    return result;
+}
 // Each proof leaves every other historical input unconstrained. The premise
 // contains only numeric control bounds, so the certificates compose when
 // several unavailable evaluations are replaced simultaneously.
-bool independentWhenUnavailable(RegionExpressions& arena, Expr root, Operation* cut, Binding binding)
+bool independentWhenUnavailable(
+    RegionExpressions& arena, Expr root, Operation* cut, Binding binding, PrefixExpressionProfile::Entry& work)
 {
     RegionExpressions::Transaction scratch(arena);
     auto available = arena.boolean(false), domain = arena.boolean(true);
@@ -101,27 +112,31 @@ bool independentWhenUnavailable(RegionExpressions& arena, Expr root, Operation* 
             } else { available = arena.slt(induction, upper); }
         }
     }
-    if (arena.constantUnder(domain, available) == 1) { return true; }
+    if (arena.constantUnder(domain, available, &work.proofVisits) == 1) {
+        return true;
+    }
     RegionExpressions::Substitution no({{binding.input, arena.boolean(false)}});
     RegionExpressions::Substitution yes({{binding.input, arena.boolean(true)}});
-    const auto a = arena.substitute(root, no), b = arena.substitute(root, yes);
+    const auto a = arena.substitute(root, no, &work.historySubstitution);
+    const auto b = arena.substitute(root, yes, &work.historySubstitution);
     const auto differs = arena.land(domain, arena.land(arena.lnot(available), arena.lnot(arena.eq(a, b))));
-    return arena.constantValue(differs) == 0 || arena.inactiveByThresholds(differs);
+    return arena.constantValue(differs) == 0 || inactive(arena, differs, work);
 }
-RegionExpressions::CutEmission contextFor(RegionExpressions& arena, Expr root, Operation* cut,
-                                          const IRMapping& mapping)
-{
-    RegionExpressions::CutEmission context;
-    DominanceInfo dominance(cut->getParentOfType<func::FuncOp>());
-    detail::bindMappedCutInputs(arena, root, cut, mapping, dominance, context);
-    return context;
-}
+struct InputBatch {
+    SmallVector<std::pair<Expr, Value>> inputs;
+    DominanceInfo dominance;
+    InputBatch(SmallVector<std::pair<Expr, Value>> inputs, func::FuncOp function)
+        : inputs(std::move(inputs)), dominance(function)
+    {}
+};
 struct ExpressionRecipe {
     std::shared_ptr<RegionExpressions> arena;
     Expr root;
     Operation* cut;
-    std::vector<Binding> bindings;
+    std::shared_ptr<const std::vector<Binding>> bindings;
+    std::shared_ptr<InputBatch> inputBatch;
     std::optional<bool> historyProved;
+    std::optional<bool> inactiveProved;
     std::shared_ptr<PrefixExpressionProfile> profile;
     std::shared_ptr<PrefixExpressionSession> session;
     PrefixExpressionProfile::Entry* work = nullptr;
@@ -136,18 +151,45 @@ struct ExpressionRecipe {
             accumulateCost(work->attempts, 1);
             accumulateCost(work->constructed, scratch.getOperations().size());
         };
-        auto context = contextFor(e, root, cut, mapping);
+        RegionExpressions::CutEmission context;
         RegionExpressions::CutEmission* accepted = nullptr;
         auto lower = [&](PrefixExpressionSession::Environment environment) -> FailureOr<Value> {
             auto* shared = session->bindings(&e, cut, builder.getInsertionBlock(), mapping, std::move(environment));
-            auto lookupValue = [&](Expr id) { return shared ? shared->values.lookup(id) : Value{}; };
-            auto lookupInput = [&](Value input) { return shared ? shared->inputs.lookup(input) : Value{}; };
+            if (shared) {
+                if (auto value = shared->values.lookup(root)) {
+                    accumulateCost(work->sharedReturns, 1);
+                    accepted = shared;
+                    return value;
+                }
+            }
+            PrefixExpressionSession::OriginalBindings local;
+            auto* original = session->originalBindings(&e, inputBatch.get(), cut, builder.getInsertionBlock(), mapping);
+            if (!original) {
+                original = &local;
+            }
+            if (!original->prepared) {
+                uint64_t traversed = 0;
+                detail::bindMappedCutInputList(
+                    inputBatch->inputs, cut, mapping, inputBatch->dominance, original->context, &traversed);
+                original->prepared = true;
+                accumulateCost(work->bindingNodes, traversed);
+            }
+            // Consult shared layers on demand. Do not seed every output memo
+            // with every original or previously generated value in the batch.
+            auto lookupValue = [&](Expr id) {
+                auto value = shared ? shared->values.lookup(id) : Value{};
+                return value ? value : original->context.values.lookup(id);
+            };
+            auto lookupInput = [&](Value input) {
+                auto value = shared ? shared->inputs.lookup(input) : Value{};
+                return value ? value : original->context.inputs.lookup(input);
+            };
             auto hasValue = [&](Expr id) { return bool(lookupValue(id)); };
             RegionExpressions::SharedCutPlanning planning{hasValue};
             RegionExpressions::SharedCutBindings emitted{lookupValue, lookupInput};
-            auto recipe = e.prepareContextual(root, cut, context, shared ? &planning : nullptr);
+            auto recipe = e.prepareContextual(root, cut, context, &planning);
             if (failed(recipe)) { return failure(); }
-            auto result = e.emitPreparedContextual(**recipe, detached, cut, context, shared ? &emitted : nullptr);
+            auto result = e.emitPreparedContextual(**recipe, detached, cut, context, &emitted);
             if (succeeded(result)) { accepted = shared; }
             return result;
         };
@@ -157,22 +199,28 @@ struct ExpressionRecipe {
             accumulateCost(work->directFailures, 1);
             const std::string directError = e.lastEmissionError();
             scratch.clear(); detached.setInsertionPointToEnd(&scratch);
-            if (e.inactiveByThresholds(root)) {
+            if (!inactiveProved) {
                 accumulateCost(work->inactiveAttempts, 1);
+                inactiveProved = inactive(e, root, *work);
+                if (*inactiveProved) {
+                    accumulateCost(work->inactiveSuccesses, 1);
+                }
+            }
+            if (*inactiveProved) {
                 RegionExpressions::CutEmission inactive;
                 value = e.emitContextual(e.boolean(false), detached, cut, inactive);
                 attempt();
             } else {
                 if (!historyProved) {
-                    historyProved = !bindings.empty() && llvm::all_of(bindings, [&](const Binding& binding) {
-                        return independentWhenUnavailable(e, root, cut, binding);
+                    historyProved = !bindings->empty() && llvm::all_of(*bindings, [&](const Binding& binding) {
+                        return independentWhenUnavailable(e, root, cut, binding, *work);
                     });
                 }
                 if (!*historyProved) { error = directError; return failure(); }
                 accumulateCost(work->historyAttempts, 1);
-                context = contextFor(e, root, cut, mapping);
+                context = RegionExpressions::CutEmission();
                 PrefixExpressionSession::Environment environment;
-                for (const auto& binding : bindings) {
+                for (const auto& binding : *bindings) {
                     if (binding.validSlot >= state.size() || !state[binding.valueSlot].getType().isInteger(1) ||
                         !state[binding.validSlot].getType().isInteger(1)) {
                         error = "historical expression lost its invocation state"; return failure();
@@ -219,7 +267,14 @@ void PrefixExpressionProfile::resetEmission()
 {
     for (auto& [key, entry] : entries) {
         entry.emissions = entry.attempts = entry.directFailures = entry.inactiveAttempts = entry.historyAttempts = 0;
-        entry.constructed = entry.retained = entry.maximumRetained = 0;
+        entry.constructed = entry.retained = entry.maximumRetained = entry.inactiveSuccesses = entry.sharedReturns =
+            entry.bindingNodes = 0;
+        entry.thresholdDiscovery = entry.thresholdSubstitution = entry.proofVisits = entry.historySubstitution = 0;
+        // Bounded translation and input slicing happen inside the staged
+        // materialization transaction; regional batch discovery precedes it.
+        if (entry.producer == "bounded") {
+            entry.preparationNodes = entry.preparationInputs = 0;
+        }
     }
 }
 llvm::json::Object PrefixExpressionProfile::report() const
@@ -233,6 +288,15 @@ llvm::json::Object PrefixExpressionProfile::report() const
         accumulateCost(totals.directFailures, entry.directFailures);
         accumulateCost(totals.inactiveAttempts, entry.inactiveAttempts);
         accumulateCost(totals.historyAttempts, entry.historyAttempts);
+        accumulateCost(totals.inactiveSuccesses, entry.inactiveSuccesses);
+        accumulateCost(totals.preparationNodes, entry.preparationNodes);
+        accumulateCost(totals.preparationInputs, entry.preparationInputs);
+        accumulateCost(totals.sharedReturns, entry.sharedReturns);
+        accumulateCost(totals.bindingNodes, entry.bindingNodes);
+        accumulateCost(totals.thresholdDiscovery, entry.thresholdDiscovery);
+        accumulateCost(totals.thresholdSubstitution, entry.thresholdSubstitution);
+        accumulateCost(totals.proofVisits, entry.proofVisits);
+        accumulateCost(totals.historySubstitution, entry.historySubstitution);
         accumulateCost(totals.constructed, entry.constructed);
         accumulateCost(totals.retained, entry.retained);
         largest.push_back(&entry);
@@ -242,10 +306,24 @@ llvm::json::Object PrefixExpressionProfile::report() const
         return std::tie(a->arena, a->root, a->location) < std::tie(b->arena, b->root, b->location);
     });
     auto counts = [](const Entry& entry) {
-        return llvm::json::Object{{"requests", entry.requests}, {"emissions", entry.emissions},
-            {"attempts", entry.attempts}, {"direct_failures", entry.directFailures},
-            {"inactive_attempts", entry.inactiveAttempts}, {"history_attempts", entry.historyAttempts},
-            {"constructed_operations", entry.constructed}, {"retained_operations", entry.retained}};
+        return llvm::json::Object{
+            {"requests", entry.requests},
+            {"emissions", entry.emissions},
+            {"attempts", entry.attempts},
+            {"direct_failures", entry.directFailures},
+            {"inactive_attempts", entry.inactiveAttempts},
+            {"inactive_successes", entry.inactiveSuccesses},
+            {"history_attempts", entry.historyAttempts},
+            {"preparation_nodes", entry.preparationNodes},
+            {"preparation_inputs", entry.preparationInputs},
+            {"shared_returns", entry.sharedReturns},
+            {"binding_node_visits", entry.bindingNodes},
+            {"threshold_discovery_visits", entry.thresholdDiscovery},
+            {"threshold_substitution_visits", entry.thresholdSubstitution},
+            {"proof_traversal_visits", entry.proofVisits},
+            {"history_substitution_visits", entry.historySubstitution},
+            {"constructed_operations", entry.constructed},
+            {"retained_operations", entry.retained}};
     };
     auto result = counts(totals);
     result["unique_recipes"] = entries.size();
@@ -262,21 +340,46 @@ llvm::json::Object PrefixExpressionProfile::report() const
     result["largest_recipes"] = std::move(top);
     return result;
 }
-PrefixIncomingSelector preparePrefixExpression(std::shared_ptr<RegionExpressions> arena,
-    Expr root, Operation* cut, InvocationPrefixCollection& collection)
+std::vector<PrefixIncomingSelector> preparePrefixExpressions(
+    std::shared_ptr<RegionExpressions> arena, ArrayRef<Expr> roots, Operation* cut,
+    InvocationPrefixCollection& collection, StringRef producer)
 {
-    auto recipe = std::make_shared<ExpressionRecipe>();
-    recipe->arena = std::move(arena); recipe->root = root; recipe->cut = cut;
+    if (roots.empty()) {
+        return {};
+    }
+    uint64_t nodes = 0;
+    auto inputs = arena->referencedInputs(roots, &nodes);
+    auto bindings = std::make_shared<const std::vector<Binding>>(collectBindings(arena, inputs, cut, collection));
+    auto inputBatch = std::make_shared<InputBatch>(std::move(inputs), collection.function());
     auto& profile = collection.recipe().expressionProfile;
     if (!profile) { profile = std::make_shared<PrefixExpressionProfile>(); }
-    recipe->profile = profile;
     auto& session = collection.recipe().expressionSession;
     if (!session) { session = std::make_shared<PrefixExpressionSession>(); }
-    recipe->session = session;
-    recipe->work = &profile->request(recipe->arena.get(), root, cut);
-    recipe->bindings = collectBindings(recipe->arena, root, cut, collection);
-    return [recipe](OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error) {
-        return recipe->emit(b, mapping, state, error);
-    };
+    std::vector<PrefixIncomingSelector> result;
+    for (auto root : roots) {
+        auto recipe = std::make_shared<ExpressionRecipe>();
+        recipe->arena = arena;
+        recipe->root = root;
+        recipe->cut = cut;
+        recipe->profile = profile;
+        recipe->session = session;
+        recipe->bindings = bindings;
+        recipe->inputBatch = inputBatch;
+        recipe->work = &profile->request(arena.get(), root, cut, producer.str());
+        if (result.empty()) {
+            accumulateCost(recipe->work->preparationNodes, nodes);
+            accumulateCost(recipe->work->preparationInputs, inputBatch->inputs.size());
+        }
+        result.push_back([recipe](OpBuilder& b, const IRMapping& mapping, ArrayRef<Value> state, std::string& error) {
+            return recipe->emit(b, mapping, state, error);
+        });
+    }
+    return result;
+}
+PrefixIncomingSelector preparePrefixExpression(
+    std::shared_ptr<RegionExpressions> arena, Expr root, Operation* cut, InvocationPrefixCollection& collection,
+    StringRef producer)
+{
+    return preparePrefixExpressions(std::move(arena), ArrayRef<Expr>(root), cut, collection, producer).front();
 }
 } // namespace mlir::pto::frontiersynch

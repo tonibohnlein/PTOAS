@@ -59,6 +59,14 @@ LogicalResult dumpExplicitAnalysis(func::FuncOp function, const pto::SyncInput& 
     llvm::json::Object output;
     output["function"] = function.getSymName();
     output["error"] = result.error;
+    if (function->hasAttr("test.residual_eligibility")) {
+        llvm::json::Array eligible;
+        const bool unresolved = input.accesses().hasUniformRelationships(result.phases);
+        for (auto* phase : result.phases) {
+            eligible.push_back(input.accesses().needsOverlapQueries(phase, unresolved));
+        }
+        output["residual_eligible"] = std::move(eligible);
+    }
     llvm::json::Array occurrences, edges, rows, cells;
     for (const auto& occurrence : result.occurrences) {
         llvm::json::Array accesses;

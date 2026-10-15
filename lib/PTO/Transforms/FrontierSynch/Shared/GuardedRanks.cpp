@@ -17,9 +17,10 @@ GuardedRankFrontier initGuardedRankFrontier(RegionExpressions& e, uint32_t colum
     return result;
 }
 namespace {
-GuardedRankStep advanceRank(RegionExpressions& e, GuardedRankFrontier& frontier,
-    uint32_t column, RegionExpressions::Id present, llvm::ArrayRef<GuardedRankIncoming> candidates,
-    llvm::ArrayRef<GuardedRankIncoming> native, std::optional<RegionExpressions::Id> referenceRank)
+GuardedRankStep advanceRank(
+    RegionExpressions& e, GuardedRankFrontier& frontier, uint32_t column, RegionExpressions::Id present,
+    llvm::ArrayRef<GuardedRankIncoming> candidates, llvm::ArrayRef<GuardedRankIncoming> native,
+    std::optional<RegionExpressions::Id> referenceRank, bool knownEndpointOrder = false)
 {
     GuardedRankStep out;
     const auto k = frontier.counters.size();
@@ -27,10 +28,11 @@ GuardedRankStep advanceRank(RegionExpressions& e, GuardedRankFrontier& frontier,
     auto row = [&](llvm::ArrayRef<RegionExpressions::Id> values) {
         return values.size() == k && llvm::all_of(values, integer);
     };
-    if (column >= k || frontier.starts.size() != k || frontier.completions.size() != k ||
-        present >= e.size() || !e.isBoolean(present) || !integer(frontier.counters[column]) ||
-        !row(frontier.starts[column]) || !row(frontier.completions[column])) {
-        out.error = "invalid guarded frontier registers"; return out;
+    if (column >= k || frontier.starts.size() != k || frontier.completions.size() != k || present >= e.size() ||
+        !e.isBoolean(present) || !integer(frontier.counters[column]) || !row(frontier.starts[column]) ||
+        !row(frontier.completions[column])) {
+        out.error = "invalid guarded frontier registers";
+        return out;
     }
     auto valid = [&](llvm::ArrayRef<GuardedRankIncoming> edges) {
         return llvm::all_of(edges, [&](const auto& edge) {
@@ -38,60 +40,152 @@ GuardedRankStep advanceRank(RegionExpressions& e, GuardedRankFrontier& frontier,
                    edge.completion.size() == k;
         });
     };
-    if (!valid(candidates) || !valid(native)) { out.error = "invalid guarded frontier source"; return out; }
+    if (!valid(candidates) || !valid(native)) {
+        out.error = "invalid guarded frontier source";
+        return out;
+    }
     if (!referenceRank && e.constantValue(frontier.counters[column]) == UINT64_MAX && e.constantValue(present) == 1) {
-        out.error = "guarded frontier rank overflow"; return out;
+        out.error = "guarded frontier rank overflow";
+        return out;
     }
     auto join = [&](std::vector<RegionExpressions::Id>& to, llvm::ArrayRef<RegionExpressions::Id> from,
                     RegionExpressions::Id guard) {
-        if (e.constantValue(guard) == 0) { return true; }
-        if (!row(from)) { return false; }
+        if (e.constantValue(guard) == 0) {
+            return true;
+        }
+        if (!row(from)) {
+            return false;
+        }
         for (std::size_t p = 0; p < k; ++p) {
             to[p] = e.select(e.land(guard, e.lt(to[p], from[p])), from[p], to[p]);
         }
         return true;
     };
     out.rank = referenceRank ? *referenceRank :
-        e.add(frontier.counters[column], e.select(present, e.constant(1), e.constant(0)));
+                               e.add(frontier.counters[column], e.select(present, e.constant(1), e.constant(0)));
     out.start = frontier.starts[column];
     for (const auto& edge : native) {
         if (!join(out.start, edge.completion, e.land(present, edge.guard))) {
-            out.error = "invalid native frontier row"; return out;
+            out.error = "invalid native frontier row";
+            return out;
         }
     }
-    for (const auto& edge : candidates) {
-        const auto active = e.land(present, edge.guard);
-        auto keep = e.land(active, e.lt(out.start[edge.column], edge.rank));
-        out.retained.push_back(keep);
-        // If this source already reaches the accumulated prefix, its entire
-        // completion row is contained in that prefix. Joining an active
-        // redundant source therefore changes nothing. Keep cover selection
-        // out of the reachability circuit; otherwise each later row embeds
-        // the earlier reduction tests in every component. Statically rejected
-        // candidates still require no join construction at all.
-        if (e.constantValue(keep) == 0) { continue; }
-        if (!join(out.start, edge.completion, active)) {
-            out.error = "invalid candidate frontier row"; return out;
+    std::vector<bool> sourcesPerPipe(k);
+    bool groupedIncoming = false;
+    if (knownEndpointOrder) {
+        for (const auto& edge : candidates) {
+            groupedIncoming |= sourcesPerPipe[edge.column];
+            sourcesPerPipe[edge.column] = true;
+        }
+    }
+    if (groupedIncoming) {
+        // These finite inputs provide original source maps in decreasing
+        // reference order. Native completion chains imply every earlier
+        // active incoming source through the latest one on its pipe. Select
+        // that endpoint once, rather than repeatedly joining its predecessors.
+        struct Source {
+            RegionExpressions::Id active, rank;
+            std::vector<RegionExpressions::Id> completion;
+        };
+        const auto no = e.boolean(false), zero = e.constant(0);
+        std::vector<Source> selected(k, Source{no, zero, std::vector<RegionExpressions::Id>(k, zero)});
+        std::vector<RegionExpressions::Id> latest;
+        latest.reserve(candidates.size());
+        for (const auto& edge : candidates) {
+            auto& source = selected[edge.column];
+            auto active = e.land(present, edge.guard);
+            auto choose = e.land(active, e.lnot(source.active));
+            latest.push_back(choose);
+            if (e.constantValue(choose) == 0) {
+                continue;
+            }
+            if (!row(edge.completion)) {
+                out.error = "invalid candidate frontier row";
+                return out;
+            }
+            source.rank = e.select(choose, edge.rank, source.rank);
+            for (std::size_t p = 0; p < k; ++p) {
+                source.completion[p] = e.select(choose, edge.completion[p], source.completion[p]);
+            }
+            source.active = e.lor(source.active, active);
+        }
+        // Restricted incoming-cut queries use H0, before this consumer's
+        // edges. An alternative path ends through the preceding executed
+        // native start (including fixed prerequisites) or another selected
+        // incoming completion. No test can use the edge being reduced.
+        std::vector<RegionExpressions::Id> keep(k, no);
+        for (std::size_t p = 0; p < k; ++p) {
+            const auto& source = selected[p];
+            if (e.constantValue(source.active) == 0) {
+                continue;
+            }
+            auto required = e.land(source.active, e.lt(out.start[p], source.rank));
+            for (std::size_t q = 0; q < k; ++q) {
+                if (p == q || e.constantValue(selected[q].active) == 0) {
+                    continue;
+                }
+                auto independent =
+                    e.select(selected[q].active, e.lt(selected[q].completion[p], source.rank), e.boolean(true));
+                required = e.land(required, independent);
+            }
+            keep[p] = required;
+        }
+        for (std::size_t i = 0; i < candidates.size(); ++i) {
+            out.retained.push_back(e.land(latest[i], keep[candidates[i].column]));
+        }
+        // Reachability depends on original active generators, not their
+        // cover-selection guards. Keep reduction out of subsequent H0 rows.
+        for (const auto& source : selected) {
+            if (!join(out.start, source.completion, source.active)) {
+                out.error = "invalid selected frontier row";
+                return out;
+            }
+        }
+    } else {
+        for (const auto& edge : candidates) {
+            const auto active = e.land(present, edge.guard);
+            auto keep = e.land(active, e.lt(out.start[edge.column], edge.rank));
+            out.retained.push_back(keep);
+            // If this source already reaches the accumulated prefix, its entire
+            // completion row is contained in that prefix. Joining an active
+            // redundant source therefore changes nothing. Keep cover selection
+            // out of the reachability circuit; otherwise each later row embeds
+            // the earlier reduction tests in every component. Statically rejected
+            // candidates still require no join construction at all.
+            if (e.constantValue(keep) == 0) {
+                continue;
+            }
+            if (!join(out.start, edge.completion, active)) {
+                out.error = "invalid candidate frontier row";
+                return out;
+            }
         }
     }
     out.completion = out.start;
     join(out.completion, frontier.completions[column], present);
     out.completion[column] = out.rank;
-    if (!e.constructionError().empty()) { out.error = e.constructionError(); return out; }
+    if (!e.constructionError().empty()) {
+        out.error = e.constructionError();
+        return out;
+    }
     auto nextStart = frontier.starts[column], nextCompletion = frontier.completions[column];
     for (std::size_t p = 0; p < k; ++p) {
         nextStart[p] = e.select(present, out.start[p], nextStart[p]);
         nextCompletion[p] = e.select(present, out.completion[p], nextCompletion[p]);
     }
-    if (!e.constructionError().empty()) { out.error = e.constructionError(); return out; }
-    frontier.starts[column] = std::move(nextStart); frontier.completions[column] = std::move(nextCompletion);
+    if (!e.constructionError().empty()) {
+        out.error = e.constructionError();
+        return out;
+    }
+    frontier.starts[column] = std::move(nextStart);
+    frontier.completions[column] = std::move(nextCompletion);
     frontier.counters[column] = out.rank;
     return out;
 }
 } // namespace
-GuardedRankStep advanceGuardedRank(RegionExpressions& e, GuardedRankFrontier& frontier,
-    uint32_t column, RegionExpressions::Id present, llvm::ArrayRef<GuardedRankIncoming> candidates,
-    llvm::ArrayRef<GuardedRankIncoming> native)
+GuardedRankStep advanceGuardedRank(
+    RegionExpressions& e, GuardedRankFrontier& frontier, uint32_t column, RegionExpressions::Id present,
+    llvm::ArrayRef<GuardedRankIncoming> candidates, llvm::ArrayRef<GuardedRankIncoming> native)
 {
     return advanceRank(e, frontier, column, present, candidates, native, std::nullopt);
 }
@@ -151,8 +245,8 @@ GuardedRanks reduceGuardedRanks(
         if (labels == GuardedRankLabels::Reference) {
             referenceRank = e.constant(++referenceRanks[out.columns[i]]);
         }
-        auto step = advanceRank(e, frontier, out.columns[i], payloads[i].present,
-            candidates, nativeSources, referenceRank);
+        auto step = advanceRank(
+            e, frontier, out.columns[i], payloads[i].present, candidates, nativeSources, referenceRank, true);
         if (!step.error.empty()) { out.error = step.error; return out; }
         std::size_t at = 0;
         for (auto [source, guard] : incoming[i]) {

@@ -27,9 +27,7 @@ public:
     LogicalResult bindInput(std::shared_ptr<const SyncInput> owner, std::string& error);
     func::FuncOp function() const { return original; }
     InvocationPrefixRecipe& recipe() { return pending; }
-    LogicalResult source(const CompoundInstanceElement* phase,
-        std::function<LogicalResult(OpBuilder&, const IRMapping&, llvm::MutableArrayRef<Value>,
-                                    Value, std::string&)> snapshot, std::string& error);
+    LogicalResult source(const CompoundInstanceElement* phase, PrefixSourceSnapshot snapshot, std::string& error);
     LogicalResult consumer(Operation* original, PrefixDirection direction,
                            PrefixIncomingSelector selector, std::string& error);
     // Snapshot an unconditional direct-body Boolean at an invocation-invariant
@@ -47,6 +45,10 @@ private:
     std::map<std::pair<Operation*, uint32_t>, const CompoundInstanceElement*> sourceCuts;
     std::map<std::pair<Operation*, PrefixDirection>, std::size_t> consumers;
     std::set<PrefixDirection> directions;
+    // Callbacks retain one flat contribution list, avoiding recursive closure
+    // chains at heavily shared cuts. Lists are built before materialization.
+    std::vector<std::shared_ptr<std::vector<PrefixSourceSnapshot>>> sourceBatches;
+    std::vector<std::shared_ptr<std::vector<PrefixIncomingSelector>>> consumerBatches;
     std::map<std::tuple<const void*, const RegionExpressions*, RegionExpressions::Id>,
              std::pair<std::size_t, std::size_t>> predicateSnapshots;
 };
@@ -64,6 +66,13 @@ struct RegionalPrefixContribution {
     std::function<PrefixOccurrencePtr(RegionalEvent, std::string&)> occurrence;
     std::function<bool(const RegionalAnalysis&)> matchesOccurrenceFrame;
 };
+// Qualified nonrepeating relational crossings retain actual-source captures;
+// general repeated/selected-coordinate relations remain an unavailable export.
+std::shared_ptr<const RegionalPrefixContribution> relationalPrefixContribution(
+    const RegionalAnalysis& region, std::shared_ptr<const SyncInput> input,
+    std::function<LogicalResult(InvocationPrefixCollection&, std::string&)> children = {});
+LogicalResult collectSequencePrefixChildren(
+    const SequenceAnalysisState& state, InvocationPrefixCollection& collection, std::string& error);
 std::shared_ptr<const RegionalPrefixContribution> sequencePrefixContribution(
     const RegionalAnalysis& region, std::shared_ptr<SequenceAnalysisState> state);
 LogicalResult collectRegionalInvocationPrefix(const RegionalAnalysis& region,
