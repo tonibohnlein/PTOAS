@@ -12,6 +12,8 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrefixExpressionProfile.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrefixLifetimes.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
@@ -219,7 +221,20 @@ struct Execution {
                     unsigned(source.getPipe()), unsigned(target.getPipe()), get(op.getOperand(0)),
                     op.getAttrOfType<IntegerAttr>("record_id").getInt(),
                     op.getAttrOfType<IntegerAttr>("plan_id").getInt()});
-            } else if (!scalar(op)) { valid = false; return {}; }
+            } else if (auto barrier = dyn_cast<pto::BarrierOp>(op)) {
+                events.push_back({3, 0, unsigned(barrier.getPipe().getPipe())});
+            } else if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::SetFlagDynOp, pto::WaitFlagDynOp>(op)) {
+                auto source = op.getAttrOfType<pto::PipeAttr>("src_pipe");
+                auto target = op.getAttrOfType<pto::PipeAttr>("dst_pipe");
+                auto fixed = op.getAttrOfType<pto::EventAttr>("event_id");
+                auto id = fixed ? int64_t(fixed.getEvent()) : get(op.getOperand(0));
+                events.push_back(
+                    {isa<pto::SetFlagOp, pto::SetFlagDynOp>(op) ? 1U : 2U, 0, unsigned(source.getPipe()),
+                     unsigned(target.getPipe()), id});
+            } else if (!scalar(op)) {
+                valid = false;
+                return {};
+            }
         }
         valid = false; return {};
     }
@@ -749,6 +764,7 @@ bool historicalExpression(MLIRContext& context, unsigned mode)
     return beforeText == render(module->getOperation());
 }
 #include "RelationalPrefixChecks.h"
+#include "PrefixLifetimeChecks.h"
 } // namespace
 bool runInvocationPrefixChecks() {
     MLIRContext context; context.disableMultithreading();
@@ -759,6 +775,9 @@ bool runInvocationPrefixChecks() {
         }
     }
     if (!relationalPrefixCases(context) || !flatPrefixBatches(context) || !productionRelationalPrefix(context)) {
+        return false;
+    }
+    if (!prefixLifetimeChecks(context)) {
         return false;
     }
     unsigned cases = 0;

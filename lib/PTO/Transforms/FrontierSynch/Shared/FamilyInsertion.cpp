@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "FamilyMaterialization.h"
+#include "PrivateStatePlan.h"
 #include "PhysicalMapInputs.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "MixedFamilyInsertion.h"
@@ -1264,8 +1265,11 @@ bool validPhysicalFamilyEndpoint(const PreparedLogicalPlan& plan, const Prepared
 }
 LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPlan& plan, ArrayRef<int64_t> eligibleIds)
 {
-    if (plan.physicalOutput || plan.privateState || plan.completionOwner || !plan.familyRecipe ||
-        !plan.allocationCertificate || failed(preflightPhysicalOutput(function, plan.allocationCertificate)) ||
+    if (plan.privateState) {
+        return plan.privateState->requestPhysical(function, plan, eligibleIds);
+    }
+    if (plan.physicalOutput || plan.completionOwner || !plan.familyRecipe || !plan.allocationCertificate ||
+        failed(preflightPhysicalOutput(function, plan.allocationCertificate)) ||
         failed(normalizeFamilyEndpointPlan(plan))) {
         return failure();
     }

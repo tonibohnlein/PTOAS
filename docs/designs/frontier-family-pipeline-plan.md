@@ -70,7 +70,7 @@ instrumentation and test fixes belong to the batch they support.
 | B1 (accepted, `d42907306`): Section 7 allocation and lane boundaries | Finish qualified periodic lane-boundary exports, connect them to variable-length/repeated allocation, and use ordered first-reuse capabilities for qualifying spans. Retain parent retry and economical independently certified mappings. | Exact lane presence/extrema and legal reuse on zero, short, partial and repeated invocations; scaling without generation expansion or an unnecessary pair matrix. |
 | B2 (accepted): allocate the normalized family plan | Normalize recipe-level families and coactive command order before allocation. Compose certified ID maps with occurrence selectors, then materialize live code once. Consolidate retained-session and split-pipeline stage functions and remove replaced preparation paths. | Allocation can inspect the actual logical protocol without singleton scalar preparation; unified/split agreement, owned/versioned artifacts and unchanged communications/order. |
 | B3 (accepted): compact guarded control and constructive exports | Address the remaining large guard/query roots through shared producer construction, restricted incoming queries where qualified, early multi-output slicing and binding-aware lowering. Finish applicable guarded/relational occurrence and capture transport through the common interface. Include residual read/read avoidance and complete control-cost attribution. | Independent demand/query/selector agreement, preserved invocation/history semantics, structural scaling and paired full preparation measurements; no speedup claim from deferred work alone. |
-| B4: physical lifetime export for prefix protocols | Export publication, acquisition, terminal cleanup and invocation lifetimes for the actual prefix command plan; integrate them with allocation and reservations. | Matching and consumption-before-republication proofs on empty, guarded and repeated executions; certify supported finite-ID assignments and distinguish infeasibility from unavailable evidence. Delta logical success alone does not complete this batch. |
+| B4 (accepted for qualified protocols): physical lifetime export for prefix protocols | Export publication, acquisition, terminal cleanup and invocation lifetimes for the actual prefix command plan; integrate them with allocation and reservations. | Matching and consumption-before-republication proofs on empty, guarded and repeated executions; certify supported finite-ID assignments and distinguish infeasibility from unavailable evidence. Delta logical success alone does not complete this batch. |
 | B5: Section 6 production integration | Import qualified closed selectively synchronized children into SCC-local completion composition and provide coarse shared input for completion requests. Preserve child synchronization and carry outstanding effects across boundaries. | Concrete summary/coverage oracle, closed matching and joint resource certification, no automatic boundary drains, transactional failure and hardware/readiness restrictions. |
 | B6: pinned production and scaling closure | Run the eleven-kernel pipeline and remaining phased/corpus checks with pinned inputs/tools. Compare control, preparation, allocation and backend outcomes; retain failures and feed actionable defects back into the owning batch. | Reproducible stage-separated receipts, independent semantic traces, scaling results and paired timings. Device results remain a separate qualification gate supplied by device runs. |
 
@@ -2571,3 +2571,70 @@ Final test-header rebuild and acceptance receipts accompany the commit.
 Pinned input/tool hashes, paired results, four-core traces, source manifest and
 compliance contexts are retained under `.local/b3-guarded-control/`.
 Continue with B4; remaining limitations above are not hidden by acceptance.
+
+
+### B4: actual prefix lifetimes and physical allocation
+
+The complete private invocation now exports its actual publication directions,
+executed-source ordinal bounds, watermark acquisition loops and terminal cleanup.
+The saved certificate seals the generated body with a streaming SHA-256 digest;
+selector, counter, cut and matching changes cannot consume the old export.
+The interface remains producer-owned evidence, not a proof checker for arbitrary
+annotated IR. The existing common hardware/manual-event/reservation preflight
+runs before allocation. Numeric flag labels belong to directional namespaces;
+the outdated global-ID header comment is corrected.
+
+Two sufficient physical constructions use the shared complete-map planner.
+Fresh invocation IDs are distinct for every admitted publication in a direction.
+Qualified repeated epochs may use ordinal modulo the per-epoch publication
+bound only when all publications precede an existing full-current-prefix
+acquisition and an existing ALL barrier closes that acquisition before the next
+epoch. A shared conditional arm may have zero publications; every publishing
+path must execute the full acquisition. No barrier or extra payload prerequisite
+is inserted by allocation. Different SSA results of one original conditional
+are equal only when both corresponding arm yields prove equal; loops and
+unrelated expressions remain opaque.
+
+Invocation reuse also requires the existing completed terminal interface.
+Unknown epoch counts retain the fresh candidate. A fresh bound exceeding the
+eligible pool is an unavailable sufficient assignment, not a minimum-capacity
+lower bound. Macro reservations without the required common certificate,
+manual events, unsupported execution contexts, changed bodies and malformed
+coordinator inventories refuse transactionally. Zero-publication protocols
+require no IDs and emit no flags.
+
+Retained combined output and saved logical output call the same allocator.
+Failed physical requests preserve the original and staged logical plan for
+retry. Successful requests update the owned snapshot and clear obsolete SSA
+mapping/final-state handles after body replacement. Logical readiness does not
+require physical lifetime availability.
+
+Independent token checks cover fresh conditional/nested sources, three
+simultaneous directions, skipped consumers and terminal surplus cleanup.
+Drained-epoch fixtures cover all 4,369 short guarded executions, repeated
+invocations, zero/one/two publications per epoch and unaligned modulo starts.
+The oracle retains occupancy until an actual ALL observes the matching WAIT;
+textual WAIT issue alone never authorizes republication. The same cases run
+with admitted source bounds 12, 120 and 120,000, without visit expansion.
+Negative tests cover differing else yields, unrelated conditionals, unavailable
+nested epoch bounds, removed existing drains, stale selectors, insufficient
+and empty pools, serialization roundtrip and failed-then-successful retained
+requests. Seven integration suites and the final three ownership/prefix suites
+pass. The 22 changed-code prefilter findings are already-braced controls after
+full-condition inspection; no analyzer or device-compliance claim is made.
+
+Correctness and architecture reviewers accept the 14-file code manifest
+`0191c0280537027e652a43fcc6335ab262de0aa9b7adcb24a3b31abdf742ccce`.
+Receipts, source/tool hashes and contextual compliance resolutions live under
+`.local/b4-prefix-lifetimes/`. No device execution is claimed.
+
+Delta logical output remains at 456,242 arithmetic operations and 172/47
+SET/WAIT sites. Its new export describes the actual six prefix directions,
+but none qualifies for already-drained epochs. Conservative invocation-wide
+publication bounds range from 8,589,934,592 to 352,187,318,202 because the loaded
+runtime sequence length is not an IR-visible eight-visit bound. These are
+sufficient fresh bounds, not required simultaneous notifications. A single
+19.829-second diagnostic is not paired speedup evidence. Six-ID allocation
+remains explicitly uncertified; this batch does not manufacture a modulo rule
+or silently replace Delta's exact plan. General prefix reuse remains a
+capability limitation. Continue with Section 6 production integration in B5.
