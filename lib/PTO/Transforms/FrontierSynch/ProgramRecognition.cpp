@@ -512,6 +512,9 @@ FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const Sync
 }
 FailureOr<ProgramRecognition> recognizeProgram(func::FuncOp function, const SyncInput& input,
                                                const PhaseIndex& index, ProgramRecognitionMode mode) {
+    if (!input.hasFineStorage()) {
+        return failure();
+    }
     ProgramRecognition result;
     StructureBuilder builder(result, index, input);
     builder.add(StructureKind::Sequence, function, &function.getBody(), std::nullopt);

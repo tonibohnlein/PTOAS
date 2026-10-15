@@ -11,21 +11,35 @@
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionTransfer.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include <memory>
+#include "llvm/ADT/DenseSet.h"
 namespace mlir::pto::frontiersynch {
 class PhaseIndex;
+class ClosedCompletionChild;
 struct PreparedLogicalPlan;
 class CompletionRegion {
 public:
     static std::shared_ptr<const CompletionRegion> build(func::FuncOp function,
         std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error);
+    // Explicit conservative request: no fine storage partition or exact
+    // backend is constructed. This does not replace a retained exact result.
+    static std::shared_ptr<const CompletionRegion> buildCoarse(
+        func::FuncOp function, GMAliasPolicy policy, std::string& error);
     const CompletionTransferResult& transfer() const { return result; }
     std::shared_ptr<const SyncInput> inputOwner() const { return input; }
-    // No event publications: matching is closed and physical IDs are unnecessary.
+    // The parent publishes no events. Imported children own their closed IDs;
+    // the parent needs no additional physical assignment.
     LogicalResult insert(func::FuncOp function, PreparedLogicalPlan& plan) const;
+    bool ownsClosedCall(Operation* call) const;
+    bool validateClosedChildren() const;
+    ArrayRef<func::FuncOp> importedFunctions() const { return childFunctions; }
+
 private:
     func::FuncOp original;
     std::shared_ptr<const SyncInput> input;
     CompletionTransferResult result;
+    std::vector<std::shared_ptr<const ClosedCompletionChild>> children;
+    DenseSet<Operation*> importedCalls;
+    SmallVector<func::FuncOp> childFunctions;
     std::vector<Operation*> cuts, originalOperations;
     std::string originalText;
     DictionaryAttr moduleAttributes;

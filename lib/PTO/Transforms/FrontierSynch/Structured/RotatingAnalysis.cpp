@@ -101,6 +101,10 @@ RotatingAnalysis analyzeRotating(scf::ForOp loop, const PhaseIndex& index,
     const SyncInput& input, const RecognitionResult& recognized, bool prepareEndpoints)
 {
     RotatingAnalysis result;
+    if (!input.hasFineStorage()) {
+        result.error = "rotating analysis requires fine storage facts";
+        return result;
+    }
     result.loop = loop;
     auto primitives = collectRotatingPrimitives(loop, index, input, recognized);
     result.error = primitives.error;

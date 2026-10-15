@@ -35,6 +35,10 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRe
     const BoundedLifetimeRecognition& recognized, std::string& error, std::shared_ptr<RegionExpressions> arena,
     std::optional<uint64_t> exportSpan)
 {
+    if (!input.hasFineStorage()) {
+        error = "bounded lifetime analysis requires fine storage facts";
+        return failure();
+    }
     if (!function || !loop || loop->getParentOfType<func::FuncOp>() != function) {
         error = "bounded lifetime region must belong to its original function"; return failure();
     }

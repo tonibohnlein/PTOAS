@@ -46,6 +46,12 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
     An explicit allocation-ids pool enables parent-aware regional candidate
     selection before scalar materialization. Omit it to keep the unrestricted
     shared export. The following allocator still validates its eligible pool.
+    Explicit completion-only=true requests the conservative SCC policy directly,
+    using coarse effects without descriptor partitioning or exact demand analysis.
+    Qualified same-core closed children retain their synchronization. Event-free
+    primitive children retain pending effects; their boundaries do not add drains.
+    This option does not silently replace a retained exact result and cannot be
+    combined with analysis-only, physical-output or an arithmetic class request.
     Functions with manual on-core SET/WAIT or record/wait events are left
     unchanged, including dynamic event IDs. Cross-core commands and barriers
     alone do not trigger this skip, matching the shared InsertSync policy.
@@ -56,6 +62,8 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
       "Write session stage timings and construction/cache counters to stderr as JSON">,
     Option<"analysisOnly", "analysis-only", "bool", "false",
       "Stop after mathematical certification without inserting synchronization">,
+    Option<"completionOnly", "completion-only", "bool", "false",
+           "Explicit SCC completion request using coarse input and qualified closed children">,
     Option<"physicalOutput", "physical-output", "bool", "false",
       "Emit certified retained-family physical commands directly; requires allocation preparation">,
     Option<"prepareAllocation", "prepare-allocation", "bool", "true",

@@ -71,7 +71,7 @@ instrumentation and test fixes belong to the batch they support.
 | B2 (accepted): allocate the normalized family plan | Normalize recipe-level families and coactive command order before allocation. Compose certified ID maps with occurrence selectors, then materialize live code once. Consolidate retained-session and split-pipeline stage functions and remove replaced preparation paths. | Allocation can inspect the actual logical protocol without singleton scalar preparation; unified/split agreement, owned/versioned artifacts and unchanged communications/order. |
 | B3 (accepted): compact guarded control and constructive exports | Address the remaining large guard/query roots through shared producer construction, restricted incoming queries where qualified, early multi-output slicing and binding-aware lowering. Finish applicable guarded/relational occurrence and capture transport through the common interface. Include residual read/read avoidance and complete control-cost attribution. | Independent demand/query/selector agreement, preserved invocation/history semantics, structural scaling and paired full preparation measurements; no speedup claim from deferred work alone. |
 | B4 (accepted for qualified protocols): physical lifetime export for prefix protocols | Export publication, acquisition, terminal cleanup and invocation lifetimes for the actual prefix command plan; integrate them with allocation and reservations. | Matching and consumption-before-republication proofs on empty, guarded and repeated executions; certify supported finite-ID assignments and distinguish infeasibility from unavailable evidence. Delta logical success alone does not complete this batch. |
-| B5: Section 6 production integration | Import qualified closed selectively synchronized children into SCC-local completion composition and provide coarse shared input for completion requests. Preserve child synchronization and carry outstanding effects across boundaries. | Concrete summary/coverage oracle, closed matching and joint resource certification, no automatic boundary drains, transactional failure and hardware/readiness restrictions. |
+| B5 (accepted for qualified children): Section 6 production integration | Import qualified closed selectively synchronized children into SCC-local completion composition and provide coarse shared input for completion requests. Preserve child synchronization and carry outstanding effects across boundaries. | Concrete summary/coverage oracle, closed matching and joint resource certification, no automatic boundary drains, transactional failure and hardware/readiness restrictions. |
 | B6: pinned production and scaling closure | Run the eleven-kernel pipeline and remaining phased/corpus checks with pinned inputs/tools. Compare control, preparation, allocation and backend outcomes; retain failures and feed actionable defects back into the owning batch. | Reproducible stage-separated receipts, independent semantic traces, scaling results and paired timings. Device results remain a separate qualification gate supplied by device runs. |
 
 Proceed B1 -> B2 -> B3 -> B4 -> B5 -> B6, with focused production integration
@@ -2638,3 +2638,61 @@ sufficient fresh bounds, not required simultaneous notifications. A single
 remains explicitly uncertified; this batch does not manufacture a modulo rule
 or silently replace Delta's exact plan. General prefix reuse remains a
 capability limitation. Continue with Section 6 production integration in B5.
+
+
+### B5: SCC composition of closed children and explicit coarse requests
+
+An explicit `completion-only=true` request reaches the existing SCC transfer
+through coarse shared input. It recovers phase/effect and scalar prerequisites,
+but skips descriptor-state discovery and the fine physical-cell partition.
+Exact providers refuse this input rather than interpreting unavailable storage
+facts as empty effects. The ordinary exact-first policy is unchanged; this
+option does not replace an already retained exact result.
+
+Completion parents may import two qualified child forms on one A3 core.
+A private event-free primitive retains its outstanding read/write modes and
+transparent transfer. Its original implementation is frozen before module
+insertion, independent of declaration order; it acquires no helper-boundary
+drain. A selectively synchronized child imports producer-owned closed matching
+and an existing completed-exit contract after physical allocation. The parent
+retains the child body and allocates no events of its own. Existing child exit
+completion closes physical notification use before sibling or repeated calls.
+No completion is added to make an otherwise unsupported child importable.
+
+The serialized child contract seals its summary fields, implementation, ABI,
+function attributes and target module attributes. Logical endpoints must first
+be physically allocated. Resealing happens inside an isolated function
+transaction carrying immutable target attributes, without reading mutable
+sibling bodies. Parent insertion checks the retained child owners before any
+mutation. Changed or malformed evidence refuses without changing the input.
+
+The initial import subclass excludes recursive/transitive calls, macro event
+reservations, mixed cores, unsupported pipes, physical sections and unresolved
+scalar/result-readiness obligations. Closed-child export is producer evidence,
+not certification of arbitrary annotated manual synchronization. These are
+capability boundaries, not proof that the broader Section 6 interface is
+impossible. The parent still uses the sound all-memory completion class; it
+does not import general child reachability or first/last selectors.
+
+Eight focused suites pass, including the existing independent SCC oracle
+(16,384 execution graphs, 1,000 random graphs and a 100,000-node chain).
+Original structured fixtures agree between coarse and fine input on qualification,
+selected completions and summaries. Production tests cover both helper declaration
+orders and an exact child exported, physically allocated, then imported under
+conditional, repeated and sibling calls. Negative tests change summary fields,
+target, ABI, certificate type and body shape, introduce recursion, remove evidence
+from an eventful child, and change an owned implementation before insertion.
+Failed requests leave the original unchanged. Compiler and test tools build;
+no device execution or new planning-speed claim is part of this batch.
+
+Source/tool hashes and detailed receipts are retained in
+`.local/b5-closed-completion/`. The code manifest is
+`9de765115b447d252fecb54ab05d5f36a15a1ca8c2d9cc7e1c74ef9e55fc9a08`.
+All 30 remaining changed-code prefilter findings have already-braced bodies when
+their full conditions are inspected; the long raw fixture line was corrected.
+These are contextual resolutions, not a full analyzer-compliance claim.
+
+Correctness and architecture reviewers independently rehashed the 27-code-file
+manifest and accepted the scoped implementation and compiled receipts. Continue
+with B6; general closed-child contracts and device qualification remain explicit
+limitations rather than inferred successes.

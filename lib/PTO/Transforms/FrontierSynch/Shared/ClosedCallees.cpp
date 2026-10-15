@@ -10,6 +10,8 @@
 #include "PTO/Transforms/FrontierSynch/Shared/ClosedCallees.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PrivateStatePlan.h"
+#include "ClosedCompletionChild.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
@@ -125,8 +127,9 @@ ClosedCalleeModule recognizeClosedCallees(ModuleOp module)
     return output;
 }
 namespace {
-LogicalResult checkCalleeEvents(ModuleOp module, const ClosedCalleeModule& delegation,
-                               DenseSet<Operation*> newEvents)
+LogicalResult checkCalleeEvents(
+    ModuleOp module, const ClosedCalleeModule& delegation, DenseSet<Operation*> newEvents,
+    const DenseMap<Operation*, std::shared_ptr<const CompletionRegion>>& completions)
 {
     // Calls inherit both newly inserted and pre-existing event use. Hidden
     // macro events are supplied by the shared model, not rediscovered here.
@@ -158,6 +161,10 @@ LogicalResult checkCalleeEvents(ModuleOp module, const ClosedCalleeModule& deleg
         if (function.isDeclaration() || delegation.wrappers.count(function)) { continue; }
         const bool manual = hasManualOnCoreSynchronization(function);
         auto invalid = function.walk([&](func::CallOp call) {
+            if (auto owner = completions.find(function);
+                owner != completions.end() && owner->second->ownsClosedCall(call)) {
+                return WalkResult::advance();
+            }
             auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(call, call.getCalleeAttr());
             if (callee && (manual ? newEvents : usesEvents).contains(callee)) {
                 call.emitError("ordinary helper call requires an interprocedural event-lifetime contract; "
@@ -171,19 +178,25 @@ LogicalResult checkCalleeEvents(ModuleOp module, const ClosedCalleeModule& deleg
     return success();
 }
 } // namespace
-LogicalResult insertModuleSynchronization(ModuleOp module, GMAliasPolicy policy, PrepareCallee prepare)
+LogicalResult insertModuleSynchronization(
+    ModuleOp module, GMAliasPolicy policy, PrepareCallee prepare, bool completionOnly)
 {
     // Module ownership is essential: a function pass cannot inspect callee
     // bodies concurrently with another function pass inserting synchronization.
     OwningOpRef<ModuleOp> copy(cast<ModuleOp>(module->clone()));
     for (Operation& operation : *copy->getBody()) {
         if (auto nested = dyn_cast<ModuleOp>(operation)) {
-            if (failed(insertModuleSynchronization(nested, policy, prepare))) { return failure(); }
+            if (failed(insertModuleSynchronization(nested, policy, prepare, completionOnly))) {
+                return failure();
+            }
         } else if (!isa<func::FuncOp>(operation) && operation.getNumRegions()) {
             return operation.emitError("closed-callee analysis requires an explicit module symbol scope");
         }
     }
     auto delegation = recognizeClosedCallees(*copy);
+    if (completionOnly) {
+        delegation.wrappers.clear();
+    }
     SmallVector<Operation*> excludedDelegations;
     for (const auto& item : delegation.wrappers) {
         if (item.second.result.state != RecognitionState::Applicable) { excludedDelegations.push_back(item.first); }
@@ -194,6 +207,7 @@ LogicalResult insertModuleSynchronization(ModuleOp module, GMAliasPolicy policy,
     struct Pending {
         func::FuncOp function;
         std::unique_ptr<PreparedLogicalPlan> plan;
+        std::optional<CompletionSummary> closedSummary;
     };
     SmallVector<Pending> pending;
     DenseSet<Operation*> newEvents;
@@ -202,7 +216,8 @@ LogicalResult insertModuleSynchronization(ModuleOp module, GMAliasPolicy policy,
         if (function.isDeclaration() || hasManualOnCoreSynchronization(function) ||
             delegation.wrappers.count(function)) { continue; }
         if (hasPhysicalSections(function)) { contexts.push_back(function); continue; }
-        const bool called = delegation.calledFunctions.contains(function);
+        const bool called =
+            delegation.calledFunctions.contains(function) || function->hasAttr("pto.export_closed_completion");
         auto plan = prepare(function, called ? GMAliasPolicy::MayAlias : policy, called);
         if (failed(plan)) {
             if (llvm::is_contained(excludedDelegations, function.getOperation())) {
@@ -226,8 +241,38 @@ LogicalResult insertModuleSynchronization(ModuleOp module, GMAliasPolicy policy,
         if ((*plan)->privateState || llvm::any_of((*plan)->endpoints, [](const auto& endpoint) {
                 return endpoint.kind != LogicalCommandKind::Barrier;
             })) { newEvents.insert(function); }
-        pending.push_back({function, std::move(*plan)});
+        auto summary = called ? closedCompletionSummary(**plan) : std::nullopt;
+        pending.push_back({function, std::move(*plan), std::move(summary)});
     }
+    // Completion parents own the exact implementation they imported. Preserve
+    // qualified private primitive children instead of adding standalone drains.
+    DenseMap<Operation*, std::shared_ptr<const CompletionRegion>> completionParents;
+    DenseSet<Operation*> frozenChildren;
+    for (auto& item : pending) {
+        if (!item.plan->completionOwner) {
+            continue;
+        }
+        auto owner = item.plan->completionOwner;
+        if (!owner->validateClosedChildren()) {
+            return item.function.emitError("closed child changed during preparation");
+        }
+        completionParents[item.function] = owner;
+        for (auto child : owner->importedFunctions()) {
+            frozenChildren.insert(child);
+        }
+    }
+    for (auto* child : frozenChildren) {
+        auto pendingChild = llvm::find_if(pending, [&](const auto& item) { return item.function == child; });
+        if (pendingChild == pending.end()) {
+            continue;
+        }
+        auto callers = delegation.callers.find(child);
+        if (!cast<func::FuncOp>(child).isPrivate() || callers == delegation.callers.end() ||
+            llvm::any_of(callers->second, [&](Operation* caller) { return !completionParents.count(caller); })) {
+            return child->emitError("closed child requires an owned finalized implementation before mixed callers");
+        }
+    }
+    llvm::erase_if(pending, [&](const auto& item) { return frozenChildren.contains(item.function); });
     // Authorize sibling synchronization only after every complete private plan
     // has checked the untouched module. All edits below remain on this module
     // transaction and preserve original payload/callee semantics.
@@ -255,9 +300,16 @@ LogicalResult insertModuleSynchronization(ModuleOp module, GMAliasPolicy policy,
         });
         if (events.wasInterrupted()) { newEvents.insert(function); }
     }
-    if (failed(checkCalleeEvents(*copy, delegation, newEvents))) { return failure(); }
+    if (failed(checkCalleeEvents(*copy, delegation, newEvents, completionParents))) {
+        return failure();
+    }
     for (auto& item : pending) {
         if (failed(insertLogicalSynchronization(item.function, *item.plan))) { return failure(); }
+        if (item.closedSummary && failed(emitClosedCompletionExport(item.function, *item.closedSummary))) {
+            item.function->setAttr(
+                "pto.closed_completion_obligation",
+                StringAttr::get(module.getContext(), "closed child export unavailable for this exact plan"));
+        }
     }
     for (auto function : copy->getOps<func::FuncOp>()) {
         if (!delegation.wrappers.count(function)) { continue; }

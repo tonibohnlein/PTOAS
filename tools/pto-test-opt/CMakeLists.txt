@@ -94,6 +94,7 @@ add_llvm_executable(pto-sync-input-test
   NumericalHierarchyChecks.cpp
   CompletionTransferChecks.cpp
   CompletionRegionChecks.cpp
+  ClosedCompletionChecks.cpp
   SyncStorageMembershipChecks.cpp
   BoundingRegionalChecks.cpp
   RequirementProvenanceChecks.cpp

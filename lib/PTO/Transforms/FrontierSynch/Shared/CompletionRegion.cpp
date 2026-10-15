@@ -11,6 +11,8 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "RecognitionInternal.h"
+#include "ClosedCompletionChild.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
@@ -28,11 +30,14 @@ std::vector<Operation*> operations(func::FuncOp function)
     return result;
 }
 // Flat compact CFG of original cuts: structured loops contribute backedges,
-// never repeated visits. Payloads are individually closed children. Importing
-// larger selectively synchronized children requires a separate closed contract.
+// never repeated visits. Qualified calls supply owned closed-child summaries;
+// original payloads otherwise remain individually closed primitive children.
 class GraphBuilder {
 public:
-    explicit GraphBuilder(const PhaseIndex& index) : index(index) {}
+    GraphBuilder(
+        const PhaseIndex& index, const DenseMap<Operation*, std::shared_ptr<const ClosedCompletionChild>>& children)
+        : index(index), children(children)
+    {}
     std::vector<CompletionVertex> graph;
     std::vector<Operation*> anchors;
     std::size_t vertex(Operation* anchor)
@@ -41,6 +46,10 @@ public:
         graph.push_back({{{0}, {0}, {0}, true}, {}, false});
         anchors.push_back(anchor);
         if (!anchor) { return id; }
+        if (auto child = children.find(anchor); child != children.end()) {
+            graph[id].summary = child->second->summary();
+            return id;
+        }
         uint8_t modes = 0;
         for (const auto* phase : index.phasesFor(anchor)) {
             if (!phase->useVec.empty()) { modes |= 1; }
@@ -83,8 +92,22 @@ public:
     }
 private:
     const PhaseIndex& index;
+    const DenseMap<Operation*, std::shared_ptr<const ClosedCompletionChild>>& children;
 };
 } // namespace
+std::shared_ptr<const CompletionRegion> CompletionRegion::buildCoarse(
+    func::FuncOp function, GMAliasPolicy policy, std::string& error)
+{
+    auto input = std::make_shared<SyncInput>(policy);
+    PhaseIndex index;
+    if (!function ||
+        failed(input->build(function, SyncInstructionView::PipeEnvelopes, SyncInputDetail::CoarseCompletion)) ||
+        failed(index.build(function, *input))) {
+        error = "completion request could not recover coarse phase/effect facts";
+        return {};
+    }
+    return build(function, std::move(input), index, error);
+}
 std::shared_ptr<const CompletionRegion> CompletionRegion::build(func::FuncOp function,
     std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error)
 {
@@ -118,15 +141,27 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::build(func::FuncOp fun
         error = "completion fallback lacks a qualified single-core A3 protocol"; return {};
     }
     RecognitionResult leaves;
+    DenseMap<Operation*, std::shared_ptr<const ClosedCompletionChild>> imports, byCallee;
     function.walk([&](Operation* op) {
         if (op == function.getOperation() || !error.empty()) { return; }
-        if (recoverSyncPhysicalCore(op) != core || isa<func::CallOp, LogicalSetOp, LogicalWaitOp>(op) ||
+        if (recoverSyncPhysicalCore(op) != core || isa<LogicalSetOp, LogicalWaitOp>(op) ||
             (isPreservedSyncProtocol(op) && !isa<BarrierOp>(op))) {
             error = "completion child lacks closed same-core execution"; return;
         }
         if (index.needsValuePrerequisite(op) ||
             llvm::any_of(index.prerequisitesFor(op), [](const auto& prerequisite) { return !prerequisite.native; })) {
             error = "completion fallback lacks a forward scalar prerequisite certificate"; return;
+        }
+        if (auto call = dyn_cast<func::CallOp>(op)) {
+            auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(call, call.getCalleeAttr());
+            auto found = byCallee.find(callee);
+            auto child = found != byCallee.end() ? found->second : ClosedCompletionChild::import(call, error);
+            if (!child) {
+                return;
+            }
+            imports[op] = child;
+            byCallee[callee] = std::move(child);
+            return;
         }
         if (op->getNumRegions()) {
             if (!isa<scf::ForOp, scf::IfOp, scf::WhileOp>(op) ||
@@ -155,7 +190,14 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::build(func::FuncOp fun
     owner->original = function; owner->input = std::move(input);
     owner->originalText = text(function); owner->originalOperations = operations(function);
     owner->moduleAttributes = function->getParentOp()->getAttrDictionary();
-    GraphBuilder builder(index);
+    for (const auto& child : byCallee) {
+        owner->children.push_back(child.second);
+        owner->childFunctions.push_back(cast<func::FuncOp>(child.first));
+    }
+    for (const auto& child : imports) {
+        owner->importedCalls.insert(child.first);
+    }
+    GraphBuilder builder(index, imports);
     auto exit = builder.vertex(nullptr);
     auto entry = builder.block(function.front(), exit);
     owner->result = buildCompletionTransfer(builder.graph, entry, exit, 1);
@@ -171,6 +213,11 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::build(func::FuncOp fun
     owner->result.summary.transparent = false;
     return owner;
 }
+bool CompletionRegion::ownsClosedCall(Operation* call) const { return importedCalls.contains(call); }
+bool CompletionRegion::validateClosedChildren() const
+{
+    return llvm::all_of(children, [](const auto& child) { return child->unchanged(); });
+}
 LogicalResult CompletionRegion::insert(func::FuncOp function, PreparedLogicalPlan& plan) const
 {
     const bool clean = function == original && plan.completionOwner.get() == this && plan.completeInvocation &&
@@ -179,7 +226,8 @@ LogicalResult CompletionRegion::insert(func::FuncOp function, PreparedLogicalPla
                        !plan.familyRecipe && !plan.familyProtocol && !plan.physicalOutput && plan.preparation.empty() &&
                        plan.endpoints.empty() && plan.families.empty() && !plan.groupedFamilies &&
                        !plan.nestedIdentities && !plan.independentPieces;
-    if (!clean || text(function) != originalText || operations(function) != originalOperations ||
+    if (!clean || !validateClosedChildren() || text(function) != originalText ||
+        operations(function) != originalOperations ||
         function->getParentOp()->getAttrDictionary() != moduleAttributes) {
         return function.emitError("completion plan no longer owns its unchanged original invocation");
     }

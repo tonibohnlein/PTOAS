@@ -112,6 +112,10 @@ FiniteGuardedAnalysis analyzeFiniteGuarded(func::FuncOp function, ArrayRef<Opera
     const PhaseIndex& index, const SyncInput& input, std::shared_ptr<RegionExpressions> expressions)
 {
     FiniteGuardedAnalysis result;
+    if (!input.hasFineStorage()) {
+        result.error = "finite guarded analysis requires fine storage facts";
+        return result;
+    }
     if (!function || function.isDeclaration() || !function.getBody().hasOneBlock() || !validRoots(function, roots)) {
         result.error = "finite guarded analysis requires consecutive roots in one original function block";
         return result;

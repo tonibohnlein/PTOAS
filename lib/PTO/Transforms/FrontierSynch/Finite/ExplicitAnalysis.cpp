@@ -52,6 +52,10 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
                              ArrayRef<std::size_t> discharged = {})
 {
     ExplicitAnalysis result;
+    if (!input.hasFineStorage()) {
+        result.error = "explicit analysis requires fine storage facts";
+        return result;
+    }
     if (phases.size() > std::numeric_limits<uint32_t>::max() ||
         input.accesses().cells().size() > std::numeric_limits<uint32_t>::max()) {
         result.error = "explicit occurrence or cell identity overflow";
@@ -197,6 +201,11 @@ bool validSpan(ArrayRef<const CompoundInstanceElement*> phases, const PhaseIndex
 } // namespace
 ExplicitAnalysis analyzeExplicit(Block& block, const PhaseIndex& index, const SyncInput& input)
 {
+    if (!input.hasFineStorage()) {
+        ExplicitAnalysis result;
+        result.error = "explicit analysis requires fine storage facts";
+        return result;
+    }
     const auto recognized = recognizeExplicit(block, index, input.accesses());
     const auto sequence = index.explicitSequence(block);
     if (failed(sequence) || recognized.state != RecognitionState::Applicable) {
@@ -211,6 +220,11 @@ ExplicitAnalysis analyzeExplicit(Block& block, const PhaseIndex& index, const Sy
 ExplicitAnalysis analyzeExplicit(ArrayRef<const CompoundInstanceElement*> phases,
                                  const PhaseIndex& index, const SyncInput& input, bool dischargeIndependentGM)
 {
+    if (!input.hasFineStorage()) {
+        ExplicitAnalysis result;
+        result.error = "explicit analysis requires fine storage facts";
+        return result;
+    }
     SmallVector<std::size_t> discharged;
     if (!validSpan(phases, index, input, dischargeIndependentGM, discharged)) {
         ExplicitAnalysis result;

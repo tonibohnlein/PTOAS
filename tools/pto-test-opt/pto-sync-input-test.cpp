@@ -1602,6 +1602,7 @@ int runSharedHandoffAllocationChecks();
 int runFiniteAllocationQueryChecks();
 int runNumericalHierarchyChecks(func::FuncOp function);
 int runCompletionTransferChecks();
+int runClosedCompletionChecks();
 LogicalResult runCompletionRegionChecks(func::FuncOp function);
 int runBoundingRegionalChecks(func::FuncOp function, const pto::SyncInput& input);
 int runRequirementProvenanceChecks(func::FuncOp function, const pto::SyncInput& input);
@@ -1757,6 +1758,9 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && StringRef(argv[1]) == "--arithmetic-selector-checks") {
     return runArithmeticSelectorChecks();
+  }
+  if (argc == 2 && StringRef(argv[1]) == "--closed-completion-checks") {
+      return runClosedCompletionChecks();
   }
   // Test-only numerical graph input; the production pass still consumes MLIR.
   if (argc == 3 && StringRef(argv[1]) == "--guarded-periodic-checks") {

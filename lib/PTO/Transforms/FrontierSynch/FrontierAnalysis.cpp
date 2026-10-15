@@ -24,6 +24,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteVisitRecognition.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "Shared/RecognitionInternal.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 // Whole-invocation shortcut only: every payload uses the protected scalar
@@ -505,8 +506,20 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
     func::FuncOp function, GMAliasPolicy policy,
     const std::optional<frontiersynch::ArithmeticLimits>& profile = std::nullopt, bool profileStages = false,
     bool prepareAllocation = true, ArrayRef<int64_t> allocationIds = {}, bool completeInvocation = false,
-    bool physicalOutput = false)
+    bool physicalOutput = false, bool completionOnly = false)
 {
+    if (completionOnly) {
+        std::string error;
+        auto completion = frontiersynch::CompletionRegion::buildCoarse(function, policy, error);
+        if (!completion) {
+            function.emitError(error);
+            return failure();
+        }
+        auto plan = std::make_unique<frontiersynch::PreparedLogicalPlan>(0);
+        plan->completeInvocation = true;
+        plan->completionOwner = std::move(completion);
+        return plan;
+    }
     frontiersynch::FrontierAnalysis analysis(function);
     analysis.enableStageProfiling(profileStages);
     StageProfileReport profileReport{analysis, "production-root"};
@@ -620,6 +633,12 @@ public:
                 return;
             }
         }
+        if (completionOnly && (analysisOnly || physicalOutput || !arithmeticProfile.empty())) {
+            getOperation().emitError(
+                "completion-only is an explicit conservative logical request without exact audit or physical-output");
+            signalPassFailure();
+            return;
+        }
         if (physicalOutput && (analysisOnly || !prepareAllocation)) {
             getOperation().emitError("physical-output requires synchronization and prepare-allocation=true");
             signalPassFailure();
@@ -647,11 +666,13 @@ public:
         if (!analysisOnly) {
             if (failed(
                     frontiersynch::insertModuleSynchronization(
-                        getOperation(), policy, [&](func::FuncOp function, GMAliasPolicy contextPolicy, bool closed) {
+                        getOperation(), policy,
+                        [&](func::FuncOp function, GMAliasPolicy contextPolicy, bool closed) {
                             return prepareFunction(
                                 function, contextPolicy, profile, profileStages, prepareAllocation, allocationIds,
-                                closed, physicalOutput);
-                        }))) {
+                                closed, physicalOutput, completionOnly);
+                        },
+                        completionOnly))) {
                 signalPassFailure();
             }
             return;

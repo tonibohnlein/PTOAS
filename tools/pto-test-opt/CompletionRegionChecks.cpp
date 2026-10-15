@@ -32,6 +32,21 @@ LogicalResult runCompletionRegionChecks(func::FuncOp function)
         failed(index.build(function, *input))) { return failure(); }
     std::string error;
     auto completion = fs::CompletionRegion::build(function, input, index, error);
+    std::string coarseError;
+    auto coarse = fs::CompletionRegion::buildCoarse(function, pto::GMAliasPolicy::MayNotAlias, coarseError);
+    if (bool(completion) != bool(coarse)) {
+        return function.emitError("fine/coarse completion qualification differs");
+    }
+    if (completion) {
+        const auto& fine = completion->transfer();
+        const auto& broad = coarse->transfer();
+        if (coarse->inputOwner()->hasFineStorage() || coarse->inputOwner()->descriptorState() ||
+            fine.protectEntry != broad.protectEntry || fine.summary.all != broad.summary.all ||
+            fine.summary.exposed != broad.summary.exposed || fine.summary.suffix != broad.summary.suffix ||
+            fine.summary.transparent != broad.summary.transparent) {
+            return function.emitError("coarse request changed completion transfer");
+        }
+    }
     if (function->hasAttr("test.completion_refuse")) {
         if (completion || error.empty() || render(function) != original) { return failure(); }
         llvm::outs() << "completion refused: " << function.getSymName() << "\n";
