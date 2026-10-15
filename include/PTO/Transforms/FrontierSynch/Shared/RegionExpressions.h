@@ -17,6 +17,7 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -179,7 +180,8 @@ public:
     // Optional counter charges traversal steps, including repeated/shared visits.
     std::optional<uint64_t> constantUnder(Id premise, Id expression, uint64_t* nodeVisits = nullptr);
     struct ThresholdProofCost {
-        uint64_t dagVisits = 0, families = 0, cells = 0;
+        uint64_t dagVisits = 0, families = 0, cells = 0, preparationHits = 0;
+        uint64_t dependencyVisits = 0, reusedNodes = 0, skippedBranches = 0;
         uint64_t substitutionVisits = 0, proofRequests = 0, proofVisits = 0;
     };
     // Sufficient uniform inactivity proof. Partition one integer Input at its
@@ -295,8 +297,12 @@ private:
     Id binary(Kind kind, Id a, Id b);
     Id absorbBoolean(Kind kind, Id a, Id b);
     std::optional<uint64_t> fold(Kind kind, uint64_t a, uint64_t b) const;
-    bool inactiveOverThresholds(Id expression, Id input, ArrayRef<Id> atoms, ThresholdProofCost* cost);
+    struct ThresholdPreparation;
+    bool inactiveOverThresholds(Id expression, Id input, ArrayRef<Id> atoms,
+                               const ThresholdPreparation& preparation, const llvm::DenseSet<Id>& dependent,
+                               ThresholdProofCost* cost);
     Id specializeThresholdCell(Id expression, Id input, uint64_t lower, uint64_t upper,
+                               const ThresholdPreparation& preparation, const llvm::DenseSet<Id>& dependent,
                                SmallVectorImpl<uint64_t>& refinements, ThresholdProofCost* cost);
     bool prepareEmission(Id expression, OpBuilder& builder, Operation* cut,
                          const llvm::DenseMap<Id, Value>& memo, SmallVectorImpl<Id>& order);
@@ -308,6 +314,10 @@ private:
     llvm::DenseSet<Operation*> forbiddenRecomputation;
     llvm::DenseMap<Id, Evaluation> evaluations;
     std::vector<Id> evaluationInsertions;
+    // Immutable source topology and dependency sets only. Rollback removes
+    // entries whose source root disappears; no specialized result is retained.
+    std::map<Id, std::shared_ptr<const ThresholdPreparation>> thresholdPreparations;
+    std::map<std::pair<Id, Id>, std::shared_ptr<const llvm::DenseSet<Id>>> thresholdDependencies;
     std::vector<Node> nodes;
     std::unordered_map<Node, Id, Hash> interned;
     std::string constructionMessage;

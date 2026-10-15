@@ -356,6 +356,199 @@ inline bool checkSelectedNativeQueries(func::FuncOp function, const CompoundInst
     llvm::outs() << "selected-native checks: 576 valuations; linear endpoint binding\n";
     return true;
 }
+inline bool checkDynamicChildConsolidation(func::FuncOp function, const CompoundInstanceElement& phase)
+{
+    namespace fs = frontiersynch;
+    for (bool incoming : {false, true}) {
+        for (unsigned count : {4U, 16U, 128U}) {
+            auto e = std::make_shared<fs::RegionExpressions>();
+            Block inputs;
+            const auto x = e->input(inputs.addArgument(IndexType::get(function.getContext()), function.getLoc()));
+            fs::SequenceAnalysisState state(function, e);
+            state.children.resize(count + 1);
+            for (auto& child : state.children) {
+                child.anchors.push_back({&phase});
+                child.regional.expressions = e;
+                child.regional.anchors = child.anchors;
+                child.regional.occurrenceLoops.resize(1);
+            }
+            const auto fixed = state.port(incoming ? count : 0, 0, e->constant(0));
+            std::vector<fs::Expr> guards;
+            for (unsigned i = 0; i < count; ++i) {
+                guards.push_back(e->input(inputs.addArgument(IntegerType::get(function.getContext(), 1),
+                                                            function.getLoc())));
+                const auto selected = state.port(incoming ? i : i + 1, 0,
+                    e->add(x, e->constant(2 * i)));
+                state.crossings.push_back(incoming ? fs::Crossing{selected, fixed, guards.back()} :
+                                                     fs::Crossing{fixed, selected, guards.back()});
+            }
+            state.consolidateCrossings(incoming);
+            const auto& work = state.crossingOrderWork;
+            if (!state.error.empty() || work.groups != 1 || work.qualified != 1 || work.dynamicQualified != 1 ||
+                work.residual || work.orderQueries != count - 1) { return bridgeCheckFailure(__LINE__); }
+            // Exhaust all small guard assignments, then exercise all-absent,
+            // partial, skipped and full large groups. Coordinates remain
+            // symbolic during qualification and use nonunit differences.
+            for (unsigned bits = 0; bits < 16; ++bits) {
+                SmallVector<std::pair<fs::Expr, fs::Expr>> bindings{{x, e->constant(bits)}};
+                std::optional<unsigned> expected;
+                for (unsigned i = 0; i < count; ++i) {
+                    const bool active = (bits >> (i % 4)) & 1;
+                    bindings.emplace_back(guards[i], e->boolean(active));
+                    if (active && (incoming || !expected)) { expected = i; }
+                }
+                fs::RegionExpressions::Transaction attempt(*e);
+                fs::RegionExpressions::Substitution binding(bindings);
+                for (unsigned i = 0; i < count; ++i) {
+                    if (e->constantValue(e->substitute(state.crossings[i].guard, binding)) !=
+                        uint64_t(expected && *expected == i)) { return bridgeCheckFailure(__LINE__); }
+                }
+            }
+        }
+        // Distinct dynamic coordinates in one child retain the exact residual
+        // queries. Simultaneous envelopes are not assigned a fabricated order.
+        for (bool simultaneous : {false, true}) {
+            auto e = std::make_shared<fs::RegionExpressions>();
+            Block inputs;
+            const auto x = e->input(inputs.addArgument(IndexType::get(function.getContext()), function.getLoc()));
+            const auto y = e->input(inputs.addArgument(IndexType::get(function.getContext()), function.getLoc()));
+            fs::SequenceAnalysisState state(function, e);
+            state.children.resize(2);
+            for (auto& child : state.children) {
+                child.anchors.push_back({&phase});
+                child.regional.expressions = e;
+                child.regional.anchors = child.anchors;
+                child.regional.occurrenceLoops.resize(1);
+            }
+            const unsigned child = incoming ? 0 : 1;
+            if (simultaneous) {
+                state.children[child].regional.presence = [e](fs::RegionalEvent) { return e->boolean(true); };
+                state.children[child].regional.referenceBefore = [e](fs::RegionalEvent, fs::RegionalEvent) {
+                    return e->boolean(false);
+                };
+            }
+            const auto fixed = state.port(1 - child, 0, e->constant(0));
+            for (auto coordinate : {x, y}) {
+                const auto selected = state.port(child, 0, coordinate);
+                state.crossings.push_back(incoming ? fs::Crossing{selected, fixed, e->boolean(true)} :
+                                                     fs::Crossing{fixed, selected, e->boolean(true)});
+            }
+            state.consolidateCrossings(incoming);
+            if (!state.error.empty() || state.crossingOrderWork.residual != 1 ||
+                state.crossingOrderWork.qualified) { return bridgeCheckFailure(__LINE__); }
+            for (unsigned a = 0; a < 3; ++a) {
+                for (unsigned b = 0; b < 3; ++b) {
+                    fs::RegionExpressions::Transaction attempt(*e);
+                    fs::RegionExpressions::Substitution binding({{x, e->constant(a)}, {y, e->constant(b)}});
+                    const bool first = simultaneous || (incoming ? a >= b : a <= b);
+                    const bool second = simultaneous || (incoming ? b >= a : b <= a);
+                    if (e->constantValue(e->substitute(state.crossings[0].guard, binding)) != uint64_t(first) ||
+                        e->constantValue(e->substitute(state.crossings[1].guard, binding)) != uint64_t(second)) {
+                        return bridgeCheckFailure(__LINE__);
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+inline bool checkCrossingQueryPruning(func::FuncOp function, const CompoundInstanceElement& phase)
+{
+    namespace fs = frontiersynch;
+    using Kind = fs::PeriodicEventKind;
+    // Trivial tails need no callback. Other tails preserve prefix-first
+    // behavior, including a potentially stateful unavailable suffix query.
+    for (unsigned mode = 0; mode < 4; ++mode) {
+        auto e = std::make_shared<fs::RegionExpressions>();
+        fs::SequenceAnalysisState state(function, e);
+        Block inputs;
+        std::array<fs::Expr, 2> guards;
+        unsigned unavailableSuffixCalls = 0;
+        state.children.resize(2);
+        for (unsigned child = 0; child < 2; ++child) {
+            guards[child] = e->input(inputs.addArgument(IntegerType::get(function.getContext(), 1),
+                                                       function.getLoc()));
+            auto& value = state.children[child];
+            value.anchors.push_back({&phase});
+            auto& region = value.regional;
+            region.expressions = e; region.anchors = value.anchors; region.occurrenceLoops.resize(1);
+            region.presence = [&, child](fs::RegionalEvent) { return std::optional(guards[child]); };
+            region.reachability = [&, child](fs::RegionalEvent a, fs::RegionalEvent b) -> std::optional<fs::Expr> {
+                if (child == 1 && mode >= 2 && a.kind == Kind::Completion && b.kind == Kind::Start) {
+                    ++unavailableSuffixCalls;
+                    return std::nullopt;
+                }
+                if (child == 0 && mode == 1 && a.kind == Kind::Completion && b.kind == Kind::Completion) {
+                    return std::nullopt;
+                }
+                return a.kind == Kind::Completion && b.kind == Kind::Start ? e->boolean(false) : guards[child];
+            };
+            state.port(child, 0, e->constant(0));
+        }
+        const auto guard = e->land(guards[0], guards[1]);
+        uint32_t target = 1;
+        if (mode >= 2) {
+            // A different target occurrence has no trivial tail certificate.
+            auto& child = state.children[1];
+            child.anchors.push_back({&phase});
+            child.regional.anchors = child.anchors; child.regional.occurrenceLoops.resize(2);
+            target = state.port(1, 1, e->constant(0));
+            state.incoming[1].push_back({mode == 2 ? 0U : 1U, 3, guard});
+        } else {
+            state.incoming[1].push_back({0, 2, guard});
+            state.incoming[1].push_back({1, 3, guard});
+        }
+        state.crossings.push_back({0, target, guard});
+        const bool accepted = state.symbolicCrossingReduction();
+        if (mode == 3) {
+            if (accepted || state.error != "child all-event query unavailable" || unavailableSuffixCalls != 1) {
+                return bridgeCheckFailure(__LINE__);
+            }
+            continue;
+        }
+        if (!accepted || unavailableSuffixCalls != 0) { return bridgeCheckFailure(__LINE__); }
+        const auto& work = state.crossingQueryWork;
+        if (work.entries != (mode == 2 ? 2 : 3) || work.aliases != 1 || work.prefixQueries != 1 ||
+            work.suffixQueries != 0 || work.zeroTails != (mode == 2 ? 0 : 1)) {
+            return bridgeCheckFailure(__LINE__);
+        }
+        for (unsigned bits = 0; bits < 4; ++bits) {
+            fs::RegionExpressions::Transaction scratch(*e);
+            fs::RegionExpressions::Substitution bindings({{guards[0], e->boolean(bits & 1)},
+                                                         {guards[1], e->boolean(bits & 2)}});
+            std::vector<std::vector<bool>> native(2 * (target + 1), std::vector<bool>(2 * (target + 1)));
+            if (bits & 1) { native[0][1] = true; }
+            if (bits & 2) {
+                native[2][3] = true;
+                if (mode == 2) { native[4][5] = native[2][4] = native[3][5] = true; }
+            }
+            if (bits == 3) {
+                if (mode == 2) { native[0][3] = true; }
+                else { native[0][2] = native[1][3] = true; }
+            }
+            auto expected = native, actual = native;
+            expected[1][2 * target] = bits == 3;
+            for (const auto& edge : state.crossings) {
+                auto present = e->constantValue(e->substitute(edge.guard, bindings));
+                if (!present) { return bridgeCheckFailure(__LINE__); }
+                if (*present) { actual[2 * edge.source + 1][2 * edge.target] = true; }
+            }
+            auto close = [](auto& graph) {
+                for (unsigned k = 0; k < graph.size(); ++k) {
+                    for (unsigned i = 0; i < graph.size(); ++i) {
+                        for (unsigned j = 0; j < graph.size(); ++j) {
+                            graph[i][j] = graph[i][j] || (graph[i][k] && graph[k][j]);
+                        }
+                    }
+                }
+            };
+            close(expected); close(actual);
+            if (expected != actual) { return bridgeCheckFailure(__LINE__); }
+        }
+    }
+    llvm::outs() << "crossing-query checks: exact false-tail pruning and unavailable-query residuals\n";
+    return true;
+}
 inline bool checkSequenceBridgeWork(func::FuncOp function, const SyncInput& input)
 {
     if (input.instructions().empty()) { return bridgeCheckFailure(__LINE__); }
@@ -445,7 +638,8 @@ inline bool checkSequenceBridgeWork(func::FuncOp function, const SyncInput& inpu
         }
     }
     return checkSparseBoundaryImport(function, phases) && checkSequenceNativeFrontier(function) &&
-        checkSelectedNativeQueries(function, phases.front());
+        checkSelectedNativeQueries(function, phases.front()) && checkCrossingQueryPruning(function, phases.front()) &&
+        checkDynamicChildConsolidation(function, phases.front());
 }
 } // namespace mlir::pto::test
 #endif

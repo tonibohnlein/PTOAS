@@ -314,6 +314,111 @@ bool checkThresholdInactivity(Value index, Value predicate)
     }
     return e.error().empty();
 }
+bool checkThresholdPreparation(Value index)
+{
+    for (unsigned thresholds : {4, 16, 32}) {
+        uint64_t smallerWork = 0;
+        for (unsigned size : {32, 512}) {
+            fs::RegionExpressions e;
+            Block inputs;
+            const auto x = e.input(index), y = e.input(inputs.addArgument(index.getType(), index.getLoc()));
+            auto unrelated = y;
+            for (unsigned i = 0; i < size; ++i) {
+                unrelated = e.add(unrelated, e.input(inputs.addArgument(index.getType(), index.getLoc())));
+            }
+            auto impossible = e.boolean(false);
+            for (unsigned bound = 2; bound <= 2 * thresholds; bound += 2) {
+                const auto below = e.lt(x, e.constant(bound));
+                const auto selected = e.select(below, x, unrelated);
+                impossible = e.lor(impossible,
+                    e.land(below, e.lt(e.constant(bound - 1), selected)));
+            }
+            const auto original = e.size();
+            fs::RegionExpressions::ThresholdProofCost first, retry;
+            if (!e.inactiveByThresholds(impossible, &first) || e.size() != original ||
+                !e.inactiveByThresholds(impossible, &retry) || e.size() != original ||
+                first.families != 1 || first.dependencyVisits != first.dagVisits ||
+                first.cells < thresholds || !first.skippedBranches || !first.reusedNodes ||
+                first.substitutionVisits != retry.substitutionVisits || retry.dagVisits || retry.dependencyVisits ||
+                retry.preparationHits != 1) {
+                return false;
+            }
+            if (size == 32) { smallerWork = first.substitutionVisits; }
+            else if (first.substitutionVisits != smallerWork) {
+                llvm::errs() << "threshold preparation work grew: " << smallerWork << " -> "
+                             << first.substitutionVisits << " thresholds=" << thresholds << "\n";
+                return false;
+            }
+            llvm::outs() << "threshold preparation: independent_nodes=" << size
+                         << " thresholds=" << thresholds
+                         << " topology=" << first.dagVisits << " dependencies=" << first.dependencyVisits
+                         << " cells=" << first.cells << " specialization=" << first.substitutionVisits << "\n";
+        }
+    }
+    return true;
+}
+bool checkThresholdOwnership(Value index, Value predicate)
+{
+    fs::RegionExpressions e;
+    Block inputs;
+    const auto x = e.input(index), y = e.input(inputs.addArgument(index.getType(), index.getLoc()));
+    const auto p = e.input(predicate), zero = e.constant(0), four = e.constant(4);
+    const auto past = e.lt(four, y);
+    const auto badY = e.land(past, e.le(e.select(past, y, zero), four));
+    const auto both = e.land(e.lt(x, four), badY);
+    fs::RegionExpressions::ThresholdProofCost cost;
+    const auto before = e.size();
+    if (!e.inactiveByThresholds(both, &cost) || cost.families != 2 || e.size() != before) { return false; }
+    // Preparing an existing root inside a transaction may survive its rollback.
+    const auto oldRoot = e.le(y, four);
+    const auto seven = e.constant(7);
+    fs::RegionExpressions::Id removedRoot;
+    {
+        fs::RegionExpressions::Transaction outer(e);
+        fs::RegionExpressions::ThresholdProofCost prepared;
+        if (e.inactiveByThresholds(oldRoot, &prepared) || !prepared.dagVisits) { return false; }
+        {
+            fs::RegionExpressions::Transaction inner(e);
+            removedRoot = e.eq(x, seven);
+            if (e.inactiveByThresholds(removedRoot)) { return false; }
+            inner.commit();
+        }
+    }
+    fs::RegionExpressions::ThresholdProofCost survived, reused;
+    if (e.inactiveByThresholds(oldRoot, &survived) || survived.dagVisits || survived.dependencyVisits ||
+        survived.preparationHits != 1) { return false; }
+    const auto reusedRoot = e.lt(x, seven);
+    if (reusedRoot != removedRoot || e.inactiveByThresholds(reusedRoot, &reused) ||
+        !reused.dagVisits || !reused.dependencyVisits || reused.preparationHits) { return false; }
+    // Many distinct roots retain separate immutable preparations. A later pass
+    // does no discovery or dependency work, including after unrelated appends.
+    SmallVector<fs::RegionExpressions::Id> roots;
+    for (unsigned n = 8; n < 72; ++n) {
+        const auto root = e.le(x, e.constant(n));
+        roots.push_back(root);
+        if (e.inactiveByThresholds(root)) { return false; }
+    }
+    for (auto root : roots) {
+        fs::RegionExpressions::ThresholdProofCost cached;
+        if (e.inactiveByThresholds(root, &cached) || cached.dagVisits || cached.dependencyVisits ||
+            cached.preparationHits != 1) { return false; }
+    }
+    auto system = fs::IntegerSystem::create(1, {},
+        {{{fs::BoundInteger(1)}, fs::BoundInteger(2), fs::BoundInteger(3)}});
+    if (failed(system)) { return false; }
+    const auto atom = e.integerPredicate(*system, {x}, 1, {0});
+    const auto atFour = e.eq(x, four), atFive = e.eq(x, e.constant(5));
+    if (!e.inactiveByThresholds(e.land(atFour, atom)) || e.inactiveByThresholds(e.land(atFive, atom)) ||
+        e.inactiveByThresholds(e.land(atFour, e.select(atFour, p, e.boolean(false)))) ||
+        !e.inactiveByThresholds(e.land(atFour, e.select(atFour, e.boolean(false), p)))) { return false; }
+    {
+        fs::RegionExpressions::Transaction rejected(e);
+        if (e.div(x, zero) != fs::RegionExpressions::invalid || e.constructionError().empty() ||
+            e.inactiveByThresholds(e.boolean(false))) { return false; }
+    }
+    if (!e.constructionError().empty() || !e.inactiveByThresholds(both)) { return false; }
+    return true;
+}
 bool checkDistanceAlgebra(Value index, Value predicate)
 {
     fs::RegionExpressions e;
@@ -1537,6 +1642,9 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         !checked("checkConsolidatedCandidateExclusion", checkConsolidatedCandidateExclusion(function)) ||
         !checked("checkThresholdInactivity",
                  checkThresholdInactivity(function.getArgument(0), function.getArgument(1))) ||
+        !checked("checkThresholdPreparation", checkThresholdPreparation(function.getArgument(0))) ||
+        !checked("checkThresholdOwnership",
+                 checkThresholdOwnership(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkPartialConstants", checkPartialConstants(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkDistanceAlgebra", checkDistanceAlgebra(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkGuardedMinimum", checkGuardedMinimum(function.getArgument(0), function.getArgument(1))) ||

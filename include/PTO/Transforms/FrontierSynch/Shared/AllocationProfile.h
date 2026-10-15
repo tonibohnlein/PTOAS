@@ -15,7 +15,11 @@
 namespace mlir::pto::frontiersynch {
 class AllocationProfile {
 public:
-    enum Stage { Summary, Groups, Queries, Proofs, Lanes, Serialization, GroupPairs, LanePairs, BoundaryPairs, Count };
+    enum Stage {
+        Summary, Groups, Queries, Proofs, Lanes, Serialization, GroupPairs, LanePairs, BoundaryPairs,
+        ArithmeticProjection, ArithmeticComposition, ArithmeticDifference, ArithmeticExtrema, ArithmeticOrder,
+        PublicationQualification, ArithmeticSelectorExport, ArithmeticContainment, Count
+    };
     explicit AllocationProfile(std::shared_ptr<AnalysisLedger> owner) : ledger(std::move(owner)) {}
     ~AllocationProfile()
     {
@@ -26,7 +30,9 @@ public:
         const auto parent = ledger->stages[parentIndex];
         const char* names[] = {
             "summary",    "groups",        "queries", "proofs", "lanes", "serialization", "group-member-pairs",
-            "lane-pairs", "boundary-pairs"};
+            "lane-pairs", "boundary-pairs", "arithmetic-projection", "arithmetic-composition",
+            "arithmetic-difference", "arithmetic-extrema", "arithmetic-order",
+            "publication-qualification", "arithmetic-selector-export", "arithmetic-containment"};
         for (unsigned i = 0; i < Count; ++i) {
             const auto& bucket = buckets[i];
             if (!bucket.calls) {

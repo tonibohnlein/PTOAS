@@ -20,8 +20,10 @@ LogicalResult emitClosedCompletionExport(func::FuncOp function, const Completion
 FailureOr<CompletionSummary> decodeClosedCompletionExport(func::FuncOp function, std::string& error);
 class ClosedCompletionChild {
 public:
+    enum class ResourceClosure { Empty, CompletedExit };
     static std::shared_ptr<const ClosedCompletionChild> import(func::CallOp call, std::string& error);
     const CompletionSummary& summary() const { return effects; }
+    ResourceClosure resourceClosure() const { return resources; }
     bool unchanged() const;
 
 private:
@@ -29,6 +31,7 @@ private:
     Operation* module = nullptr;
     std::string seal;
     CompletionSummary effects;
+    ResourceClosure resources = ResourceClosure::Empty;
     std::shared_ptr<const SyncInput> input;
 };
 } // namespace mlir::pto::frontiersynch

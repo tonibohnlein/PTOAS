@@ -70,6 +70,10 @@ bool inactive(RegionExpressions& arena, Expr root, PrefixExpressionProfile::Entr
     RegionExpressions::ThresholdProofCost cost;
     const bool result = arena.inactiveByThresholds(root, &cost);
     accumulateCost(work.thresholdDiscovery, cost.dagVisits);
+    accumulateCost(work.thresholdDependencies, cost.dependencyVisits);
+    accumulateCost(work.thresholdPreparationHits, cost.preparationHits);
+    accumulateCost(work.thresholdReused, cost.reusedNodes);
+    accumulateCost(work.thresholdSkipped, cost.skippedBranches);
     accumulateCost(work.thresholdSubstitution, cost.substitutionVisits);
     accumulateCost(work.proofVisits, cost.proofVisits);
     return result;
@@ -270,6 +274,8 @@ void PrefixExpressionProfile::resetEmission()
         entry.constructed = entry.retained = entry.maximumRetained = entry.inactiveSuccesses = entry.sharedReturns =
             entry.bindingNodes = 0;
         entry.thresholdDiscovery = entry.thresholdSubstitution = entry.proofVisits = entry.historySubstitution = 0;
+        entry.thresholdDependencies = entry.thresholdReused = entry.thresholdSkipped =
+            entry.thresholdPreparationHits = 0;
         // Bounded translation and input slicing happen inside the staged
         // materialization transaction; regional batch discovery precedes it.
         if (entry.producer == "bounded") {
@@ -294,6 +300,10 @@ llvm::json::Object PrefixExpressionProfile::report() const
         accumulateCost(totals.sharedReturns, entry.sharedReturns);
         accumulateCost(totals.bindingNodes, entry.bindingNodes);
         accumulateCost(totals.thresholdDiscovery, entry.thresholdDiscovery);
+        accumulateCost(totals.thresholdDependencies, entry.thresholdDependencies);
+        accumulateCost(totals.thresholdPreparationHits, entry.thresholdPreparationHits);
+        accumulateCost(totals.thresholdReused, entry.thresholdReused);
+        accumulateCost(totals.thresholdSkipped, entry.thresholdSkipped);
         accumulateCost(totals.thresholdSubstitution, entry.thresholdSubstitution);
         accumulateCost(totals.proofVisits, entry.proofVisits);
         accumulateCost(totals.historySubstitution, entry.historySubstitution);
@@ -319,6 +329,10 @@ llvm::json::Object PrefixExpressionProfile::report() const
             {"shared_returns", entry.sharedReturns},
             {"binding_node_visits", entry.bindingNodes},
             {"threshold_discovery_visits", entry.thresholdDiscovery},
+            {"threshold_dependency_visits", entry.thresholdDependencies},
+            {"threshold_preparation_cache_hits", entry.thresholdPreparationHits},
+            {"threshold_reused_nodes", entry.thresholdReused},
+            {"threshold_skipped_branches", entry.thresholdSkipped},
             {"threshold_substitution_visits", entry.thresholdSubstitution},
             {"proof_traversal_visits", entry.proofVisits},
             {"history_substitution_visits", entry.historySubstitution},

@@ -19,6 +19,7 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticHandoffAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/DenseSet.h"
@@ -31,7 +32,7 @@ namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
 struct State : ArithmeticRegionalRelations {
-    std::optional<ArithmeticHandoffAllocation> handoffAllocation;
+    std::optional<ArithmeticCoordinateHandoffAllocation> handoffAllocation;
     // Imports borrow schema identities from this state's unchanged program.
     std::optional<ImportedArithmeticPrimitives> importedPrimitives;
     llvm::ArrayRef<ArithmeticIntegerPiece> primitives;
@@ -276,29 +277,59 @@ struct State : ArithmeticRegionalRelations {
         const auto previousError = error;
         bool accepted = false;
         auto restore = llvm::make_scope_exit([&] { if (!accepted) { error = previousError; } });
-        if (!handoffAllocation) { handoffAllocation = buildArithmeticHandoffAllocation(analysis, pipes, 1); }
-        if (!handoffAllocation->error.empty()) { return {}; }
         std::map<std::pair<std::size_t, std::size_t>, uint32_t> records;
-        for (const auto& family : plan.families) {
-            for (const auto& member : family.members) {
-                records[{member.source, member.target}] = member.record;
+        {
+            AllocationProfile::Scope qualification(plan.allocationProfile, AllocationProfile::PublicationQualification);
+            for (const auto& family : plan.families) {
+                // This proof covers the paired demand relation, not alternative
+                // publication/cleanup protocols with additional live notifications.
+                if (family.sourceChoices || family.targetChoices) { return {}; }
+                for (const auto& member : family.members) {
+                    records[{member.source, member.target}] = member.record;
+                }
             }
         }
+        if (!handoffAllocation) {
+            handoffAllocation = buildArithmeticCoordinateHandoffAllocation(analysis, pipes, 6, plan.allocationProfile);
+        }
+        if (!handoffAllocation->error.empty()) { return {}; }
+        AllocationProfile::Scope exportTiming(plan.allocationProfile, AllocationProfile::ArithmeticSelectorExport);
         auto result = std::make_shared<RegionalAllocationSummary>();
-        for (const auto& family : handoffAllocation->families) {
+        for (const auto& candidate : handoffAllocation->families) {
+            const auto& family = candidate.lifetime;
             auto record = records.find({family.sourceSite, family.targetSite});
             auto first = selected(family.firstSource), last = selected(family.lastTarget);
             if (record == records.end() || first.size() != 1 || last.size() != 1) { return {}; }
             RegionalAllocationGroup group;
-            group.sourcePipe = pipes[family.sourceSite]; group.targetPipe = pipes[family.targetSite]; group.budget = 1;
+            group.sourcePipe = pipes[family.sourceSite]; group.targetPipe = pipes[family.targetSite];
+            group.budget = family.width;
             RegionalAllocationMember member;
             member.record = record->second; member.firstSource = first.front().event;
             member.lastTarget = last.front().event; member.lastTarget.kind = PeriodicEventKind::Completion;
             member.active = arena->land(first.front().present, last.front().present);
             member.sourcePipe = group.sourcePipe; member.targetPipe = group.targetPipe;
             member.tupleRule = PhysicalTupleRule{1 + program.sites[family.sourceSite].loops.size(), 0, {}};
+            if (candidate.sourceCoordinate) {
+                // Physical tuples exclude the record selector prepended to
+                // memberCoordinates: identity zero, then ORIGINAL source IV,
+                // including at WAIT's selected partner.
+                if (*candidate.sourceCoordinate != 0 || member.tupleRule->coordinateCount != 2) { return {}; }
+                unsigned sides = 0;
+                for (const auto& endpoint : plan.endpoints) {
+                    if (!llvm::is_contained(endpoint.records, member.record)) { continue; }
+                    if (endpoint.kind == LogicalCommandKind::Barrier || endpoint.memberCoordinates.size() != 2) {
+                        return {};
+                    }
+                    sides |= endpoint.kind == LogicalCommandKind::Set ? 1 : 2;
+                }
+                if (sides != 3) { return {}; }
+                member.tupleRule->terms.push_back({1, 1, 0, family.width, 1});
+            }
             last.front().event.kind = PeriodicEventKind::Completion;
-            group.members.push_back(std::move(member)); group.lanes.push_back({std::move(first), std::move(last)});
+            group.members.push_back(std::move(member));
+            // Wider families retain conservative whole-family bounds through
+            // the existing absent-lane-summary contract, never exact extrema.
+            if (family.width == 1) { group.lanes.push_back({std::move(first), std::move(last)}); }
             result->groups.push_back(std::move(group));
         }
         const bool failedExport = !error.empty() || !arena->constructionError().empty();

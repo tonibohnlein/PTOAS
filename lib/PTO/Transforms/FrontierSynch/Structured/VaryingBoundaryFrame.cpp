@@ -40,6 +40,38 @@ Matrix product(const Matrix& a, const Matrix& b)
     return out;
 }
 } // namespace
+std::vector<std::vector<VaryingBoundaryMatrix>> buildVaryingBoundaryPowers(
+    ArrayRef<Matrix> suffix, uint64_t& rotationProducts, uint64_t& squaringProducts)
+{
+    rotationProducts = squaringProducts = 0;
+    if (suffix.empty()) { return {}; }
+    Matrix identity(suffix.front().size(), std::vector<uint8_t>(suffix.front().size()));
+    for (std::size_t i = 0; i < identity.size(); ++i) { identity[i][i] = 1; }
+    std::vector<Matrix> prefixes{identity}, suffixes(suffix.size() + 1);
+    for (const auto& matrix : suffix) {
+        prefixes.push_back(product(prefixes.back(), matrix));
+        ++rotationProducts;
+    }
+    suffixes.back() = std::move(identity);
+    for (std::size_t phase = suffix.size(); phase > 0; --phase) {
+        suffixes[phase - 1] = product(suffix[phase - 1], suffixes[phase]);
+        ++rotationProducts;
+    }
+    std::vector<std::vector<Matrix>> powers;
+    for (std::size_t phase = 0; phase < suffix.size(); ++phase) {
+        // Order matters: S_phase ... S_last S_0 ... S_(phase-1).
+        std::vector<Matrix> column{product(suffixes[phase], prefixes[phase])};
+        ++rotationProducts;
+        while (column.size() < 64) {
+            auto next = product(column.back(), column.back());
+            ++squaringProducts;
+            if (next == column.back()) { break; }
+            column.push_back(std::move(next));
+        }
+        powers.push_back(std::move(column));
+    }
+    return powers;
+}
 bool sameVaryingBoundaryQuotient(const PeriodicAnalysis& a, const PeriodicAnalysis& b)
 {
     auto sameRecords = [](const auto& left, const auto& right) {
@@ -181,25 +213,7 @@ struct FrameBuilder {
             frame.suffix.push_back(transfer(visits().startup + visits().period + phase + 1));
             if (!error.empty()) { return false; }
         }
-        for (uint64_t phase = 0; phase < visits().period; ++phase) {
-            Matrix cycle(frame.ports.size(), std::vector<uint8_t>(frame.ports.size()));
-            for (std::size_t i = 0; i < frame.ports.size(); ++i) {
-                cycle[i][i] = 1;
-            }
-            for (uint64_t j = 0; j < visits().period; ++j) {
-                cycle = product(cycle, frame.suffix[(phase + j) % visits().period]);
-            }
-            std::vector<Matrix> column{std::move(cycle)};
-            for (unsigned bit = 1; bit < 64; ++bit) {
-                column.push_back(product(column.back(), column.back()));
-            }
-            unsigned last = 63;
-            for (unsigned bit = 0; bit < 63; ++bit) {
-                if (column[bit] == column[bit + 1]) { last = bit; break; }
-            }
-            frame.lastPower.push_back(last);
-            frame.powers.push_back(std::move(column));
-        }
+        frame.powers = buildVaryingBoundaryPowers(frame.suffix, frame.rotationProducts, frame.squaringProducts);
         return error.empty();
     }
 };

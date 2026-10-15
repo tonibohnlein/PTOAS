@@ -19,6 +19,11 @@ struct VaryingBoundaryPort {
     PeriodicEventKind kind;
 };
 using VaryingBoundaryMatrix = std::vector<std::vector<uint8_t>>;
+// Internal construction service. All matrices have the same square shape.
+// A short column ends at an exactly idempotent power; a full column has 64
+// levels. Higher bits reuse the last retained level only in the short case.
+std::vector<std::vector<VaryingBoundaryMatrix>> buildVaryingBoundaryPowers(
+    ArrayRef<VaryingBoundaryMatrix> suffix, uint64_t& rotationProducts, uint64_t& squaringProducts);
 // One numerical transfer representation serves ordinary regional queries and
 // allocation-only frame refinement. The original schedule supplies crossings;
 // the attachment frame supplies its certified cutoff, radius and residues.
@@ -31,7 +36,7 @@ public:
     std::vector<VaryingBoundaryPort> ports;
     std::vector<VaryingBoundaryMatrix> startup, suffix;
     std::vector<std::vector<VaryingBoundaryMatrix>> powers;
-    std::vector<unsigned> lastPower;
+    uint64_t rotationProducts = 0, squaringProducts = 0;
 private:
     explicit VaryingBoundaryFrame(std::shared_ptr<const AffineRotatingVisits> attachments)
         : attachments(std::move(attachments)) {}
@@ -46,7 +51,8 @@ std::shared_ptr<RegionalAllocationSummary> buildVaryingAllocationWithAssignment(
 RotatingBoundaryType selectVaryingBoundaryType(const AffineRotatingVisits& visits, uint64_t visit);
 // Borrows the immutable certificate and transfer matrices owned by the regional
 // state. Startup[k] crosses k->k+1. Suffix[p] crosses phase p->p+1 relative to
-// startup; powers[p][b] crosses 2^b complete suffix periods from phase p.
+// startup; powers[p][min(b, size-1)] crosses 2^b complete suffix periods from
+// phase p. A short column's last level is exactly idempotent.
 class VaryingBoundaryQuery {
 public:
     explicit VaryingBoundaryQuery(const VaryingBoundaryFrame& frame);

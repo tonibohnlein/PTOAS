@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Conditional parallel-edge deduplication, sparse pipe frontiers and final-edge tests.
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicQuotient.h"
+#include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicWork.h"
 #include <algorithm>
 #include <limits>
 #include <map>
@@ -276,9 +277,11 @@ std::vector<Score> Builder::frontier(uint32_t row, bool completion, ArrayRef<Thr
                 expressions.constant(count - output.localRanks[a]));
         }
     }
+    const auto rounds = *guardedPeriodicRounds(
+        vertices, output.frontiers.size(), output.nativePrerequisites.empty());
     if (output.nativePrerequisites.empty()) {
         scores = closeNative(scores);
-        for (std::size_t round = 0; round < output.frontiers.size(); ++round) {
+        for (uint64_t round = 0; round < rounds; ++round) {
             const auto previous = scores;
             for (std::size_t i = 0; i < edges.size(); ++i) {
                 const auto& edge = edges[i];
@@ -292,7 +295,7 @@ std::vector<Score> Builder::frontier(uint32_t row, bool completion, ArrayRef<Thr
     }
     // Synchronous Bellman-Ford circuits: a shortest nonnegative-weight walk
     // has a simple representative. Absent native positions remain wire nodes.
-    for (std::size_t round = 1; round < vertices; ++round) {
+    for (uint64_t round = 0; round < rounds; ++round) {
         auto previous = scores;
         for (std::size_t i = 0; i < edges.size(); ++i) {
             const auto& edge = edges[i];

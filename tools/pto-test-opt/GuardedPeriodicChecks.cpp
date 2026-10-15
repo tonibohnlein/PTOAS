@@ -7,12 +7,14 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Evaluate one symbolic quotient for multiple small, concrete test valuations.
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicQuotient.h"
+#include "PTO/Transforms/FrontierSynch/Structured/GuardedPeriodicWork.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
+#include <set>
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 namespace {
@@ -121,6 +123,14 @@ bool graphCase(const llvm::json::Object& input, llvm::json::Object& output, MLIR
     output["exclusions"] = quotient.exclusionCandidates;
     output["scaling_additions"] = quotient.scalingAdditions;
     if (!quotient.error.empty()) { return true; }
+    std::set<std::pair<uint32_t, uint32_t>> groups;
+    for (const auto& record : generators) { groups.emplace(record.source, record.target); }
+    const auto work = fs::guardedPeriodicWork(
+        payloads.size(), quotient.frontiers.size(), groups.size(), native.size());
+    if (work.edges != quotient.graphEdges || work.relaxations != quotient.relaxationCandidates ||
+        work.nativeScanVisits != quotient.nativeScanVisits || work.exclusions != quotient.exclusionCandidates ||
+        fs::guardedPeriodicWork(UINT64_MAX, 2, 1, 1).relaxations ||
+        fs::guardedPeriodicWork(2, 2, 1, {}).edges) { return false; }
     // Emit each shared root once, then reuse that exact circuit for all samples.
     Block code;
     builder.setInsertionPointToEnd(&code);

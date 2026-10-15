@@ -28,6 +28,61 @@ inline bool failedCheck(unsigned line)
     llvm::errs() << "periodic lane-boundary mismatch at line " << line << "\n";
     return false;
 }
+inline fs::VaryingBoundaryMatrix referenceProduct(
+    const fs::VaryingBoundaryMatrix& left, const fs::VaryingBoundaryMatrix& right)
+{
+    auto result = left;
+    for (std::size_t i = 0; i < left.size(); ++i) {
+        for (std::size_t j = 0; j < left.size(); ++j) {
+            bool reaches = false;
+            for (std::size_t k = 0; k < left.size(); ++k) { reaches |= left[i][k] && right[k][j]; }
+            result[i][j] = reaches;
+        }
+    }
+    return result;
+}
+inline bool powerConstruction()
+{
+    using Matrix = fs::VaryingBoundaryMatrix;
+    const Matrix identity{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    const Matrix nilpotent{{0, 1, 0}, {0, 0, 1}, {0, 0, 0}};
+    const Matrix permutation{{0, 1, 0}, {0, 0, 1}, {1, 0, 0}};
+    const Matrix branch{{1, 1, 0}, {0, 0, 1}, {0, 0, 1}};
+    if (referenceProduct(permutation, branch) == referenceProduct(branch, permutation)) {
+        return failedCheck(__LINE__);
+    }
+    std::vector<std::vector<Matrix>> cases{{}, {identity}, {nilpotent}, {permutation}, {permutation, branch}};
+    for (unsigned count : {3, 16, 64}) { cases.emplace_back(count, identity); }
+    for (const auto& suffix : cases) {
+        uint64_t rotations = 0, squares = 0;
+        auto powers = fs::buildVaryingBoundaryPowers(suffix, rotations, squares);
+        if (rotations != 3 * suffix.size() || powers.size() != suffix.size()) { return failedCheck(__LINE__); }
+        uint64_t expectedSquares = 0;
+        for (std::size_t phase = 0; phase < suffix.size(); ++phase) {
+            auto expected = identity;
+            for (std::size_t step = 0; step < suffix.size(); ++step) {
+                expected = referenceProduct(expected, suffix[(phase + step) % suffix.size()]);
+            }
+            const auto& column = powers[phase];
+            if (column.empty() || column.size() > 64) { return failedCheck(__LINE__); }
+            expectedSquares += column.size() < 64 ? column.size() : 63;
+            for (unsigned bit = 0; bit < 64; ++bit) {
+                if (column[std::min<std::size_t>(bit, column.size() - 1)] != expected) {
+                    return failedCheck(__LINE__);
+                }
+                expected = referenceProduct(expected, expected);
+            }
+        }
+        if (squares != expectedSquares) { return failedCheck(__LINE__); }
+        if (suffix.size() == 1 && suffix.front() == permutation && powers.front().size() != 64) {
+            return failedCheck(__LINE__);
+        }
+        if (!suffix.empty() && suffix.front() == identity && squares != suffix.size()) {
+            return failedCheck(__LINE__);
+        }
+    }
+    return true;
+}
 inline bool spans(const fs::RotatingBoundaryCertificate& boundary, uint64_t length)
 {
     auto type = boundary.select(length);
@@ -171,6 +226,21 @@ inline bool queries(uint64_t slope, uint64_t intercept)
     }
     fs::VaryingBoundaryQuery query(*frame);
     if (!query.error().empty()) { return failedCheck(__LINE__); }
+    auto fullFrame = *frame;
+    for (auto& column : fullFrame.powers) {
+        while (column.size() < 64) { column.push_back(referenceProduct(column.back(), column.back())); }
+    }
+    fs::VaryingBoundaryQuery fullQuery(fullFrame);
+    for (auto a : frame->ports) {
+        for (auto b : frame->ports) {
+            for (uint64_t gap : {uint64_t(0), uint64_t(1) << 32, uint64_t(1) << 63}) {
+                const auto actual = query.query(a.occurrence, a.kind, b.occurrence, b.kind, refined->startup, gap);
+                const auto expected = fullQuery.query(
+                    a.occurrence, a.kind, b.occurrence, b.kind, refined->startup, gap);
+                if (!actual || actual != expected) { return failedCheck(__LINE__); }
+            }
+        }
+    }
     const unsigned visits = refined->startup + 2 * refined->period + 4;
     FiniteGraph graph(*original, visits);
     std::vector<fs::VaryingBoundaryPort> ports = frame->ports;
@@ -247,7 +317,7 @@ inline bool queries(uint64_t slope, uint64_t intercept)
 } // namespace lane_boundary
 inline bool checkPeriodicLaneBoundaries()
 {
-    return lane_boundary::geometry() && lane_boundary::queries(1, 0) &&
+    return lane_boundary::powerConstruction() && lane_boundary::geometry() && lane_boundary::queries(1, 0) &&
         lane_boundary::queries(1, 2) && lane_boundary::queries(2, 1);
 }
 } // namespace mlir::pto::test

@@ -6,6 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exhaustive threshold cells retain symbolic integer values and opaque guards.
+// Only source topology survives cell rollback. Rebuilt IDs and affine-shift
+// facts belong to one transaction; unaffected source subgraphs retain identity.
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include "llvm/ADT/STLExtras.h"
 #include <iterator>
@@ -15,35 +17,77 @@ namespace mlir::pto::frontiersynch {
 namespace {
 void count(uint64_t& value) { if (value != UINT64_MAX) { ++value; } }
 }
+struct RegionExpressions::ThresholdPreparation {
+    SmallVector<Id> order;
+    // Pack operand lists once; a SmallVector in every hash bucket retains
+    // inline capacity even for constants and unary nodes across many roots.
+    llvm::DenseMap<Id, std::pair<std::size_t, std::size_t>> ranges;
+    SmallVector<Id> edges;
+    ArrayRef<Id> operands(Id id) const
+    {
+        const auto range = ranges.find(id)->second;
+        return ArrayRef<Id>(edges).slice(range.first, range.second);
+    }
+    std::map<Id, SmallVector<Id>> families;
+};
 bool RegionExpressions::inactiveByThresholds(Id expression, ThresholdProofCost* cost)
 {
     if (!constructionMessage.empty() || !isBoolean(expression)) { return false; }
     if (auto value = constantValue(expression)) { return *value == 0; }
-    SmallVector<Id> pending{expression};
-    llvm::DenseSet<Id> seen;
-    std::map<Id, SmallVector<Id>> families;
-    while (!pending.empty()) {
-        const auto id = pending.pop_back_val();
-        if (!seen.insert(id).second) { continue; }
-        if (cost) { count(cost->dagVisits); }
-        const auto& node = nodes[id];
-        appendOperands(node, pending);
-        if (node.kind != Kind::Eq && node.kind != Kind::Lt && node.kind != Kind::Le &&
-            node.kind != Kind::SLt && node.kind != Kind::SLe) { continue; }
-        for (auto pair : {std::make_pair(node.a, node.b), std::make_pair(node.b, node.a)}) {
-            if (nodes[pair.first].kind == Kind::Input && !isBoolean(pair.first) && constantValue(pair.second)) {
-                families[pair.first].push_back(id);
+    auto found = thresholdPreparations.find(expression);
+    if (found == thresholdPreparations.end()) {
+        auto prepared = std::make_shared<ThresholdPreparation>();
+        SmallVector<Id> pending{expression};
+        llvm::DenseSet<Id> seen;
+        while (!pending.empty()) {
+            const auto id = pending.pop_back_val();
+            if (!seen.insert(id).second) { continue; }
+            if (cost) { count(cost->dagVisits); }
+            const auto& node = nodes[id];
+            SmallVector<Id, 3> operands;
+            appendOperands(node, operands);
+            prepared->ranges.try_emplace(id, std::make_pair(prepared->edges.size(), operands.size()));
+            prepared->edges.append(operands.begin(), operands.end());
+            pending.append(operands.begin(), operands.end());
+            prepared->order.push_back(id);
+            if (node.kind != Kind::Eq && node.kind != Kind::Lt && node.kind != Kind::Le &&
+                node.kind != Kind::SLt && node.kind != Kind::SLe) { continue; }
+            for (auto pair : {std::make_pair(node.a, node.b), std::make_pair(node.b, node.a)}) {
+                if (nodes[pair.first].kind == Kind::Input && !isBoolean(pair.first) && constantValue(pair.second)) {
+                    prepared->families[pair.first].push_back(id);
+                }
             }
         }
-    }
-    for (const auto& [input, atoms] : families) {
+        llvm::sort(prepared->order);
+        found = thresholdPreparations.emplace(expression, std::move(prepared)).first;
+    } else if (cost) { count(cost->preparationHits); }
+    const auto retained = found->second;
+    const auto& preparation = *retained;
+    for (const auto& [input, atoms] : preparation.families) {
         if (cost) { count(cost->families); }
-        if (inactiveOverThresholds(expression, input, atoms, cost)) { return true; }
+        const auto key = std::make_pair(expression, input);
+        auto dependencies = thresholdDependencies.find(key);
+        if (dependencies == thresholdDependencies.end()) {
+            auto dependent = std::make_shared<llvm::DenseSet<Id>>();
+            dependent->insert(input);
+            for (auto id : preparation.order) {
+                if (cost) { count(cost->dependencyVisits); }
+                if (llvm::any_of(preparation.operands(id),
+                                [&](Id operand) { return dependent->contains(operand); })) {
+                    dependent->insert(id);
+                }
+            }
+            dependencies = thresholdDependencies.emplace(key, std::move(dependent)).first;
+        }
+        if (inactiveOverThresholds(expression, input, atoms, preparation, *dependencies->second, cost)) {
+            return true;
+        }
     }
     return false;
 }
 bool RegionExpressions::inactiveOverThresholds(
-    Id expression, Id input, ArrayRef<Id> atoms, ThresholdProofCost* cost)
+    Id expression, Id input, ArrayRef<Id> atoms, const ThresholdPreparation& preparation,
+    const llvm::DenseSet<Id>& dependent, ThresholdProofCost* cost)
 {
     std::set<uint64_t> starts{0};
     for (auto atom : atoms) {
@@ -68,7 +112,8 @@ bool RegionExpressions::inactiveOverThresholds(
             if (!truth || truth != end) { return false; }
         }
         SmallVector<uint64_t> refinements;
-        const auto specialized = specializeThresholdCell(expression, input, lower, upper, refinements, cost);
+        const auto specialized = specializeThresholdCell(
+            expression, input, lower, upper, preparation, dependent, refinements, cost);
         if (specialized == invalid) { return false; }
         if (constantValue(specialized) == 0) { ++position; continue; }
         bool refined = false;
@@ -89,19 +134,11 @@ bool RegionExpressions::inactiveOverThresholds(
 }
 RegionExpressions::Id RegionExpressions::specializeThresholdCell(
     Id expression, Id input, uint64_t lower, uint64_t upper,
+    const ThresholdPreparation& preparation, const llvm::DenseSet<Id>& dependent,
     SmallVectorImpl<uint64_t>& refinements, ThresholdProofCost* cost)
 {
     if (!valid(expression)) { return invalid; }
-    SmallVector<Id> pending{expression}, order;
-    llvm::DenseSet<Id> seen;
-    while (!pending.empty()) {
-        const auto id = pending.pop_back_val();
-        if (!seen.insert(id).second) { continue; }
-        if (cost) { count(cost->substitutionVisits); }
-        order.push_back(id);
-        appendOperands(nodes[id], pending);
-    }
-    llvm::sort(order);
+    SmallVector<Id> pending{expression};
     llvm::DenseMap<Id, Id> memo;
     struct Shift { bool variable; uint64_t offset; };
     std::map<Id, std::optional<Shift>> shifts;
@@ -112,6 +149,11 @@ RegionExpressions::Id RegionExpressions::specializeThresholdCell(
         const auto node = nodes[id];
         if (id == input) { result = Shift{true, 0}; }
         else if (auto value = constantValue(id)) { result = Shift{false, *value}; }
+        else if (preparation.ranges.contains(id) && !dependent.contains(id)) {
+            // A nonconstant source subtree independent of this input cannot
+            // have a constant affine offset. Do not rediscover it per cell.
+            result = std::nullopt;
+        }
         else if (node.kind == Kind::Add || node.kind == Kind::Sub) {
             auto a = shift(node.a), b = shift(node.b);
             if (a && b) {
@@ -124,9 +166,36 @@ RegionExpressions::Id RegionExpressions::specializeThresholdCell(
         }
         shifts.emplace(id, result); return result;
     };
-    for (auto id : order) {
-        if (cost) { count(cost->substitutionVisits); }
+    while (!pending.empty()) {
+        const auto id = pending.back();
+        if (memo.contains(id)) { pending.pop_back(); continue; }
+        if (!dependent.contains(id)) {
+            memo[id] = id;
+            if (cost) { count(cost->reusedNodes); }
+            pending.pop_back();
+            continue;
+        }
         const auto node = nodes[id];
+        // Select evaluates only the selected arm once its condition is known.
+        // Do not traverse the discarded arm or publish any of its local IDs.
+        if (node.kind == Kind::Select) {
+            if (!memo.contains(node.a)) { pending.push_back(node.a); continue; }
+            if (auto condition = constantValue(memo.lookup(node.a))) {
+                const auto selected = *condition ? node.b : node.c;
+                if (!memo.contains(selected)) { pending.push_back(selected); continue; }
+                memo[id] = memo.lookup(selected);
+                if (cost) { count(cost->skippedBranches); count(cost->substitutionVisits); }
+                pending.pop_back();
+                continue;
+            }
+        }
+        bool ready = true;
+        for (auto operand : preparation.operands(id)) {
+            if (!memo.contains(operand)) { pending.push_back(operand); ready = false; }
+        }
+        if (!ready) { continue; }
+        pending.pop_back();
+        if (cost) { count(cost->substitutionVisits); }
         auto result = id;
         if (id == input && lower == upper) { result = constant(lower); }
         else if (node.kind == Kind::Integer) { result = rebuildInteger(node, memo); }

@@ -25,6 +25,7 @@ public:
         uint64_t inactiveSuccesses = 0, preparationNodes = 0, preparationInputs = 0, sharedReturns = 0,
                  bindingNodes = 0;
         uint64_t thresholdDiscovery = 0, thresholdSubstitution = 0, proofVisits = 0, historySubstitution = 0;
+        uint64_t thresholdDependencies = 0, thresholdReused = 0, thresholdSkipped = 0, thresholdPreparationHits = 0;
         uint64_t distance = 0;
         std::string cut, location, producer;
     };

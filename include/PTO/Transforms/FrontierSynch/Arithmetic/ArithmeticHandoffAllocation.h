@@ -9,7 +9,9 @@
 #ifndef PTO_FRONTIERSYNCH_ARITHMETICHANDOFFALLOCATION_H
 #define PTO_FRONTIERSYNCH_ARITHMETICHANDOFFALLOCATION_H
 #include "PTO/Transforms/FrontierSynch/Arithmetic/GeneralArithmeticSelectors.h"
+#include <optional>
 namespace mlir::pto::frontiersynch {
+class AllocationProfile;
 struct ArithmeticHandoffFamily {
     std::size_t sourceSite = 0, targetSite = 0;
     unsigned width = 0;
@@ -24,6 +26,28 @@ struct ArithmeticHandoffAllocation {
     ArithmeticAnalysisCost cost;
     std::string error;
 };
+// Separate from executed-rank allocation: the selected ID is the original
+// source coordinate modulo width. A missing coordinate means constant ID zero.
+// Lifetime selectors bound the whole family, not each individual cyclic lane.
+struct ArithmeticCoordinateHandoffFamily {
+    ArithmeticHandoffFamily lifetime;
+    std::optional<unsigned> sourceCoordinate;
+};
+struct ArithmeticCoordinateHandoffAllocation {
+    std::vector<ArithmeticCoordinateHandoffFamily> families;
+    ArithmeticAnalysisCost cost;
+    std::string error;
+};
+// Sufficient, bounded candidate for paired direct communications. Width one
+// uses the existing all-later reuse proof. Wider candidates require one
+// nonnegative original source IV and prove consumption before EVERY later
+// publication whose original-IV distance is at least width. This implies
+// legal modulo reuse without constructing executed-rank successors. It is
+// neither an exact capacity test nor a certificate for surplus publications.
+// The optional profile is borrowed only for this call; no recipe retains it.
+ArithmeticCoordinateHandoffAllocation buildArithmeticCoordinateHandoffAllocation(
+    const GeneralArithmeticDemandAnalysis& analysis, llvm::ArrayRef<uint32_t> pipes,
+    unsigned maxWidth = 6, AllocationProfile* profile = nullptr);
 // Requires certified F* functionality and finite invocation domains. For each
 // family construct strict order on ACTIVE source tuples, remove its square to
 // obtain immediate successor S, and test F* inverse composed with S^E against

@@ -136,7 +136,8 @@ struct State : std::enable_shared_from_this<State> {
             std::vector<Id> final(queryFrame->ports.size(), e().boolean(false));
             for (uint64_t p = 0; p < visits().period; ++p) {
                 auto row = values;
-                for (unsigned bit = 0; bit < queryFrame->lastPower[p]; ++bit) {
+                const auto lastPower = queryFrame->powers[p].size() - 1;
+                for (unsigned bit = 0; bit < lastPower; ++bit) {
                     auto active = e().eq(e().rem(e().div(cycles, c(uint64_t(1) << bit)), c(2)), c(1));
                     row = advance(row, queryFrame->powers[p][bit], active);
                 }
@@ -144,8 +145,8 @@ struct State : std::enable_shared_from_this<State> {
                 // remaining set bit applies that same matrix, so apply it once
                 // exactly when the remaining unsigned quotient is nonzero.
                 // Without stabilization, bit 63 has this same threshold test.
-                row = advance(row, queryFrame->powers[p][queryFrame->lastPower[p]],
-                    e().le(c(uint64_t(1) << queryFrame->lastPower[p]), cycles));
+                row = advance(row, queryFrame->powers[p][lastPower],
+                    e().le(c(uint64_t(1) << lastPower), cycles));
                 for (uint64_t j = 0; j < visits().period; ++j) {
                     row = advance(row, queryFrame->suffix[(p + j) % visits().period], e().lt(c(j), tail));
                 }

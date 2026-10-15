@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
+#include "../Shared/ModuloLaneSpan.h"
 #include "../../InsertSync/SyncEffectRanges.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/MapVector.h"
@@ -65,6 +66,9 @@ std::shared_ptr<RegionalAllocationSummary> sliceAllocation(const GuardedRotating
     for (const auto& direction : allocation.directions) {
         if (!direction.uniformBudget || !*direction.uniformBudget) { return {}; }
         RegionalAllocationGroup group{direction.sourcePipe, direction.targetPipe, *direction.uniformBudget, {}};
+        // Refine only the already certified cyclic assignment. Enumerate the
+        // hardware lanes, never visits in the supplied interval.
+        if (group.budget <= 6) { group.lanes.resize(group.budget); }
         for (auto [phase, handoff] : llvm::enumerate(direction.handoffs)) {
             auto source = RegionalEvent{handoff.source, begin, PeriodicEventKind::Start};
             auto target = RegionalEvent{handoff.target, dag.sub(end, dag.constant(1)), PeriodicEventKind::Completion};
@@ -73,6 +77,17 @@ std::shared_ptr<RegionalAllocationSummary> sliceAllocation(const GuardedRotating
             auto record = original.find(std::make_tuple(handoff.source, handoff.target, handoff.displacement));
             if (record == original.end()) { return {}; }
             group.members.push_back({record->second, direction.handoffs.size(), phase, source, target, active});
+            const auto lastSource = dag.select(active,
+                dag.sub(dag.sub(end, dag.constant(handoff.displacement)), dag.constant(1)), begin);
+            const detail::ModuloLaneDomain domain(direction.handoffs.size(), phase, group.budget);
+            for (uint64_t lane = 0; lane < group.lanes.size(); ++lane) {
+                const auto span = domain.span(dag, begin, lastSource, active, lane);
+                group.lanes[lane].firstSources.push_back(
+                    {{handoff.source, span.first, PeriodicEventKind::Start}, span.present});
+                group.lanes[lane].lastTargets.push_back(
+                    {{handoff.target, dag.add(span.last, dag.constant(handoff.displacement)),
+                      PeriodicEventKind::Completion}, span.present});
+            }
         }
         out->groups.push_back(std::move(group));
     }
