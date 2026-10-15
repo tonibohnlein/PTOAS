@@ -24,6 +24,8 @@
 #include <vector>
 namespace mlir::pto::frontiersynch {
 class CutExpressionRecipe;
+// Structural cache identity only; never reconstruct an executable value from it.
+void appendCutExpressionKey(const CutExpressionRecipe& recipe, SmallVectorImpl<uint64_t>& key);
 class RegionExpressions {
 public:
     using Id = uint32_t;

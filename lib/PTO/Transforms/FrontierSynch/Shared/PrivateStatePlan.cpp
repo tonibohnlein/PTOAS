@@ -53,11 +53,11 @@ std::vector<Operation*> operations(func::FuncOp function)
 }
 bool clean(const PreparedLogicalPlan& plan)
 {
-    return plan.completeInvocation && !plan.familyRecipe && plan.preparation.empty() &&
-        plan.endpoints.empty() && plan.families.empty() &&
-        !plan.nestedIdentities && !plan.independentPieces && !plan.groupedFamilies &&
-        !plan.allocationCertificate && !plan.allocationPreparation && !plan.regionalAllocation &&
-        !plan.compactBoundingOwner && !plan.completionOwner;
+    return plan.completeInvocation && !plan.familyRecipe && !plan.familyProtocol && !plan.physicalOutput &&
+           plan.preparation.empty() && plan.endpoints.empty() && plan.families.empty() && !plan.nestedIdentities &&
+           !plan.independentPieces && !plan.groupedFamilies && !plan.allocationCertificate &&
+           !plan.allocationPreparation && !plan.regionalAllocation && !plan.compactBoundingOwner &&
+           !plan.completionOwner;
 }
 bool prefixMetadata(func::FuncOp function, int64_t planId)
 {

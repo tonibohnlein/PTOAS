@@ -22,6 +22,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInactiveRecords.h"
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteVisitRecognition.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRecognition.h"
@@ -410,6 +411,25 @@ LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy p
   if (bounded && bounded->allocationRecipe) {
     return function.emitError("bounded logical preparation constructed an allocation proof");
   }
+  if (function->hasAttr("test.shared_family_template")) {
+    if (!(*left)->familyRecipe || (*left)->familyRecipe != (*right)->familyRecipe ||
+        (*left)->families.empty() || (*right)->families.empty()) {
+      return function.emitError("fresh plans did not retain one scalar-free family export");
+    }
+    const auto pipe = (*left)->families.front().sourcePipe;
+    (*left)->families.front().sourcePipe = 7;
+    if ((*right)->families.front().sourcePipe != pipe) {
+      return function.emitError("family export shared mutable plan provenance");
+    }
+    (*left)->families.front().sourcePipe = pipe;
+    auto failedPlan = session.prepareLogical(logical);
+    if (failed(failedPlan)) { return failure(); }
+    (*failedPlan)->endpoints.push_back({});
+    if (succeeded(materializeLogicalFamilies(**failedPlan))) {
+      return function.emitError("invalid compatibility contribution was materialized");
+    }
+    failedPlan->reset();
+  }
   const auto work = session.constructionCounts().mathematicalAttempts;
   const auto endpoints = (*left)->endpoints.size();
   const auto allocation = session.attachAllocation(logical, **left);
@@ -420,6 +440,17 @@ LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy p
       session.constructionCounts().allocationExports != 1 || (*left)->endpoints.size() != endpoints ||
       session.constructionCounts().mathematicalAttempts != work ||
       session.minimumDemands().mathematical != demands.mathematical) {
+    llvm::errs() << "allocation retry: available=" << succeeded(allocation) << "/" << succeeded(retry)
+                 << " exports=" << session.constructionCounts().allocationExports << " endpoints="
+                 << endpoints << "/" << (*left)->endpoints.size() << "\n";
+    if ((*left)->familyProtocol && (*right)->familyProtocol) {
+      auto a = normalizedFamilyProtocolKey(*(*left)->familyProtocol);
+      auto b = normalizedFamilyProtocolKey(*(*right)->familyProtocol);
+      llvm::errs() << "protocol keys: " << a.size() << "/" << b.size() << "\n";
+      for (std::size_t i = 0; i < std::min(a.size(), b.size()); ++i) {
+        if (a[i] != b[i]) { llvm::errs() << "first different protocol field: " << i << "\n"; break; }
+      }
+    }
     return function.emitError("allocation retry repeated work, changed commands or lost exact demands");
   }
   if (function->hasAttr("test.require_bounded_regional_allocation") &&

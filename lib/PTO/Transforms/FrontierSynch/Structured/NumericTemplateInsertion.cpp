@@ -200,8 +200,9 @@ LogicalResult validateNumericTemplateInsertion(func::FuncOp function, const Nume
 LogicalResult prepareCountedEndpointRecipe(func::FuncOp function, const NumericTemplateEndpoints& endpoints,
                                          PreparedLogicalPlan& prepared)
 {
-    if (!endpoints.outer || !endpoints.logical.error.empty() || prepared.familyRecipe ||
-        !prepared.preparation.empty() || !prepared.endpoints.empty() || !prepared.families.empty()) {
+    if (!endpoints.outer || !endpoints.logical.error.empty() || prepared.familyRecipe || prepared.familyProtocol ||
+        prepared.physicalOutput || !prepared.preparation.empty() || !prepared.endpoints.empty() ||
+        !prepared.families.empty()) {
         return failure();
     }
     auto loop = endpoints.outer;

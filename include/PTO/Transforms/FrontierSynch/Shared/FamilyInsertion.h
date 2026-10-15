@@ -88,6 +88,19 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> maskFamilyActivity(
 // One namespace per direction/displacement, shared by concrete and delayed
 // sequence endpoints. Record provenance and member coordinates stay distinct.
 std::map<uint32_t, uint32_t> familyRecordNamespaces(ArrayRef<EndpointFamily> families);
+LogicalResult normalizeFamilyEndpointPlan(PreparedLogicalPlan& plan);
+// Explicit combined-output request. Decode retained certified assignments and
+// compose their maps with the frozen protocol before any family scalar lowering.
+LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPlan& plan, ArrayRef<int64_t> eligibleIds);
+bool validPhysicalFamilyOutput(const PreparedLogicalPlan& plan);
+bool validFamilyEndpointProtocol(const PreparedLogicalPlan& plan);
+bool validPhysicalFamilyEndpoint(const PreparedLogicalPlan& plan, const PreparedLogicalEndpoint& endpoint);
+// Composition creates a fresh protocol owner after applying its transforms.
+std::shared_ptr<const FamilyEndpointRecipe> familyRecipeForComposition(
+    std::shared_ptr<const FamilyEndpointRecipe> recipe);
+// Attempt-local complete protocol key. It owns no callback/SSA state and is
+// meaningful only while the retained mathematical/source owners are unchanged.
+ArrayRef<uint64_t> normalizedFamilyProtocolKey(const FamilyEndpointRecipe& recipe);
 LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared);
 std::size_t familyEndpointPieceCount(const FamilyEndpointRecipe& recipe);
 // Exact matching-tuple sizes for nonlocal records, before SSA. Count the source

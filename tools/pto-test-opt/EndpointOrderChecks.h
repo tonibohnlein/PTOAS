@@ -223,20 +223,21 @@ bool endpointRecipeCompositionChecks(const mlir::pto::frontiersynch::NumericTemp
             composed.families.push_back(std::move(family));
         }
     }
-    bool allocationSawRecipe = false;
-    composed.allocationPreparation = [&](fs::PreparedLogicalPlan& view) {
-        allocationSawRecipe = view.familyRecipe && view.endpoints.empty() && view.preparation.empty();
-    };
-    auto view = fs::takeRegionalAllocationView(composed, true);
-    if (!view) { return false; }
-    fs::prepareAllocationSupport(*view);
-    if (!allocationSawRecipe || !composed.preparation.empty()) { return false; }
+    // Finalize compatibility anchors before allocation freezes this graph.
     auto cut = input.groups.front().cut.before;
     for (uint32_t record : {900000U, 900001U, 900002U}) {
         fs::PreparedLogicalEndpoint endpoint{cut, fs::LogicalCommandKind::Barrier, 1, 1, record, {}, {}};
         endpoint.records.push_back(record);
         composed.endpoints.push_back(std::move(endpoint));
     }
+    bool allocationSawRecipe = false;
+    composed.allocationPreparation = [&](fs::PreparedLogicalPlan& view) {
+        allocationSawRecipe = view.familyRecipe && view.endpoints.size() == 3 && view.preparation.empty();
+    };
+    auto view = fs::takeRegionalAllocationView(composed, true);
+    if (!view) { return false; }
+    fs::prepareAllocationSupport(*view);
+    if (!allocationSawRecipe || !composed.preparation.empty()) { return false; }
     // Invalid placement and namespace overflow fail before any scalar lowering.
     auto bad = fs::appendFamilyEndpointRecipe({}, leaf, 0, 4);
     fs::PreparedLogicalPlan invalid(0);

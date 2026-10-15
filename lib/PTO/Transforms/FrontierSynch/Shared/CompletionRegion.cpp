@@ -174,10 +174,11 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::build(func::FuncOp fun
 LogicalResult CompletionRegion::insert(func::FuncOp function, PreparedLogicalPlan& plan) const
 {
     const bool clean = function == original && plan.completionOwner.get() == this && plan.completeInvocation &&
-        !plan.mathematicalOwner && !plan.privateState && !plan.compactBoundingOwner && !plan.regionalAllocation &&
-        !plan.allocationCertificate && !plan.allocationPreparation && !plan.familyRecipe && plan.preparation.empty() &&
-        plan.endpoints.empty() && plan.families.empty() && !plan.groupedFamilies &&
-        !plan.nestedIdentities && !plan.independentPieces;
+                       !plan.mathematicalOwner && !plan.privateState && !plan.compactBoundingOwner &&
+                       !plan.regionalAllocation && !plan.allocationCertificate && !plan.allocationPreparation &&
+                       !plan.familyRecipe && !plan.familyProtocol && !plan.physicalOutput && plan.preparation.empty() &&
+                       plan.endpoints.empty() && plan.families.empty() && !plan.groupedFamilies &&
+                       !plan.nestedIdentities && !plan.independentPieces;
     if (!clean || text(function) != originalText || operations(function) != originalOperations ||
         function->getParentOp()->getAttrDictionary() != moduleAttributes) {
         return function.emitError("completion plan no longer owns its unchanged original invocation");

@@ -203,7 +203,7 @@ LogicalResult insertModuleSynchronization(ModuleOp module, GMAliasPolicy policy,
             delegation.wrappers.count(function)) { continue; }
         if (hasPhysicalSections(function)) { contexts.push_back(function); continue; }
         const bool called = delegation.calledFunctions.contains(function);
-        auto plan = prepare(function, called ? GMAliasPolicy::MayAlias : policy);
+        auto plan = prepare(function, called ? GMAliasPolicy::MayAlias : policy, called);
         if (failed(plan)) {
             if (llvm::is_contained(excludedDelegations, function.getOperation())) {
                 function.emitError("closed-callee composition requires defined acyclic callees, "
@@ -213,7 +213,9 @@ LogicalResult insertModuleSynchronization(ModuleOp module, GMAliasPolicy policy,
         }
         // A successful whole-function producer accounts for every payload.
         // Closed calls additionally require its fixed completion interface.
-        if (called) { (*plan)->completeInvocation = true; }
+        if (called && !(*plan)->completeInvocation) {
+            return failure();
+        }
         // Query deferred executable pieces, not the broader analysis-record
         // inventory. Event-use checks precede their scalar materialization.
         if (called && (*plan)->familyRecipe) {
@@ -240,10 +242,14 @@ LogicalResult insertModuleSynchronization(ModuleOp module, GMAliasPolicy policy,
     for (auto function : contexts) {
         const bool called = delegation.calledFunctions.contains(function);
         if (failed(insertContextSynchronization(function, [&](func::FuncOp projected) {
-                auto plan = prepare(projected, called ? GMAliasPolicy::MayAlias : policy);
-                if (succeeded(plan) && called) { (*plan)->completeInvocation = true; }
+                auto plan = prepare(projected, called ? GMAliasPolicy::MayAlias : policy, called);
+                if (succeeded(plan) && called && !(*plan)->completeInvocation) {
+                    return decltype(plan)(failure());
+                }
                 return plan;
-            }))) { return failure(); }
+            }))) {
+            return failure();
+        }
         auto events = function.walk([](Operation* op) {
             return isa<LogicalSetOp, LogicalWaitOp>(op) ? WalkResult::interrupt() : WalkResult::advance();
         });

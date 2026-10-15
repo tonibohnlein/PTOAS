@@ -132,9 +132,16 @@ public:
     }
     LogicalResult remap(PreparedLogicalPlan& plan, DenseMap<Block*, Operation*>& ends)
     {
+        if (plan.physicalOutput) {
+            return copy.function.emitError(
+                "combined physical output does not yet support projected execution contexts");
+        }
         // Projection currently remaps concrete SSA. Lower while borrowed recipe
         // coordinates still belong to the unchanged projected function.
         if (failed(materializeLogicalFamilies(plan))) { return failure(); }
+        // Projection is an explicit concrete compatibility boundary. Its SSA
+        // remapping invalidates the borrowed projected recipe/protocol owner.
+        plan.familyProtocol.reset();
         auto anchor = [&](Operation* op) -> Operation* {
             auto found = cuts.find(op);
             if (found == cuts.end() || !found->second.block) { return nullptr; }

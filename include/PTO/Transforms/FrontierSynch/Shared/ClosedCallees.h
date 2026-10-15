@@ -30,7 +30,8 @@ struct ClosedCalleeModule {
 ClosedCalleeModule recognizeClosedCallees(ModuleOp module);
 // Compile leaves first, then accept wrappers only after closure is established.
 // Ordinary direct calls and original physical-core guards remain in the IR.
-using PrepareCallee = llvm::function_ref<FailureOr<std::unique_ptr<PreparedLogicalPlan>>(func::FuncOp, GMAliasPolicy)>;
+using PrepareCallee =
+    llvm::function_ref<FailureOr<std::unique_ptr<PreparedLogicalPlan>>(func::FuncOp, GMAliasPolicy, bool)>;
 LogicalResult insertModuleSynchronization(ModuleOp module, GMAliasPolicy policy, PrepareCallee prepare);
 } // namespace mlir::pto::frontiersynch
 #endif

@@ -10,10 +10,14 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/MixedFamilyInsertion.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "FamilyProtocolChecks.h"
 bool runFamilyMaterializationChecks(mlir::MLIRContext* context)
 {
     using namespace mlir;
     namespace fs = mlir::pto::frontiersynch;
+    if (!checkFamilyProtocols(context)) {
+        return false;
+    }
     OpBuilder builder(context);
     const auto location = builder.getUnknownLoc();
     OwningOpRef<func::FuncOp> function(func::FuncOp::create(location, "shared_family_cache",

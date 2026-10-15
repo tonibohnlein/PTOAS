@@ -8,6 +8,7 @@
 // Parent requests must retain access to stronger child sharing on one graph.
 #include "PTO/Transforms/FrontierSynch/Shared/AllocationPreparation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
@@ -135,6 +136,7 @@ bool runRegionalAllocationCandidateChecks(mlir::func::FuncOp function,
         return text;
     };
     const auto original = render();
+    if (mlir::failed(fs::normalizeLogicalFamilies(plan))) { return false; }
     const auto attempts = analysis.constructionCounts().mathematicalAttempts;
     const auto recipe = plan.familyRecipe;
     const auto prepared = plan.preparation.size();

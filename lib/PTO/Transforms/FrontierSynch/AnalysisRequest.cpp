@@ -15,6 +15,7 @@
 #include "Structured/OrderCoveredPeriodic.h"
 #include "Shared/NormalizedControl.h"
 #include "Shared/RegionalAllocationCandidates.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Structured/MixedStrideAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompactBoundingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
@@ -523,6 +524,39 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
     result.requestId = profile.requestId();
     return result;
 }
+namespace {
+bool scalarFreeFamilyTemplate(const PreparedLogicalPlan& plan)
+{
+    return plan.familyRecipe && !plan.familyProtocol && !plan.physicalOutput &&
+        plan.endpoints.empty() && plan.preparation.empty() && !plan.allocationCertificate &&
+        !plan.allocationPreparation && !plan.regionalAllocation && !plan.privateState &&
+        !plan.completionOwner && !plan.compactBoundingOwner && !plan.recognitionReport &&
+        !plan.allocationProfile && !plan.profileControl &&
+        llvm::all_of(plan.families, [](const auto& family) {
+            return (!family.sourceChoices || !family.sourceChoices->consumerPredicate()) &&
+                (!family.targetChoices || !family.targetChoices->consumerPredicate());
+        });
+}
+std::unique_ptr<PreparedLogicalPlan> instantiateFamilyTemplate(const LogicalFamilyTemplate& source)
+{
+    auto plan = std::make_unique<PreparedLogicalPlan>(source.planId);
+    plan->completeInvocation = source.completeInvocation;
+    plan->nestedIdentities = source.nestedIdentities;
+    plan->independentPieces = source.independentPieces;
+    plan->groupedFamilies = source.groupedFamilies;
+    plan->familyRecipe = source.recipe;
+    plan->families = source.families;
+    return plan;
+}
+void retainFamilyTemplate(BackendAttempt& attempt, const PreparedLogicalPlan& plan)
+{
+    if (!attempt.logicalFamilyTemplate && scalarFreeFamilyTemplate(plan)) {
+        attempt.logicalFamilyTemplate = std::make_shared<const LogicalFamilyTemplate>(LogicalFamilyTemplate{
+            plan.planId, plan.completeInvocation, plan.nestedIdentities, plan.independentPieces,
+            plan.groupedFamilies, plan.familyRecipe, plan.families});
+    }
+}
+} // namespace
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical(const AnalysisOutcome& result)
 {
     if (result.completion) {
@@ -541,7 +575,17 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical
     if (retained == attempts.end()) { return failure(); }
     AnalysisProfileScope profile(sessionState->ledger, "logical-preparation", result.mathematical->region,
         result.mathematical->backend, false, result.requestId);
-    if (retained->second.pendingLogical) { profile.cacheHit(); return std::move(retained->second.pendingLogical); }
+    if (retained->second.pendingLogical) {
+        profile.cacheHit();
+        retainFamilyTemplate(retained->second, *retained->second.pendingLogical);
+        return std::move(retained->second.pendingLogical);
+    }
+    if (retained->second.logicalFamilyTemplate) {
+        profile.cacheHit();
+        auto plan = instantiateFamilyTemplate(*retained->second.logicalFamilyTemplate);
+        plan->mathematicalOwner = result.mathematical;
+        return plan;
+    }
     profile.constructed();
     if (construction.logicalPreparations != UINT64_MAX) { ++construction.logicalPreparations; }
     auto prepared = prepareRetained(*result.mathematical);
@@ -549,7 +593,10 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical
     if (rootFallback) {
         prepared = prepareRetainedPrefix(result.mathematical, retained->second.prefixEmissionError);
     }
-    if (succeeded(prepared)) { (*prepared)->mathematicalOwner = result.mathematical; }
+    if (succeeded(prepared)) {
+        (*prepared)->mathematicalOwner = result.mathematical;
+        retainFamilyTemplate(retained->second, **prepared);
+    }
     refreshProgramContractAudit(*program);
     return prepared;
 }
@@ -691,6 +738,9 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
         return entry.second.mathematical == result.mathematical;
     });
     if (selected == attempts.end()) { return failure(); }
+    if (failed(normalizeLogicalFamilies(plan))) {
+        return failure();
+    }
     AnalysisProfileScope profile(sessionState->ledger, "allocation-support", result.mathematical->region,
         result.mathematical->backend, false, result.requestId);
     if (!eligibleIds.empty()) {
@@ -718,7 +768,10 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
     AllocationProfile allocationWork(sessionState->ledger);
     auto* allocationProfile = &allocationWork;
     auto& attempt = selected->second;
-    auto cached = attempt.allocation.find(plan.planId);
+    const auto protocol =
+        plan.familyProtocol ? normalizedFamilyProtocolKey(*plan.familyProtocol) : ArrayRef<uint64_t>{};
+    const auto cacheKey = std::make_pair(plan.planId, std::vector<uint64_t>(protocol.begin(), protocol.end()));
+    auto cached = attempt.allocation.find(cacheKey);
     if (cached != attempt.allocation.end()) { profile.cacheHit(); }
     {
         AllocationProfile::Scope summary(allocationProfile, AllocationProfile::Summary);
@@ -734,9 +787,11 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
                 allocateRetained(*result.mathematical, *program, attempt, plan, function.getContext(),
                     sessionState->guardedImportWork, allocationProfile);
         }
-        cached = attempt.allocation.emplace(plan.planId, certificate).first;
+        cached =
+            attempt.allocation.emplace(cacheKey, BackendAttempt::CachedAllocation{plan.familyProtocol, certificate})
+                .first;
     }
-    plan.allocationCertificate = cached->second;
+    plan.allocationCertificate = cached->second.certificate;
     return success(static_cast<bool>(plan.allocationCertificate));
 }
 void FrontierAnalysis::invalidate()

@@ -29,6 +29,28 @@ public:
     SmallVector<Value> directInputs, boundInputs;
     SmallVector<Operation*> replay;
 };
+void appendCutExpressionKey(const CutExpressionRecipe& recipe, SmallVectorImpl<uint64_t>& key)
+{
+    key.push_back(reinterpret_cast<uintptr_t>(recipe.owner));
+    key.push_back(reinterpret_cast<uintptr_t>(recipe.cut));
+    key.push_back(recipe.selected);
+    for (const auto* values : {&recipe.inputs, &recipe.boundExpressions}) {
+        key.push_back(values->size());
+        for (auto value : *values) {
+            key.push_back(value);
+        }
+    }
+    for (const auto* values : {&recipe.directInputs, &recipe.boundInputs}) {
+        key.push_back(values->size());
+        for (auto value : *values) {
+            key.push_back(reinterpret_cast<uintptr_t>(value.getAsOpaquePointer()));
+        }
+    }
+    key.push_back(recipe.replay.size());
+    for (auto* operation : recipe.replay) {
+        key.push_back(reinterpret_cast<uintptr_t>(operation));
+    }
+}
 RegionExpressions::Id RegionExpressions::cofactorAtCut(Id expression, Operation* cut,
     llvm::DenseMap<Id, Id>& memo, llvm::function_ref<bool(Id)> shared)
 {

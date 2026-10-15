@@ -31,8 +31,12 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
     forms, retains exact mathematical demands, and prepares logical handoffs.
     Incomplete proofs are reported as unresolved, never absence of a class.
     Synchronization is attached transactionally only after preparation succeeds.
-    Allocation certificates are attached when requested and supported; physical event IDs
-    are assigned by the following pto-frontier-allocate pass. Missing allocation
+    Allocation certificates are attached when requested and supported; by default,
+    physical event IDs are assigned by the following pto-frontier-allocate pass.
+    Explicit physical-output=true composes certified maps with retained families
+    before lowering their control. It requires prepare-allocation=true and uses
+    allocation-ids (default 0..5). Unavailable prefix, completion, concrete-only,
+    or projected-context exports are refused; the split pipeline remains available. Missing allocation
     support leaves the selected logical graph available. Analysis-only mode
     retains the original-region certification checkpoint and stops with a
     checkpoint diagnostic before emission, leaving the IR unchanged.
@@ -52,6 +56,8 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
       "Write session stage timings and construction/cache counters to stderr as JSON">,
     Option<"analysisOnly", "analysis-only", "bool", "false",
       "Stop after mathematical certification without inserting synchronization">,
+    Option<"physicalOutput", "physical-output", "bool", "false",
+      "Emit certified retained-family physical commands directly; requires allocation preparation">,
     Option<"prepareAllocation", "prepare-allocation", "bool", "true",
       "Construct allocation evidence for the following physical allocation pass">,
     ListOption<"allocationIds", "allocation-ids", "int64_t",
