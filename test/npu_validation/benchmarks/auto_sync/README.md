@@ -125,3 +125,44 @@ Use `--install` only when intentionally updating their IR and registry hashes.
   Do not silently renumber the authored protocol or add scarcity repair.
 
 Cross-core candidates remain excluded until that scope is explicitly opened.
+
+## Compiler control measurements
+
+The Linux runner `measure_control.py` measures logical planning, six-ID allocation and optional
+C++ emission separately. It never builds or executes a device kernel. Supply the
+planner and compatibility C++ emitter explicitly; both binaries and every input
+are hashed. Use a new disk-backed output directory for each campaign:
+
+```sh
+python3 test/npu_validation/benchmarks/auto_sync/measure_control.py \
+  --planner /path/to/pto-test-opt \
+  --emitter /path/to/ptoas \
+  --manifest docs/designs/frontier-consolidation-validation.json \
+  --output /path/to/durable/campaign
+```
+
+The manifest supplies `cases` with unique simple `id`, `input` and `sha256`
+fields. Input paths are relative to the repository or absolute. The runner
+executes stages serially on one admitted CPU, with explicit time and address-space
+limits. Each stage retains its exact command, output, diagnostics and receipt.
+A failed stage skips its downstream stages; a missing stage is not a pass.
+Timeouts, signals and ordinary nonzero exits remain distinct. A compiler
+diagnostic must establish a refusal; a nonzero exit alone does not.
+
+The address-space ceiling is a configured limit, not measured peak memory.
+`textual_record_labels` counts distinct numeric labels in the serialized family
+attribute; it is not a count of mathematical demands across functions. The
+per-function control profiles provide producer record members, deferred family
+sites, preparation/liveness inventories and command sites. Static sites are
+separate from dynamically executed handshakes and evaluated arithmetic.
+
+Use alternating serial baseline/candidate runs without concurrent intensive
+jobs for performance claims. A single diagnostic campaign establishes outcomes
+and inventories, not a speedup. When the C++ emitter differs from the planner,
+report its pinned hash and compatibility role separately. Preserve manual-sync
+skips, unproved exports and resource refusals in campaign totals. Device
+qualification remains a separate experiment.
+
+The runner records the checkout revision and binary hashes separately. A supplied
+binary's source revision must come from its build manifest; it is not inferred
+from the current checkout. Preserve that manifest with the receipts.
