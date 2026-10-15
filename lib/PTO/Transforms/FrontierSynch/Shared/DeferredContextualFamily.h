@@ -59,14 +59,22 @@ StringAttr contextualProtocol(DictionaryAttr data)
     fields.erase("protocol");
     return StringAttr::get(data.getContext(), metadataSeal(fields.getDictionary(data.getContext())));
 }
-bool qualifiedDeferredCleanup(const EndpointFamily& family)
+bool qualifiedDeferredChoices(const EndpointFamily& family)
 {
-    if (family.sourceChoices) { return false; }
-    const auto& choices = family.targetChoices;
-    if (!choices) { return true; }
-    return !family.local && family.members.size() == 1 && !choices->loop() &&
-        choices->pendingMaterialization() && choices->cuts().size() == 2 &&
-        choices->cuts().front().before == family.targetCut.before && choices->validPendingSelection();
+    for (bool source : {true, false}) {
+        const auto& choices = source ? family.sourceChoices : family.targetChoices;
+        if (!choices) { continue; }
+        const auto cut = source ? family.sourceCut : family.targetCut;
+        if (choices->cuts().empty() || choices->cuts().front().before != cut.before ||
+            (source && family.local)) { return false; }
+        if (choices->loop()) {
+            if (choices->pendingMaterialization() || choices->cuts().size() < 2 ||
+                !qualifyEndpointCutChoices(choices->loop(), choices->cuts())) { return false; }
+        } else if (source || family.local || family.members.size() != 1 ||
+            !choices->pendingMaterialization() || choices->cuts().size() != 2 ||
+            !choices->validPendingSelection()) { return false; }
+    }
+    return true;
 }
 LogicalResult validateDeferredComposition(func::FuncOp function, const PreparedLogicalPlan& plan,
     ArrayRef<DeferredFamilyNode> nodes)
@@ -83,7 +91,7 @@ LogicalResult validateDeferredComposition(func::FuncOp function, const PreparedL
     std::map<uint32_t, Member> members;
     std::set<uint32_t> familyIds;
     for (const auto& family : plan.families) {
-        if (!familyIds.insert(family.id).second || family.members.empty() || !qualifiedDeferredCleanup(family) ||
+        if (!familyIds.insert(family.id).second || family.members.empty() || !qualifiedDeferredChoices(family) ||
             family.sourcePipe > static_cast<uint32_t>(PIPE::PIPE_FIX) ||
             family.targetPipe > static_cast<uint32_t>(PIPE::PIPE_FIX) ||
             family.sourcePipe == static_cast<uint32_t>(PIPE::PIPE_ALL) ||
@@ -132,10 +140,13 @@ LogicalResult validateDeferredComposition(func::FuncOp function, const PreparedL
                 const auto& family = *entry.family;
                 const auto expected = publish ? family.sourceCut : family.targetCut;
                 const auto& coordinates = publish ? entry.member->sourceCoordinates : entry.member->targetCoordinates;
-                const bool cleanup = !publish && !local && family.targetChoices &&
-                    cut == family.targetChoices->cuts().back().before;
+                const auto& choices = publish ? family.sourceChoices : family.targetChoices;
+                const bool partition = choices && choices->loop() && llvm::any_of(choices->cuts(),
+                    [&](TemplateEndpointCut alternative) { return alternative.before == cut; });
+                const bool cleanup = !publish && !local && choices && !choices->loop() &&
+                    cut == choices->cuts().back().before;
                 if (!entry.seen[kind].insert(cut).second || local != family.local ||
-                    (!cleanup && cut != expected.before) || piece.sourcePipe != family.sourcePipe ||
+                    (!cleanup && !partition && cut != expected.before) || piece.sourcePipe != family.sourcePipe ||
                     piece.targetPipe != family.targetPipe || piece.displacement != family.displacement ||
                     (cleanup ? !member.coordinates.empty() : !sameCoordinates(coordinates, member.coordinates))) {
                     return failure();
@@ -155,8 +166,9 @@ LogicalResult validateDeferredComposition(func::FuncOp function, const PreparedL
             std::set<Operation*> expected;
             const bool required = family.local ? kind == 1 : kind != 1;
             if (required) {
-                if (kind == 2 && family.targetChoices) {
-                    for (auto cut : family.targetChoices->cuts()) { expected.insert(cut.before); }
+                const auto& choices = kind == 0 ? family.sourceChoices : family.targetChoices;
+                if (choices) {
+                    for (auto cut : choices->cuts()) { expected.insert(cut.before); }
                 } else { expected.insert(kind == 0 ? family.sourceCut.before : family.targetCut.before); }
             }
             if (member.seen[kind] != expected) { return failure(); }
@@ -256,8 +268,8 @@ struct ContextualEncoder {
         SmallVector<Attribute> result;
         auto& b = base.builder;
         for (const auto& family : families) {
-            if (!qualifiedDeferredCleanup(family)) { return failure(); }
-            if (!family.targetChoices) { continue; }
+            if (!qualifiedDeferredChoices(family)) { return failure(); }
+            if (!family.targetChoices || family.targetChoices->loop()) { continue; }
             auto selection = family.targetChoices->pendingSelection();
             if (!selection) { return failure(); }
             SmallVector<int64_t> cuts;
@@ -271,6 +283,29 @@ struct ContextualEncoder {
             result.push_back(b.getDictionaryAttr({base.number("family", family.id),
                 base.number("arena", owner), base.number("predicate", predicate),
                 b.getNamedAttr("cuts", b.getDenseI64ArrayAttr(cuts))}));
+        }
+        return b.getArrayAttr(result);
+    }
+    FailureOr<ArrayAttr> partitionChoices(ArrayRef<EndpointFamily> families)
+    {
+        SmallVector<Attribute> result;
+        auto& b = base.builder;
+        for (const auto& family : families) {
+            for (bool from : {true, false}) {
+                const auto& choices = from ? family.sourceChoices : family.targetChoices;
+                if (!choices || !choices->loop()) { continue; }
+                const auto loop = source(choices->loop().getOperation());
+                if (loop < 0) { return failure(); }
+                SmallVector<int64_t> cuts;
+                for (auto cut : choices->cuts()) {
+                    auto found = base.cuts.find(cut.before);
+                    if (found == base.cuts.end()) { return failure(); }
+                    cuts.push_back(found->second);
+                }
+                result.push_back(b.getDictionaryAttr({base.number("family", family.id),
+                    base.number("side", from ? 0 : 1), base.number("loop", loop),
+                    b.getNamedAttr("cuts", b.getDenseI64ArrayAttr(cuts))}));
+            }
         }
         return b.getArrayAttr(result);
     }
@@ -302,7 +337,7 @@ LogicalResult insertContextualDeferredFamily(func::FuncOp function, PreparedLogi
     if (failed(nodes) || failed(validateDeferredComposition(function, plan, *nodes))) {
         return function.emitError("deferred contextual output requires owned family recipes, "
             "exact provenance and allocation "
-            "evidence; concrete endpoints, private state and unowned or nonterminal choices are not serializable");
+            "evidence; concrete endpoints, private state and unowned cut choices are not serializable");
     }
     bool occupied = function->hasAttr(recipeAttr) || function->hasAttr("pto.endpoint_families") ||
         function->hasAttr(CyclicAllocationAttr) || function->hasAttr(FiniteAllocationAttr);
@@ -329,6 +364,8 @@ LogicalResult insertContextualDeferredFamily(func::FuncOp function, PreparedLogi
     }
     auto choices = encoder.cleanupChoices(plan.families);
     if (failed(choices)) { return function.emitError("deferred cleanup lacks owned selection or exact original cuts"); }
+    auto partitions = encoder.partitionChoices(plan.families);
+    if (failed(partitions)) { return function.emitError("deferred partition lacks its original loop or cuts"); }
     auto graphs = encoder.graphs();
     if (failed(graphs)) {
         return function.emitError("deferred expression has an unowned input or captured evaluation");
@@ -352,7 +389,8 @@ LogicalResult insertContextualDeferredFamily(func::FuncOp function, PreparedLogi
             b.getNamedAttr("pieces", b.getArrayAttr(pieces)),
             b.getNamedAttr("axis_ids", b.getDenseI64ArrayAttr(axes))});
     }
-    auto metadata = b.getDictionaryAttr({encoder.base.number("version", choices->empty() ? 2 : 3),
+    const auto version = !partitions->empty() ? 4 : choices->empty() ? 2 : 3;
+    auto metadata = b.getDictionaryAttr({encoder.base.number("version", version),
         encoder.base.number("plan", plan.planId),
         encoder.base.number("cut_count", markers.size()), encoder.base.number("source_count", encoder.sources.size()),
         b.getNamedAttr("complete", b.getBoolAttr(plan.completeInvocation)),
@@ -364,9 +402,10 @@ LogicalResult insertContextualDeferredFamily(func::FuncOp function, PreparedLogi
         b.getNamedAttr("sources", b.getArrayAttr(sourceBindings)),
         b.getNamedAttr("cuts", b.getArrayAttr(cutBindings)),
         b.getNamedAttr("local_sources", b.getArrayAttr(localSources))});
-    if (!choices->empty()) {
+    if (!choices->empty() || !partitions->empty()) {
         NamedAttrList extended(metadata);
         extended.set("cleanup_choices", *choices);
+        if (!partitions->empty()) { extended.set("partition_choices", *partitions); }
         metadata = extended.getDictionary(function.getContext());
     }
     NamedAttrList sealed(metadata);
@@ -428,7 +467,39 @@ struct ContextualDecoder {
             auto& target = *families.at(*family);
             target.targetChoices = qualifyTerminalCleanupCuts(alternatives,
                 arenas[*owner].owner, arenas[*owner].roots[*predicate]);
-            if (!target.targetChoices || !qualifiedDeferredCleanup(target)) { return failure(); }
+            if (!target.targetChoices || !qualifiedDeferredChoices(target)) { return failure(); }
+        }
+        return success();
+    }
+    LogicalResult partitionChoices(ArrayAttr choices, PreparedLogicalPlan& plan)
+    {
+        if (!choices || choices.empty()) { return failure(); }
+        std::map<uint32_t, EndpointFamily*> families;
+        for (auto& family : plan.families) {
+            if (!families.emplace(family.id, &family).second) { return failure(); }
+        }
+        std::set<std::pair<uint32_t, bool>> seen;
+        for (auto raw : choices) {
+            auto data = dyn_cast<DictionaryAttr>(raw);
+            const auto family = integer(data, "family"), side = integer(data, "side"), loopId = integer(data, "loop");
+            auto cuts = data ? data.getAs<DenseI64ArrayAttr>("cuts") : DenseI64ArrayAttr{};
+            if (!fields(data, {"family", "side", "loop", "cuts"}) || !nonnegative(family, UINT32_MAX) ||
+                !nonnegative(side, 1) || !nonnegative(loopId) || !families.count(*family) ||
+                !sources.count(*loopId) || !cuts || cuts.size() < 2 ||
+                !seen.emplace(*family, *side == 0).second) { return failure(); }
+            auto loop = dyn_cast<scf::ForOp>(sources.at(*loopId));
+            if (!loop) { return failure(); }
+            SmallVector<TemplateEndpointCut> alternatives;
+            for (auto id : cuts.asArrayRef()) {
+                auto found = base.cuts.find(id);
+                if (found == base.cuts.end()) { return failure(); }
+                alternatives.push_back({found->second->getBlock(), found->second});
+            }
+            auto& target = *families.at(*family);
+            auto& owner = *side == 0 ? target.sourceChoices : target.targetChoices;
+            if (owner) { return failure(); }
+            owner = qualifyEndpointCutChoices(loop, alternatives);
+            if (!owner || !qualifiedDeferredChoices(target)) { return failure(); }
         }
         return success();
     }
@@ -566,8 +637,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> readContextualDeferredFamily(fun
     const auto version = integer(data, "version");
     SmallVector<StringRef> schema{"version", "plan", "cut_count", "source_count", "complete", "nested", "grouped",
         "independent", "families", "allocation", "nodes", "arenas", "sources", "cuts", "local_sources", "protocol"};
-    if (version == 3) { schema.push_back("cleanup_choices"); }
-    if (!fields(data, schema) || (version != 2 && version != 3) ||
+    if (version == 3 || version == 4) { schema.push_back("cleanup_choices"); }
+    if (version == 4) { schema.push_back("partition_choices"); }
+    if (!fields(data, schema) || (version != 2 && version != 3 && version != 4) ||
         !nonnegative(planId) || !nonnegative(cutCount) || !nonnegative(sourceCount) ||
         !complete || !nested || !grouped ||
         !independent || !families || !nodes || nodes.empty() || !arenas || !allocation || !sources || !cuts ||
@@ -701,8 +773,13 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> readContextualDeferredFamily(fun
     if (!localCuts.empty()) {
         function.emitError("unused local-family source provenance bindings"); return failure();
     }
-    if (version == 3 && failed(decoder.cleanupChoices(data.getAs<ArrayAttr>("cleanup_choices"), *plan))) {
+    auto cleanup = data.getAs<ArrayAttr>("cleanup_choices");
+    if ((version == 3 || version == 4) && (!cleanup ||
+        ((version == 3 || !cleanup.empty()) && failed(decoder.cleanupChoices(cleanup, *plan))))) {
         function.emitError("deferred cleanup fails exact cut or singleton-selection qualification"); return failure();
+    }
+    if (version == 4 && failed(decoder.partitionChoices(data.getAs<ArrayAttr>("partition_choices"), *plan))) {
+        function.emitError("deferred loop partition fails original cut qualification"); return failure();
     }
     if (failed(validateDeferredComposition(function, *plan, restored))) {
         function.emitError("contextual recipe disagrees with matching provenance"); return failure();

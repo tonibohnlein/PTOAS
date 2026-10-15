@@ -141,7 +141,9 @@ DictionaryAttr compactBoundingAllocationCertificate(const CompactBoundingOwner& 
     }
     const bool notifications = llvm::any_of(plan.endpoints, [](const auto& endpoint) {
         return endpoint.kind != LogicalCommandKind::Barrier;
-    });
+    }) || (plan.familyRecipe && llvm::any_of(plan.families, [](const EndpointFamily& family) {
+        return !family.local;
+    }));
     owner.allocationError = notifications && !certificate ? "selected compact allocation certificate unavailable" : "";
     return certificate;
 }

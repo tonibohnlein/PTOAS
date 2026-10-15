@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/BalancedCompactBody.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompactBoundingAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"
@@ -73,6 +74,10 @@ bool check(func::FuncOp function, const pto::SyncInput& input)
     auto entries = emptyCertificate ? emptyCertificate.getAs<ArrayAttr>("entries") : ArrayAttr{};
     if (!budget || budget.getInt() != 0 || !entries || !entries.empty()) { return false; }
     auto& plan = **prepared;
+    if (!plan.familyRecipe || !plan.endpoints.empty() || !plan.preparation.empty() ||
+        !fs::attachCompactBoundingAllocation(region, graph, trips, plan, error) ||
+        !plan.endpoints.empty() || !plan.preparation.empty() ||
+        failed(fs::materializeLogicalFamilies(plan)) || plan.endpoints.empty()) { return false; }
     auto* saved = plan.endpoints.front().before;
     plan.endpoints.front().before = nullptr;
     if (fs::attachCompactBoundingAllocation(region, graph, trips, plan, error)) { return false; }

@@ -51,10 +51,19 @@ consumer guard. Singleton qualification proves multiplicity. The original
 producer's complementary activity recipes and allocation evidence continue to
 establish which WAIT consumes the publication. No boundary drain is added.
 
+Version 4 additionally retains qualified loop-cut partitions, including the
+balanced compact producer's independently selected source and target arms.
+Each row owns its family, side, original loop binding and ordered cut list.
+Decode reruns the existing structural partition qualifier and checks complete
+per-side coverage. The command activity and matching-source ordinal remain
+separate owned expressions; no source/target cross product or drain is added.
+Version 4 can also contain the version-3 terminal-cleanup contract.
+
 Mixed concrete prepared endpoints, private captured synchronization state,
 evaluated-input placeholders, completion-owned plans and other cut-choice
 contracts remain unsupported. Terminal choices with only a generated scalar
-predicate, source choices, local cleanup and nonsingleton families are refused. They require additional ownership contracts and
+predicate, unqualified source choices, local cleanup and nonsingleton cleanup
+families are refused. They require additional ownership contracts and
 produce explicit refusals. These are open coverage obligations for the full
 compact-lowering milestone. The option requires `prepare-allocation=true` and cannot be
 combined with `analysis-only`, `physical-output` or `completion-only`. Closed
@@ -64,7 +73,7 @@ accept a saved logical artifact.
 ## Integrity and lowering
 
 Each `pto.logical_family` marker binds its original loop induction variables as
-SSA operands. Version 1 uses an adjacent original-cut anchor. Versions 2 and 3
+SSA operands. Version 1 uses an adjacent original-cut anchor. Versions 2 through 4
 retain cuts and sources in function-owned directories sealed with the protocol
 metadata. Exact original region/block/operation positions, names, piece order,
 coordinate bindings and source types survive ordinary printing and parsing,
@@ -204,3 +213,10 @@ an independent parity gate. New controls compare the trace with LLVM operation
 equivalence and execute same/different full-map cases through the emitted
 commands. These additions passed compilation and the focused checkpoint gate. Production
 campaigns, device compilation and protocol capacity remain separate outcomes.
+
+The balanced contextual migration and version-4 extension passed native
+compilation and all 51 focused checks, with independent correctness and
+architecture acceptance for the supported contract. See
+[the bounded migration receipt](frontier-balanced-owned-recipes.md) for the
+producer boundary and verification obligations; this does not close all M4
+ownership or mapping-cost cases.
