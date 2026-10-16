@@ -2658,5 +2658,1920 @@
       "sync_rotating_region.pto": "allocation failure under the validation address-space limit",
       "sync_boundary_rotation.pto": "missing exact nonuniform deferred crossing adapter"
     }
+  },
+  "milestones3_4": {
+    "scope": "Qualified guarantee reporting and fixed-protocol outcome classification; no new allocation coverage",
+    "tests": [
+      {
+        "name": "PTOIR :: pto/sync_allocation_module_ownership.pto",
+        "outcome": "PASS",
+        "seconds": 7.349858045578003
+      },
+      {
+        "name": "PTOIR :: pto/sync_combined_family_output.pto",
+        "outcome": "PASS",
+        "seconds": 5.046684741973877
+      },
+      {
+        "name": "PTOIR :: pto/frontier_closed_callees.pto",
+        "outcome": "PASS",
+        "seconds": 4.8997673988342285
+      },
+      {
+        "name": "PTOIR :: pto/sync_contextual_deferred_output.pto",
+        "outcome": "PASS",
+        "seconds": 3.4139819145202637
+      },
+      {
+        "name": "PTOIR :: pto/sync_mixed_deferred_output.pto",
+        "outcome": "PASS",
+        "seconds": 2.7211811542510986
+      },
+      {
+        "name": "PTOIR :: pto/sync_stage_profile.pto",
+        "outcome": "PASS",
+        "seconds": 1.1168744564056396
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_public.pto",
+        "outcome": "PASS",
+        "seconds": 0.3726677894592285
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_children.pto",
+        "outcome": "PASS",
+        "seconds": 0.18989992141723633
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_transfer.pto",
+        "outcome": "PASS",
+        "seconds": 0.203474760055542
+      },
+      {
+        "name": "PTOIR :: pto/sync_fixed_protocol_capacity.pto",
+        "outcome": "PASS",
+        "seconds": 0.19223499298095703
+      },
+      {
+        "name": "PTOIR :: pto/sync_closed_completion.pto",
+        "outcome": "PASS",
+        "seconds": 0.07230663299560547
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_region.pto",
+        "outcome": "PASS",
+        "seconds": 0.05691218376159668
+      },
+      {
+        "name": "PTOIR :: pto/sync_result_guarantees.pto",
+        "outcome": "PASS",
+        "seconds": 0.3984682559967041
+      }
+    ],
+    "source_sha256": {
+      "include/PTO/Transforms/FrontierSynch/ResultGuarantees.h": "b20fefc3dee0f9cd914e552b718bd4385099c694b1973c332f04ce5e9189207d",
+      "include/PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h": "967957d5f1edfaae927ed15eb31622fdb38e154207f5d9ba819e7718e44ad10c",
+      "lib/PTO/Transforms/CMakeLists.txt": "e127e60ab34b0067a342f664270a265334b4d56324f744da4eb1f44e342d505c",
+      "lib/PTO/Transforms/FrontierSynch/FrontierAnalysis.cpp": "96d05905293ac48349a6a6df79429d579a5bbe3eb1a17dc8bcd4b7646d273330",
+      "lib/PTO/Transforms/FrontierSynch/README.md": "97fcaeb018dd3bb215ad7f3180b6ddafb7e3ade4540efc734223175b608e0b7f",
+      "lib/PTO/Transforms/FrontierSynch/ResultGuarantees.cpp": "cef2fd7e646d5f681032d65609e7ee1cdf27b282ba5bdd90aec66f9bfac089a0",
+      "lib/PTO/Transforms/FrontierSynch/Shared/CompletionRegion.cpp": "bfa1574a426dd071bf25af683180c2b4cd5a444f180572f32f783d57956a8ab2",
+      "tools/pto-test-opt/pto-sync-input-test.cpp": "37ae3884d94f69c97caddfb2be7801555ca639f79b3384c2c16771db67157095",
+      "tools/pto-test-opt/ClosedCompletionChecks.cpp": "c3df8fa27694dd92ed54e43da344324d9ad4842b4b2214d9b2bb0dbce4f3c2ac",
+      "test/lit/pto/sync_result_guarantees.pto": "3822713634855f028612b12cb46584f24f9803be7478f3089cc971aa8fa6f030",
+      "test/lit/pto/sync_completion_children.pto": "c5c59009eeb5d47ceca03748683386976d94dc885eb9b675c548c7519221621d",
+      "test/lit/pto/Inputs/check_fixed_protocol_capacity.py": "e7af1c4393fb6e01f4630e6769b7adbe780b5d99a321208c315b983410ad798c",
+      "test/lit/pto/Inputs/check_delta_fixed_protocol.py": "ca0919b5677fd041f8306f06eae47eaf9f663fa7c7a3f59249676eef9d969372",
+      "test/lit/pto/Inputs/check_prefill_protocol_capacity.py": "54fdf19a8bbf5c513666b2ca8b50219acfa31d4b615096e7da1bbb4839dd0fbb",
+      "docs/designs/frontier-allocation-completion-contract.md": "915d5bf9ef8703bcebc784f26be25ec09991b8962dda049fcf3cf2fd4cae229e"
+    },
+    "capacity_reports": {
+      "decode": {
+        "alternative_protocols": "not-analyzed",
+        "capacity_outcome": "certified-over-capacity-for-fixed-protocol",
+        "commands": 44,
+        "device_execution": "not-run",
+        "directions": [
+          {
+            "antichain": [
+              [
+                1,
+                5,
+                0,
+                29,
+                0,
+                [
+                  29
+                ]
+              ],
+              [
+                1,
+                5,
+                0,
+                29,
+                0,
+                [
+                  35
+                ]
+              ],
+              [
+                1,
+                5,
+                0,
+                29,
+                0,
+                [
+                  37
+                ]
+              ],
+              [
+                1,
+                5,
+                0,
+                29,
+                0,
+                [
+                  39
+                ]
+              ]
+            ],
+            "direction": [
+              1,
+              5
+            ],
+            "handoffs": 4,
+            "minimum_ids": 4,
+            "reuse_edges": 0
+          },
+          {
+            "antichain": [
+              [
+                4,
+                1,
+                0,
+                0,
+                0,
+                [
+                  0
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                0,
+                0,
+                [
+                  1
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                0,
+                0,
+                [
+                  2
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                0,
+                0,
+                [
+                  3
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                0,
+                0,
+                [
+                  4
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                0,
+                0,
+                [
+                  5
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                0,
+                0,
+                [
+                  7
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                0,
+                0,
+                [
+                  9
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                0,
+                0,
+                [
+                  11
+                ]
+              ]
+            ],
+            "direction": [
+              4,
+              1
+            ],
+            "handoffs": 9,
+            "minimum_ids": 9,
+            "reuse_edges": 0
+          }
+        ],
+        "eligible_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "kernel_compilation": "not-established-by-this-witness",
+        "payloads": 46,
+        "scope": {
+          "bindings": {
+            "arg3_load": 0,
+            "arg4_load": 0,
+            "arg5_load": 1,
+            "block_idx": 0
+          },
+          "command_graph_sha256": "639f9487e2ddc66dd238523f89153892593c11a1e1d8d75981c77d237b91eaab",
+          "input_sha256": "62eb4645ba3457dea9770c16f0aad959afe0db28325dcde353351f1ee95fa48e",
+          "kind": "fixed-command-graph-and-admitted-execution"
+        },
+        "uniform_allocation": "not-established-by-this-witness"
+      },
+      "prefill": {
+        "alternative_protocols": "not-analyzed",
+        "capacity_outcome": "certified-over-capacity-for-fixed-protocol",
+        "commands": 124,
+        "device_execution": "not-run",
+        "directions": [
+          {
+            "antichain": [
+              [
+                1,
+                0,
+                0,
+                0,
+                0,
+                [
+                  0
+                ]
+              ],
+              [
+                1,
+                0,
+                0,
+                0,
+                0,
+                [
+                  110
+                ]
+              ]
+            ],
+            "direction": [
+              1,
+              0
+            ],
+            "handoffs": 2,
+            "minimum_ids": 2,
+            "reuse_edges": 0
+          },
+          {
+            "antichain": [
+              [
+                1,
+                4,
+                0,
+                1,
+                0,
+                [
+                  1
+                ]
+              ],
+              [
+                1,
+                4,
+                0,
+                1,
+                0,
+                [
+                  5
+                ]
+              ],
+              [
+                1,
+                4,
+                0,
+                1,
+                0,
+                [
+                  2
+                ]
+              ],
+              [
+                1,
+                4,
+                0,
+                1,
+                0,
+                [
+                  7
+                ]
+              ],
+              [
+                1,
+                4,
+                0,
+                1,
+                0,
+                [
+                  3
+                ]
+              ],
+              [
+                1,
+                4,
+                0,
+                1,
+                0,
+                [
+                  9
+                ]
+              ]
+            ],
+            "direction": [
+              1,
+              4
+            ],
+            "handoffs": 7,
+            "minimum_ids": 6,
+            "reuse_edges": 3
+          },
+          {
+            "antichain": [
+              [
+                1,
+                5,
+                0,
+                48,
+                0,
+                [
+                  48,
+                  0
+                ]
+              ],
+              [
+                1,
+                5,
+                0,
+                48,
+                0,
+                [
+                  61,
+                  0
+                ]
+              ],
+              [
+                1,
+                5,
+                0,
+                48,
+                0,
+                [
+                  74,
+                  0
+                ]
+              ],
+              [
+                1,
+                5,
+                0,
+                48,
+                0,
+                [
+                  87,
+                  0
+                ]
+              ]
+            ],
+            "direction": [
+              1,
+              5
+            ],
+            "handoffs": 4,
+            "minimum_ids": 4,
+            "reuse_edges": 0
+          },
+          {
+            "antichain": [
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  13
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  17
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  26
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  115
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  21
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  30
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  116
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  35
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  117
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  118
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  24
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  15
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  29
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  11
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  19
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  34
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  103
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  105
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  107
+                ]
+              ],
+              [
+                4,
+                1,
+                0,
+                10,
+                0,
+                [
+                  109
+                ]
+              ]
+            ],
+            "direction": [
+              4,
+              1
+            ],
+            "handoffs": 20,
+            "minimum_ids": 20,
+            "reuse_edges": 0
+          },
+          {
+            "antichain": [
+              [
+                4,
+                5,
+                0,
+                98,
+                0,
+                [
+                  99
+                ]
+              ],
+              [
+                4,
+                5,
+                0,
+                98,
+                0,
+                [
+                  100
+                ]
+              ],
+              [
+                4,
+                5,
+                0,
+                98,
+                0,
+                [
+                  101
+                ]
+              ],
+              [
+                4,
+                5,
+                0,
+                98,
+                0,
+                [
+                  98
+                ]
+              ]
+            ],
+            "direction": [
+              4,
+              5
+            ],
+            "handoffs": 4,
+            "minimum_ids": 4,
+            "reuse_edges": 0
+          }
+        ],
+        "eligible_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "kernel_compilation": "not-established-by-this-witness",
+        "payloads": 97,
+        "scope": {
+          "bindings": {
+            "block_index": 0,
+            "cache_index": 0,
+            "flag_read_0": 1,
+            "flag_read_1": 1,
+            "flag_read_2": 1,
+            "initial": 1,
+            "sequence_end": 4,
+            "sequence_start": 0
+          },
+          "command_graph_sha256": "300ad235b296033d1bc45ff1e64d366a3253029aa19a4a2327cfdc600dce5a1d",
+          "input_sha256": "4a2da46ad42fbded8d15dd4b64cdabc93ae0df9570ea6d5d165712361ce16831",
+          "kind": "fixed-command-graph-and-admitted-execution"
+        },
+        "uniform_allocation": "not-established-by-this-witness"
+      },
+      "delta": {
+        "alternative_protocols": "not-analyzed",
+        "batch_lower_bound": 45,
+        "capacity_outcome": "certified-over-capacity-for-fixed-protocol",
+        "commands": 358,
+        "device_execution": "not-run",
+        "directions": [
+          {
+            "antichain": [
+              [
+                0,
+                1,
+                0,
+                3,
+                1,
+                []
+              ],
+              [
+                0,
+                1,
+                0,
+                3,
+                2,
+                []
+              ],
+              [
+                0,
+                1,
+                0,
+                3,
+                3,
+                []
+              ],
+              [
+                0,
+                1,
+                0,
+                3,
+                4,
+                []
+              ],
+              [
+                0,
+                1,
+                0,
+                3,
+                5,
+                []
+              ]
+            ],
+            "direction": [
+              0,
+              1
+            ],
+            "handoffs": 17,
+            "minimum_ids": 5,
+            "reuse_edges": 111
+          },
+          {
+            "antichain": [
+              [
+                1,
+                0,
+                0,
+                1,
+                11,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                12,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                13,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                14,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                15,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                16,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                17,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                18,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                19,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                20,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                21,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                22,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                23,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                24,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                25,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                26,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                27,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                28,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                29,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                30,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                31,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                32,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                33,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                34,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                35,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                36,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                37,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                38,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                39,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                40,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                41,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                42,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                43,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                44,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                45,
+                []
+              ],
+              [
+                1,
+                0,
+                0,
+                1,
+                46,
+                []
+              ]
+            ],
+            "direction": [
+              1,
+              0
+            ],
+            "handoffs": 46,
+            "minimum_ids": 36,
+            "reuse_edges": 395
+          },
+          {
+            "antichain": [
+              [
+                1,
+                4,
+                0,
+                2,
+                5,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                6,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                7,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                8,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                9,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                10,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                11,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                12,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                13,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                14,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                15,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                16,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                17,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                18,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                19,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                20,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                21,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                22,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                23,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                24,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                25,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                26,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                27,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                28,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                29,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                30,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                31,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                32,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                33,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                34,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                35,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                36,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                37,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                38,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                39,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                40,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                41,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                42,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                43,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                44,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                45,
+                []
+              ],
+              [
+                1,
+                4,
+                0,
+                2,
+                46,
+                []
+              ]
+            ],
+            "direction": [
+              1,
+              4
+            ],
+            "handoffs": 46,
+            "minimum_ids": 42,
+            "reuse_edges": 170
+          },
+          {
+            "antichain": [
+              [
+                1,
+                5,
+                0,
+                4,
+                1,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                2,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                3,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                4,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                5,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                6,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                7,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                8,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                9,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                10,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                11,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                12,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                13,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                14,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                15,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                16,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                17,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                18,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                19,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                20,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                21,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                22,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                23,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                24,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                25,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                26,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                27,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                28,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                29,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                30,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                31,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                32,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                33,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                34,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                35,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                36,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                37,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                38,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                39,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                40,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                41,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                42,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                43,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                44,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                45,
+                []
+              ],
+              [
+                1,
+                5,
+                0,
+                4,
+                46,
+                []
+              ]
+            ],
+            "direction": [
+              1,
+              5
+            ],
+            "handoffs": 46,
+            "minimum_ids": 46,
+            "reuse_edges": 0
+          },
+          {
+            "antichain": [
+              [
+                4,
+                1,
+                0,
+                0,
+                3,
+                []
+              ],
+              [
+                4,
+                1,
+                0,
+                0,
+                4,
+                []
+              ],
+              [
+                4,
+                1,
+                0,
+                0,
+                5,
+                []
+              ],
+              [
+                4,
+                1,
+                0,
+                0,
+                6,
+                []
+              ],
+              [
+                4,
+                1,
+                0,
+                0,
+                7,
+                []
+              ]
+            ],
+            "direction": [
+              4,
+              1
+            ],
+            "handoffs": 7,
+            "minimum_ids": 5,
+            "reuse_edges": 8
+          },
+          {
+            "antichain": [
+              [
+                5,
+                1,
+                0,
+                5,
+                1,
+                []
+              ],
+              [
+                5,
+                1,
+                0,
+                5,
+                2,
+                []
+              ]
+            ],
+            "direction": [
+              5,
+              1
+            ],
+            "handoffs": 2,
+            "minimum_ids": 2,
+            "reuse_edges": 0
+          }
+        ],
+        "eligible_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "kernel_compilation": "not-established-by-this-witness",
+        "payloads": 72,
+        "scope": {
+          "bindings": {
+            "block_idx": 0,
+            "sequence_end": 1,
+            "sequence_start": 0,
+            "softplus_gt_20": false,
+            "state_index": -1,
+            "subblock_idx": 0
+          },
+          "command_graph_sha256": "44fd391dc2f6415f382c4df6c3ef129762d53a54bde2a8dfa412261f94191508",
+          "input_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+          "kind": "fixed-command-graph-and-admitted-execution"
+        },
+        "uniform_allocation": "not-established-by-this-witness",
+        "witness_direction": [
+          1,
+          5
+        ]
+      }
+    }
   }
 }

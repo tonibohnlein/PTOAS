@@ -9,8 +9,8 @@ and a checked fixed-protocol capacity bound remain distinct outcomes.
 |---|---|---|---|
 | 1. Ownership | Module-owned allocation; common symbol-aware staging for saved recipes, contexts and executed counters | Threaded/serial multi-function agreement, globals/helpers, failure atomicity, existing traces | Implemented; focused validation passed |
 | 2. Semantic gates | Independent wrapping and full arithmetic-membership oracles; resolve remaining broad failures | Complete fresh gate, with unfinished construction retained explicitly | Oracle repairs validated; four construction failures remain |
-| 3. Guarantees | Explicit order precision, reduction and realization contracts; qualified completion/child/loss evidence | Assertions and regressions at producer, composition and emission boundaries | Pending |
-| 4. Allocation scope | Separate fixed-protocol certification from alternate-protocol research | Per-protocol evidence and outcome classifications; no implicit ordering changes | Pending |
+| 3. Guarantees | Explicit order precision, reduction and realization contracts; qualified completion/child/loss evidence | Assertions and regressions at producer, composition and emission boundaries | Implemented for supported contracts; focused gate passed |
+| 4. Allocation scope | Separate fixed-protocol certification from alternate-protocol research | Per-protocol evidence and outcome classifications; no implicit ordering changes | Implemented; three scoped witnesses rechecked |
 | 5. Composition cost | Reduce attributed Delta incoming and phase relation construction | Same semantics, structural scaling checks, paired total-construction measurements | Pending |
 
 Use the configured incremental build, never a clean rebuild for a milestone.
@@ -67,3 +67,37 @@ Only the existing native test targets were rebuilt incrementally. `git diff
 --check` passed. The changed-code checker flags fully braced multiline conditions
 in the two native test files; source review found no missing braces. No device
 run, universal wrapping proof or complete draft-coverage claim is made.
+
+## Milestones 3–4 receipt (October 16)
+
+A shared read-only guarantee view now serves retained mathematical outcomes and
+prepared plans. The public pass serializes the same view before saved-recipe
+sealing. It keeps modeled-order precision, cover quality and realization order
+separate. Explicit adjacent local demands and the existing arithmetic adjacency
+certificate can report direct order equality; nonadjacent local barriers can
+strengthen order. Unsupported equality proofs, prefix matching and successful
+allocation do not promote coverage to equality. Missing compact evidence stays
+unavailable. The view retains its modeled-input owner, and failed exports do not
+erase the mathematical guarantee or trigger new analysis.
+
+Section 6 reports SCC-local placement, the qualified A3 completion protocol,
+coarse storage classes, no additional parent event IDs, and distinct unique child
+owners for event-free, completed-exit and closed-descendant contracts. Tests keep
+pending primitive effects across calls and reject changed child seals. A general
+realized-loss bound remains explicitly unavailable; this does not implement the
+paper's unrestricted child import or numerical loss analysis.
+
+The fixed-protocol capacity oracles now attach input/command-graph fingerprints,
+admitted bindings and an outcome scoped to that protocol. Uniform assignment,
+kernel compilation, alternative protocols and device qualification are separate
+fields. Decode/prefill/Delta still require 9/20/46 directional IDs in the pinned
+executions. The feedback control demonstrates that a changed protocol receives
+a different graph identity. No new allocation or protocol replacement is claimed.
+
+The existing native targets rebuilt incrementally; the 13-test focused gate
+passed, covering guarantees, retained requests, completion children, closed child
+seals, saved/combined output, threaded module allocation and capacity witnesses.
+`git diff --check` passed. The checker flags the explicitly braced multiline
+range check in `ResultGuarantees.cpp` as G.FMT.11-CPP; source review confirms its
+body is braced. Local logs are `m3-*` and `check_*protocol*.out` under the receipt
+directory. No device test was run.

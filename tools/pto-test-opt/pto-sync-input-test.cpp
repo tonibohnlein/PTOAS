@@ -16,6 +16,7 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgram.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/ResultGuarantees.h"
 #include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
@@ -185,6 +186,19 @@ bool checkRetainedCapabilityReuse(func::FuncOp function, pto::GMAliasPolicy poli
         return false;
     }
     const auto attempts = session.constructionCounts().mathematicalAttempts;
+    const auto evidence = describeResultGuarantees(first);
+    auto missingExport = first;
+    missingExport.status = AnalysisStatus::UnmetObligation;
+    missingExport.stage = AnalysisStage::Allocation;
+    missingExport.available = {};
+    const auto retainedEvidence = describeResultGuarantees(missingExport);
+    if (evidence.modeledOrder != InputOrderGuarantee::InputOrderEquivalent ||
+        evidence.reduction != ReductionQuality::Covers ||
+        evidence.realization != RealizationOrder::Unestablished ||
+        encodeResultGuarantees(function.getContext(), evidence) !=
+            encodeResultGuarantees(function.getContext(), retainedEvidence) ||
+        session.constructionCounts().mathematicalAttempts != attempts) { return false; }
+    if (describeResultGuarantees(AnalysisOutcome{}).modeledOrder) { return false; }
     for (unsigned capabilities : {0U, 1U, 2U, 3U, 4U, 5U, 6U}) {
         AnalysisRequest weaker;
         weaker.needs = {bool(capabilities & 1), bool(capabilities & 2), bool(capabilities & 4)};

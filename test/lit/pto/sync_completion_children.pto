@@ -15,6 +15,10 @@
 // CHECK-NOT: pto.barrier
 // CHECK: return
 // CHECK-LABEL: func.func @parent_last
+// CHECK-SAME: closed_descendant_children = 0
+// CHECK-SAME: completed_exit_children = 0
+// CHECK-SAME: event_free_children = 2
+// CHECK-SAME: realization_order = "covers-modeled-order"
 // CHECK: call @writer
 // CHECK-NEXT: pto.barrier <PIPE_ALL>
 // CHECK-NEXT: call @reader
@@ -46,6 +50,10 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
 }
 // -----
 // CHECK-LABEL: func.func @parent_first
+// CHECK-SAME: closed_descendant_children = 0
+// CHECK-SAME: completed_exit_children = 0
+// CHECK-SAME: event_free_children = 2
+// CHECK-SAME: realization_order = "covers-modeled-order"
 // CHECK: call @writer
 // CHECK-NEXT: pto.barrier <PIPE_ALL>
 // CHECK-NEXT: call @reader

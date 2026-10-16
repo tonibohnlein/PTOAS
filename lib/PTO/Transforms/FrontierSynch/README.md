@@ -409,3 +409,32 @@ and executed counters. A failure preserves the complete original module.
 Function transactions copy the target and its transitive symbol
 dependencies; unrelated siblings are not cloned. Function-level helper APIs
 require exclusive ownership of the enclosing module.
+
+### Result guarantees
+
+`describeResultGuarantees` is a read-only view of the retained mathematical or
+prepared logical owner. It does not rerun analysis and does not infer quality
+from request success, availability of selectors, or allocation success. The
+public preparation path includes this view in `pto.frontier_recognition.guarantees`.
+The view separates selected-order precision, cover reduction, and realization
+order. Its basis is the shared modeled effects and admitted alias context;
+original-effect exactness is not independently certified by this view.
+
+A mathematical result retains its quality when an executable export fails.
+For prepared explicit results, adjacent local demands establish the supported
+direct order-equality contract; nonadjacent consumer-side barriers are reported
+as potentially strengthening the selected order. Arithmetic results can use
+an existing local-adjacency certificate. Other endpoint and prefix paths report
+coverage without promoting matching or code-generation success to order equality.
+These reports describe producer contracts, not a checker for manually supplied
+IR or certificates.
+
+Section 6 completion is reported separately: SCC-local placement, one coarse
+storage class in the production adapter, qualified A3 ALL barriers, and no parent
+event-ID allocation. Counts of unique imported child owners distinguish event-free bodies,
+completed-exit children and wrappers owning closed descendants. Closed matching
+alone does not imply completed payload effects. Whole-function completion plans
+complete their exits; summary-only children may retain pending effects. The
+generic realized-order loss bound is explicitly unavailable, not zero. Existing
+selected-order upper/lower bounds are a separate capability and are not a bound
+on stronger barrier placement.
