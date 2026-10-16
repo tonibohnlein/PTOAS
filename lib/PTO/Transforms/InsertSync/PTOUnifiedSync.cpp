@@ -40,7 +40,7 @@
 #include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/MoveSyncState.h"
-#include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "PTO/Transforms/InsertSync/RemoveRedundantSync.h"
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
@@ -186,7 +186,8 @@ class UnifiedSyncExecutor {
 public:
   UnifiedSyncExecutor(func::FuncOp func, unsigned capacity, llvm::StringRef forced, bool reuse, bool debug)
       : func(func), bufidCapacity(capacity), forceMechanism(forced.str()), checkAddrReuse(reuse), debugEnabled(debug),
-        bufAnalysis(syncIR, memAnalyzer, func, false), clusters(bufAnalysis.getVirtualBufIds()) {}
+        memAnalyzer(input.memory()), syncIR(input.ir()), bufAnalysis(syncIR, memAnalyzer, func, false),
+        clusters(bufAnalysis.getVirtualBufIds()) {}
   LogicalResult run() {
     // Macro ops are supported. A macro op is one for which `getSyncMacroModel`
     // returns a model; every model declares `hiddenEvents`, the fixed
@@ -246,10 +247,10 @@ private:
   unsigned bufidCapacity;
   std::string forceMechanism;
   bool checkAddrReuse, debugEnabled;
-  MemoryDependentAnalyzer memAnalyzer;
-  SyncIRs syncIR;
+  SyncInput input;
+  MemoryDependentAnalyzer &memAnalyzer;
+  SyncIRs &syncIR;
   SyncOperations syncOpsStorage;
-  Buffer2MemInfoMap buffer2MemInfoMap;
   BufidSyncAnalysis bufAnalysis;
   const SmallVector<VirtualBufId> &clusters;
   unified::SyncModel model;
@@ -267,8 +268,9 @@ private:
   LogicalResult analyzeHazards() {
     // --- Reused front-end: build the hazard set H (no id assignment) --------
 
-    PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func, SyncAnalysisMode::NORMALSYNC);
-    translator.Build();
+    if (failed(input.build(func))) {
+      return failure();
+    }
     if (syncIR.size() <= 1) {
       return success();
     }
@@ -282,7 +284,7 @@ private:
     bufAnalysis.classifyTiles();
     bufAnalysis.allocateVirtualBufIds();
 
-    InsertSyncAnalysis analyzer(syncIR, memAnalyzer, syncOpsStorage, func, SyncAnalysisMode::NORMALSYNC);
+    InsertSyncAnalysis analyzer(syncIR, input.accesses(), syncOpsStorage, func, SyncAnalysisMode::NORMALSYNC);
     analyzer.Run(/*insertBarAllAtLast=*/true);
 
     MoveSyncState syncMove(syncIR, syncOpsStorage);

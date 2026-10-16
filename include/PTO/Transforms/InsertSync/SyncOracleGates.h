@@ -659,7 +659,8 @@ struct SelfCoverageReport {
 };
 
 /// G1-self: every dependency `DepBetween` reports must be ordered by emitted sync.
-SelfCoverageReport computeSelfCoverage(func::FuncOp func);
+/// Translation failure returns no report, rather than a vacuous coverage success.
+FailureOr<SelfCoverageReport> computeSelfCoverage(func::FuncOp func);
 
 /// `cap` bounds the violations printed per function; 0 prints all. A capped report
 /// HIDES CLASSES -- two cross-pipe carried outliers on `rope_kv_cache` sat past the
