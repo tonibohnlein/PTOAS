@@ -179,13 +179,14 @@ LogicalResult FrontierAnalysis::produceExplicitFunction() {
     if (!storage || function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         return failure();
     }
-    if (!explicitAnalysis) {
+    if (!finiteInput) { finiteInput = finiteFunctionInput(function, storage, structuralIndex); }
+    if (!concreteFinite) {
         ++construction.explicitReductions;
-        explicitAnalysis = std::make_shared<ExplicitAnalysis>(
-            analyzeExplicit(function.front(), *structuralIndex, *storage));
+        concreteFinite = analyzeFinite(finiteInput, FiniteStrategy::Concrete);
     }
-    if (explicitAnalysis->error.empty()) { recordWholeRegion(AnalysisBackend::Explicit); }
-    return success(explicitAnalysis->error.empty());
+    if (!concreteFinite) { return failure(); }
+    if (concreteFinite->error().empty()) { recordWholeRegion(AnalysisBackend::Explicit); }
+    return success(concreteFinite->error().empty());
 }
 SequenceAnalysis* FrontierAnalysis::produceSequenceFunction() {
     if (failed(recognizeStructure())) { return nullptr; }

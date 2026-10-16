@@ -23,6 +23,8 @@
 #include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
@@ -1645,11 +1647,15 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
 
 LogicalResult runFiniteGuardedAnalysisChecks(func::FuncOp function, pto::GMAliasPolicy policy)
 {
-    pto::SyncInput input(policy);
-    fs::PhaseIndex index;
-    if (failed(input.build(function)) || failed(index.build(function, input))) { return failure(); }
-    SmallVector<Operation*> roots;
-    for (auto& op : function.front()) { roots.push_back(&op); }
+    auto storage = std::make_shared<pto::SyncInput>(policy);
+    auto index = std::make_shared<fs::PhaseIndex>();
+    if (failed(storage->build(function)) || failed(index->build(function, *storage))) { return failure(); }
+    auto original = fs::finiteFunctionInput(function, storage, index);
+    auto foreign = std::make_shared<fs::PhaseIndex>();
+    if (!original || fs::finiteFunctionInput(function, storage, foreign) ||
+        fs::finiteFunctionInput(function, {}, index)) {
+        return function.emitError("finite input accepted missing or foreign source facts");
+    }
     auto render = [&]() {
         std::string text;
         llvm::raw_string_ostream stream(text);
@@ -1657,9 +1663,28 @@ LogicalResult runFiniteGuardedAnalysisChecks(func::FuncOp function, pto::GMAlias
         return text;
     };
     const auto before = render();
-    auto analysis = fs::analyzeFiniteGuarded(function, roots, index, input);
+    auto retained = fs::analyzeFinite(original, fs::FiniteStrategy::Guarded);
+    if (!retained || !retained->guarded() || retained->concrete()) { return failure(); }
+    // The retained owner must suffice after the caller releases its input handles.
+    original.reset();
+    storage.reset();
+    index.reset();
+    const auto& analysis = *retained->guarded();
+    const auto& input = retained->originalInput()->storage();
     auto regional = fs::finiteGuardedRegionalResult(analysis);
-    auto prepared = fs::prepareFiniteGuardedInsertion(analysis);
+    auto prepared = retained->prepare();
+    auto retry = retained->prepare();
+    if (succeeded(prepared) != succeeded(retry) ||
+        (succeeded(prepared) && prepared->get() == retry->get())) {
+        return function.emitError("finite preparation did not provide an independent retry");
+    }
+    if (succeeded(prepared)) {
+        fs::prepareAllocationSupport(**prepared);
+        (*prepared)->allocationCertificate = fs::regionalAllocationCertificate(regional, **prepared);
+        if (!(*prepared)->allocationCertificate) {
+            (*prepared)->allocationCertificate = fs::finiteRegionalAllocationCertificate(regional, **prepared);
+        }
+    }
     bool queriesAvailable = true;
     uint64_t emitted = 0;
     if (succeeded(prepared)) {

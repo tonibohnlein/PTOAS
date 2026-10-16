@@ -159,6 +159,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/SessionProducers.cpp
 
   # Finite occurrences and finite guards
+  FrontierSynch/Finite/FiniteAnalysis.cpp
   FrontierSynch/Finite/ExplicitAnalysis.cpp
   FrontierSynch/Finite/ExplicitReduction.cpp
   FrontierSynch/Finite/FiniteAllocation.cpp

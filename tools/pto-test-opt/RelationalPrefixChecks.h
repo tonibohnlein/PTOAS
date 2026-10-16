@@ -394,7 +394,9 @@ module attributes {pto.target_arch = "a3"} {
         auto regional = fs::finiteGuardedRegionalResult(finite);
         auto retained = std::make_shared<fs::MathematicalResult>();
         retained->input = input;
-        retained->explicitDemands = exact;
+        // Borrowed prefix-only compatibility view: this fixture never requests
+        // finite preparation. The enclosing fixture retains its source facts.
+        retained->finiteDemands = std::make_shared<fs::FiniteAnalysis>(nullptr, std::move(*exact));
         retained->backend = "explicit";
         regional.retainedMathematics = retained;
         owners.push_back(retained);

@@ -1002,7 +1002,7 @@ LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasP
     }
     const auto finite = session.analyzeFiniteExpansion({id});
     const bool available = finite.status == AnalysisStatus::Ready && finite.mathematical &&
-        finite.mathematical->finiteGuardedDemands && finite.mathematical->normalizedInput;
+        finite.mathematical->expandedFiniteDemands && finite.mathematical->normalizedInput;
     if (!available) { return function.emitError("finite adapter cannot consume retained normalized input"); }
     const auto owner = finite.mathematical->normalizedInput;
     const auto sourceVisits = session.normalizationSourceVisits();
@@ -1077,7 +1077,7 @@ LogicalResult checkNormalizedControlSession(func::FuncOp function, pto::GMAliasP
     }
     const auto root = session.analyzeFiniteExpansion({0});
     const bool sameProducer = root.mathematical &&
-        root.mathematical->finiteGuardedDemands == finite.mathematical->finiteGuardedDemands &&
+        root.mathematical->expandedFiniteDemands == finite.mathematical->expandedFiniteDemands &&
         root.mathematical->normalizedInput == owner;
     const bool external = function->hasAttr("test.normalization_external");
     const bool promoted = sameProducer != external && (external || session.finiteExpansionPreflights() == 1);
@@ -1216,13 +1216,19 @@ LogicalResult checkExactFormFastPath(func::FuncOp function, pto::GMAliasPolicy p
     AnalysisNeeds needs; needs.queries = true;
     const auto queries = session.minimumDemands(0, needs);
     const bool explicitOnly = demands.status == AnalysisStatus::Ready && demands.mathematical &&
-        demands.mathematical->explicitDemands && queries.mathematical == demands.mathematical &&
+        demands.mathematical->concreteDemands() && queries.mathematical == demands.mathematical &&
         !session.normalizationConstructions() && !session.normalizationSourceVisits() &&
         !session.result()->formConstructions && !session.arithmeticGeneratorConstructions() &&
         !session.numericTemplatePreflights() && !session.constructionCounts().logicalPreparations;
     if (!explicitOnly) { return function.emitError("straight-line analysis left the explicit fast path"); }
+    const auto owner = demands.mathematical->finiteDemands;
+    if (!owner || owner->guarded() || !owner->originalInput() ||
+        &owner->originalInput()->storage() != session.input() ||
+        owner != queries.mathematical->finiteDemands || session.constructionCounts().explicitReductions != 1) {
+        return function.emitError("finite concrete ownership or capability reuse changed");
+    }
     auto prepared = session.prepareLogical(demands);
-    const auto& explicitAnalysis = *demands.mathematical->explicitDemands;
+    const auto& explicitAnalysis = *demands.mathematical->concreteDemands();
     if (failed(prepared)) { return function.emitError("explicit endpoint recipe preparation failed"); }
     if (!(*prepared)->preparation.empty() || !(*prepared)->endpoints.empty() ||
         (!explicitAnalysis.reduction.retained.empty() && !(*prepared)->familyRecipe)) {

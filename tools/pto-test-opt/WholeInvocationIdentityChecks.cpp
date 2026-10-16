@@ -221,7 +221,7 @@ int runWholeInvocationIdentityChecks(func::FuncOp function, pto::GMAliasPolicy p
     if (function->hasAttr("test.identity_early")) {
         auto result = session.minimumDemands(0);
         if (result.status != fs::AnalysisStatus::Ready || !result.mathematical ||
-            result.mathematical->identityComposition || result.mathematical->explicitDemands ||
+            result.mathematical->identityComposition || result.mathematical->concreteDemands() ||
             session.arithmeticGeneratorConstructions() || session.arithmeticRegionConstructions() ||
             session.result()->arithmetic || !session.result()->arithmeticContracts.empty() ||
             session.constructionCounts().logicalPreparations) { return 1; }
@@ -230,7 +230,7 @@ int runWholeInvocationIdentityChecks(func::FuncOp function, pto::GMAliasPolicy p
     }
     if (function->hasAttr("test.identity_explicit")) {
         auto result = session.minimumDemands(0);
-        if (result.status != fs::AnalysisStatus::Ready || !result.mathematical->explicitDemands ||
+        if (result.status != fs::AnalysisStatus::Ready || !result.mathematical->concreteDemands() ||
             session.arithmeticGeneratorConstructions() || session.arithmeticRegionConstructions() ||
             session.constructionCounts().logicalPreparations) { return 1; }
         llvm::outs() << "identity-session: explicit success avoids arithmetic\n";

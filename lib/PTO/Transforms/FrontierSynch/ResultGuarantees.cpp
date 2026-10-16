@@ -94,8 +94,8 @@ ResultGuarantees describeResultGuarantees(const PreparedLogicalPlan& plan)
     if (source->compactDemands) {
         result.realization = source->compactDemands->placementMayStrengthen ?
             RealizationOrder::MayStrengthen : RealizationOrder::CoversSelectedOrder;
-    } else if (source->explicitDemands) {
-        result.realization = explicitOrder(*source->explicitDemands);
+    } else if (source->concreteDemands()) {
+        result.realization = explicitOrder(*source->concreteDemands());
     } else if ((source->arithmeticDemands && source->arithmeticDemands->adjacentLocalDemands) ||
                (source->generalArithmeticDemands && source->generalArithmeticDemands->adjacentLocalDemands)) {
         result.realization = RealizationOrder::Equivalent;
