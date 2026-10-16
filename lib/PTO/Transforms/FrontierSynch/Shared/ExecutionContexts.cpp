@@ -10,6 +10,7 @@
 // the static function size and never depends on loop trip counts. Endpoint
 // alternative proofs are requalified against the transferred cuts and guards.
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FunctionStaging.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
@@ -36,32 +37,6 @@ StringRef contextOf(Operation* op)
     }
     return {};
 }
-struct FunctionCopy {
-    OwningOpRef<ModuleOp> module;
-    IRMapping mapping;
-    func::FuncOp function;
-    explicit FunctionCopy(func::FuncOp original)
-        : module(ModuleOp::create(original.getLoc()))
-    {
-        if (auto parent = original->getParentOfType<ModuleOp>()) {
-            (*module)->setAttrs(parent->getAttrs());
-            // Shared helper-call interpretation inspects defined bodies. Retain
-            // those bodies in the temporary symbol context; declarations alone
-            // would turn a supported scalar helper into an unresolved call.
-            for (auto sibling : parent.getOps<func::FuncOp>()) {
-                if (sibling == original) { continue; }
-                module->push_back(sibling.clone());
-            }
-        }
-        function = cast<func::FuncOp>(original->clone(mapping));
-        module->push_back(function);
-    }
-    void commit(func::FuncOp original)
-    {
-        original->setAttrs(function->getAttrs());
-        original.getBody().takeBody(function.getBody());
-    }
-};
 // EmitC normally supplies this predicate implicitly. Materialize it before
 // projection so dependencies and both synchronization endpoints see it too.
 void materializeSectionPredicates(func::FuncOp function)
@@ -99,6 +74,7 @@ class Projection {
 public:
     Projection(func::FuncOp original, StringRef context) : copy(original), context(context)
     {
+        if (!copy.function) { return; }
         for (auto [source, target] : copy.mapping.getValueMap()) { inverse.map(target, source); }
         for (auto [source, target] : copy.mapping.getOperationMap()) {
             inverse.map(target, source);
@@ -109,6 +85,7 @@ public:
     }
     LogicalResult build()
     {
+        if (!copy.function) { return failure(); }
         SmallVector<Operation*> sections;
         copy.function.walk<WalkOrder::PreOrder>([&](Operation* op) {
             if (!sectionContext(op).empty()) { sections.push_back(op); }
@@ -213,7 +190,7 @@ public:
         }
         return success();
     }
-    FunctionCopy copy;
+    FunctionStaging copy;
     StringRef context;
 private:
     IRMapping inverse;
@@ -330,7 +307,8 @@ bool belongsToActiveContext(func::FuncOp function, Operation* operation)
 LogicalResult insertContextSynchronization(func::FuncOp function, PrepareContext prepare)
 {
     if (function->hasAttr(ContextPlansAttr)) { return function.emitError("context plans already exist"); }
-    FunctionCopy transaction(function);
+    FunctionStaging transaction(function);
+    if (!transaction.function) { return failure(); }
     auto working = transaction.function;
     materializeSectionPredicates(working);
     std::vector<std::unique_ptr<Projection>> projections;
@@ -410,7 +388,8 @@ LogicalResult allocateContextSynchronization(func::FuncOp function, ArrayRef<int
         return WalkResult::advance();
     });
     if (covered.wasInterrupted()) { return failure(); }
-    FunctionCopy transaction(function);
+    FunctionStaging transaction(function);
+    if (!transaction.function) { return failure(); }
     auto working = transaction.function;
     for (auto entry : bundle) {
         auto saved = dyn_cast<DictionaryAttr>(entry.getValue());

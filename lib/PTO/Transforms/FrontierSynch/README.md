@@ -401,3 +401,11 @@ and cut-expression recipes before generating scalar operations. Existing
 relational and historical adapters keep their materialized acceptance route
 through the same policy. Recipe lowering reuses cut-local scalar captures made
 by other prepared roots; it does not replay a shared original producer twice.
+
+The physical allocation pass runs at module scope, including in textual pass
+pipelines: `builtin.module(pto-frontier-allocate{eligible-ids=0,1,2,3,4,5})`.
+It owns one module transaction while staging saved families, execution contexts
+and executed counters. A failure preserves the complete original module.
+Function transactions copy the target and its transitive symbol
+dependencies; unrelated siblings are not cloned. Function-level helper APIs
+require exclusive ownership of the enclosing module.

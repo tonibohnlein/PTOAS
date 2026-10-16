@@ -1942,24 +1942,32 @@ public:
     explicit PTOFrontierAllocatePass(const PTOFrontierAllocateOptions& options) : Base(options) {}
     void runOnOperation() override
     {
-        auto function = getOperation();
-        if (function.isDeclaration()) { return; }
+        // Own one module transaction, including helper bodies and globals.
+        // No function worker reads live siblings; failure in a later function
+        // also preserves every earlier saved plan in the original module.
+        OwningOpRef<ModuleOp> staged = cast<ModuleOp>(getOperation()->clone());
+        for (auto function : staged->getOps<func::FuncOp>()) {
+            if (failed(allocateFunction(function))) { signalPassFailure(); return; }
+        }
+        if (failed(verify(*staged))) { signalPassFailure(); return; }
+        getOperation().getBodyRegion().takeBody(staged->getBodyRegion());
+    }
+private:
+    LogicalResult allocateFunction(func::FuncOp function)
+    {
+        if (function.isDeclaration()) { return success(); }
         if (function->hasAttr(frontiersynch::ContextPlansAttr)) {
-            if (failed(frontiersynch::allocateContextSynchronization(function, eligibleIds))) { signalPassFailure(); }
-            return;
+            return frontiersynch::allocateContextSynchronization(function, eligibleIds);
         }
         if (hasManualOnCoreSynchronization(function)) {
             auto logical = function.walk([](Operation* op) {
                 return isa<LogicalFamilyOp, LogicalSetOp, LogicalWaitOp>(op)
                     ? WalkResult::interrupt() : WalkResult::advance();
             });
-            // Analysis left a manual function untouched. A mixed logical and
-            // physical plan must still pass the allocator's rejection checks.
-            if (!logical.wasInterrupted()) { return; }
+            // Preserve manual functions; mixed plans still require validation.
+            if (!logical.wasInterrupted()) { return success(); }
         }
-        if (failed(frontiersynch::allocatePhysicalEventIds(getOperation(), eligibleIds))) {
-            signalPassFailure();
-        }
+        return frontiersynch::allocatePhysicalEventIds(function, eligibleIds);
     }
 };
 } // namespace
