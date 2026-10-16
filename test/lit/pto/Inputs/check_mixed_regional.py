@@ -15,6 +15,7 @@ import tempfile
 
 from check_logical_insertion import closure_with_commands
 from check_periodic_demands import closure, native
+from check_sequence_analysis import operation_count
 
 
 TRACE_ARGUMENTS = "array<i64: 1, 1, 3, 2, 0>"
@@ -166,9 +167,9 @@ def main():
             report = invoke(tool, path, "--sequence-analysis")
             assert not report["error"] and report["prepared"], report
             emitted = invoke(tool, path, "--insert-logical")
-            assert emitted.count("scf.for") == 2
-            assert emitted.count("pto.textract") == source.count("pto.textract")
-            assert emitted.count("pto.tmatmul") == source.count("pto.tmatmul")
+            assert operation_count(emitted, "scf.for") == 2
+            assert operation_count(emitted, "pto.textract") == operation_count(source, "pto.textract")
+            assert operation_count(emitted, "pto.tmatmul") == operation_count(source, "pto.tmatmul")
             metrics.append(tuple(report[key] for key in ("ports", "cells", "expressions", "emitted")) +
                            (len(emitted.splitlines()), emitted.count("pto.logical_")))
         assert metrics[0] == metrics[1], metrics

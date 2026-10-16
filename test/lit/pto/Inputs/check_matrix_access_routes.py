@@ -93,7 +93,10 @@ def main():
         for writer, candidate in candidates.items():
             path.write_text(candidate)
             for policy in ('may-not-alias', 'may-alias'):
-                output = run(tool, path, '--recognize', '--gm-alias=' + policy)
+                # Structural recognition deliberately leaves numerical
+                # candidates unbuilt; this assertion audits their exact
+                # writer/alias-policy qualification explicitly.
+                output = run(tool, path, '--numeric-analysis', '--gm-alias=' + policy)
                 docs = [json.loads(line) for line in output.splitlines() if line.startswith('{')]
                 attempts = [a for doc in docs for node in doc['nodes'] for a in node['attempts']
                             if a['route'] == 'numeric-template']
