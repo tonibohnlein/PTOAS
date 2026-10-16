@@ -8,9 +8,13 @@
 """Exercise shared ordinary footprints through exact analysis and insertion."""
 import json
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
+from check_logical_insertion import closure_with_commands
+from check_periodic_demands import closure, native
 
 
 def require(condition, detail):
@@ -29,8 +33,110 @@ def document(output):
     return lines[0]
 
 
+def trace_existing(tool, path, source):
+    lines = source.splitlines()
+    functions = [i for i, line in enumerate(lines) if "func.func @ordinary(" in line]
+    require(len(functions) == 1, "missing original ordinary function")
+    index = functions[0]
+    if "attributes {" in lines[index]:
+        lines[index] = lines[index].replace("attributes {", "attributes {test.trace_existing, ", 1)
+    else:
+        require(lines[index].endswith(" {"), lines[index])
+        lines[index] = lines[index][:-2] + " attributes {test.trace_existing} {"
+    path.write_text("\n".join(lines) + "\n")
+    result = run(tool, path, "--structured-trace")
+    require(result.returncode == 0, result.stderr)
+    report = document(result.stdout)
+    require(report["accepted"] and not report["trace"]["error"], report)
+    return report["trace"]
+
+
+def check_original_commands(tool, path, source, prefix_barrier=False):
+    # This original barrier precedes every payload. It is preserved protocol,
+    # not a discharge of the subsequent tile load/add/store hazards.
+    if prefix_barrier:
+        source = source.replace("    %base =", "    pto.barrier #pto.pipe<PIPE_ALL>\n    %base =")
+    path.write_text(source)
+    inserted = run(tool, path, "--insert-logical")
+    require(inserted.returncode == 0, inserted.stderr)
+    original = trace_existing(tool, path, source)
+    actual = trace_existing(tool, path, inserted.stdout)
+    payloads = [event for event in original["events"] if event["kind"] == "payload"]
+    require([event for event in actual["events"] if event["kind"] == "payload"] == payloads,
+            "insertion changed an original payload")
+    pipes = [event["pipe"] for event in payloads]
+    require(pipes == [4, 1, 5] and all(event["coordinates"] == [] for event in payloads), payloads)
+    require([(event["pipe"], event["gap"]) for event in original["events"]
+             if event["kind"] == "barrier"] == ([(6, 0)] if prefix_barrier else []), original)
+    commands = []
+    barriers = []
+    for event in actual["events"]:
+        if event["kind"] == "payload":
+            continue
+        command = dict(event)
+        if event["kind"] == "barrier":
+            barriers.append((event["pipe"], event["gap"]))
+        else:
+            require(event["kind"] in ("set", "wait"), event)
+            command["identity"] = (event["plan"], event["record"], event["source_pipe"], event["target_pipe"],
+                                   event["source_ordinal"], tuple(event.get("members", [])))
+        commands.append(command)
+    expected_barriers = [(6, 0)] if prefix_barrier else []
+    require(barriers in (expected_barriers, expected_barriers + [(6, 3)]), barriers)
+    # Independently enumerate all conflicts of the one tile: W, RW, R.
+    required = closure(6, native(pipes) | {(1, 2), (1, 4), (3, 4)})[0]
+    require(closure_with_commands(pipes, commands) == [row & ~(1 << i) for i, row in enumerate(required)],
+            "existing barrier masked a missing or excessive payload dependency")
+
+
+def check_metadata_update(tool, path, source, effects, inserted):
+    # Original valid shape changes from2x64 to1x64 between load and add.
+    # Check each tile operand's descriptor at its original use, not one cached
+    # allocation-wide shape. An unresolved GM store remains conservative.
+    blocks = re.split(r"(?m)^  effect ", effects.split("\nordinary: phases=", 1)[0])[1:]
+    require(len(blocks) == 6, effects)
+    path.write_text(inserted)
+    emitted_effects = run(tool, path, "--storage-effects")
+    require(emitted_effects.returncode == 0, emitted_effects.stderr)
+    emitted_blocks = re.split(r"(?m)^  effect ", emitted_effects.stdout.split("\nordinary: phases=", 1)[0])[1:]
+    require(emitted_blocks == blocks, "insertion changed original effect geometry or descriptor state")
+    for index, operation, mode, rows in ((1, "tload", "write", 2), (2, "tadds", "read", 1),
+                                        (3, "tadds", "write", 1), (4, "tstore", "read", 1)):
+        require(blocks[index].startswith(f"{index} pto.{operation} {mode} "), blocks[index])
+        descriptor = next((line for line in blocks[index].splitlines() if line.startswith("    descriptor ")), "")
+        require("base=absolute bytes=4 " in descriptor and descriptor.endswith(f"extents={rows}, 64 loops=0"),
+                descriptor)
+    original_ops = re.findall(r"(?m)^\s*(pto\.(?:tload|tadds|tstore|set_validshape))\b", source)
+    inserted_ops = re.findall(r"(?m)^\s*(pto\.(?:tload|tadds|tstore|set_validshape))\b", inserted)
+    require(original_ops == inserted_ops == ["pto.tload", "pto.set_validshape", "pto.tadds", "pto.tstore"],
+            inserted_ops)
+    path.write_text(source)
+    recognition = run(tool, path, "--recognize")
+    require(recognition.returncode == 0 and "source-unchanged; synchronization-insertion-not-run" in recognition.stdout,
+            recognition.stderr + recognition.stdout)
+    report = document(recognition.stdout)
+    require([item["operation"] for item in report["payloads"]] == ["pto.tload", "pto.tadds", "pto.tstore"], report)
+    check_original_commands(tool, path, source)
+
+
+def check_unsupported_effect(tool, path, source):
+    declaration = "  func.func private @unmodeled(!pto.ptr<f32, gm>)\n"
+    source = source.replace("  func.func @", declaration + "  func.func @", 1)
+    source = source.replace("    return", "    func.call @unmodeled(%input) : (!pto.ptr<f32, gm>) -> ()\n    return")
+    path.write_text(source)
+    refused = run(tool, path, "--insert-logical")
+    require(refused.returncode != 0, "external effect without closed-child evidence accepted")
+    boundary = subprocess.run([tool, "--recognition-boundary", str(path)], capture_output=True,
+                              text=True, timeout=30)
+    require(boundary.returncode == 0 and "recognition-boundary: rejected; source-unchanged" in boundary.stdout,
+            boundary.stderr + boundary.stdout)
+
+
 def main():
     tool, fixture = sys.argv[1:]
+    tool = shutil.which(tool)
+    require(tool is not None, "missing tracer executable")
+    tool = str(Path(tool).resolve(strict=True))
     original = Path(fixture).read_text()
     with tempfile.TemporaryDirectory(prefix="ordinary-access-") as directory:
         path = Path(directory) / "case.pto"
@@ -46,9 +152,7 @@ def main():
                 require(doc["retained"] == [[0, 1], [1, 2]], doc)
                 require(inserted.stdout.count("pto.logical_set") == 2, inserted.stdout)
                 require(inserted.stdout.count("pto.logical_wait") == 2, inserted.stdout)
-        # Effect discharge must not hide a prerequisite outside the payload span.
-        path.write_text(original.replace("    %base =", "    pto.barrier #pto.pipe<PIPE_ALL>\n    %base ="))
-        require(run(tool, path, "--insert-logical").returncode != 0, "existing barrier accepted")
+        check_original_commands(tool, path, original, prefix_barrier=True)
         # The same base's read/write aliases remain exact under either policy.
         same = original.replace("pto.make_tensor_view %output", "pto.make_tensor_view %input")
         path.write_text(same)
@@ -66,7 +170,7 @@ def main():
         require(inserted.stdout.count("pto.logical_set") == 1, inserted.stdout)
         require(inserted.stdout.count("pto.logical_wait") == 1, inserted.stdout)
         # Runtime metadata and vector tails retain their shared buffer bound when
-        # a narrower map is unavailable. Mutable metadata is a separate structural limit.
+        # a narrower map is unavailable. Descriptor-only strong updates are modeled.
         changed = original.replace("    pto.tadds", "    pto.set_validshape %tile, %one, %cols : !tile\n    pto.tadds")
         oversized = original.replace("2x64", "1024x4096").replace("constant 2 : index", "constant 1024 : index")
         oversized = oversized.replace("constant 64 : index", "constant 4096 : index")
@@ -78,12 +182,10 @@ def main():
             effects = run(tool, path, "--storage-effects")
             require(effects.returncode == 0 and "all-materialized=" in effects.stdout, effects.stderr + effects.stdout)
             inserted = run(tool, path, "--insert-logical")
+            require(inserted.returncode == 0, inserted.stderr)
             if text == changed:
-                recognition = run(tool, path, "--recognize")
-                require("unmodeled-operation" in recognition.stdout, recognition.stdout)
-                require(inserted.returncode != 0, inserted.stdout)
-            else:
-                require(inserted.returncode == 0, inserted.stderr)
+                check_metadata_update(tool, path, text, effects.stdout, inserted.stdout)
+        check_unsupported_effect(tool, path, original)
     print("ordinary access routes: exact, alias, guarded and metadata cases passed")
 
 
