@@ -96,6 +96,9 @@ LogicalResult normalizeFamilyEndpointPlan(PreparedLogicalPlan& plan);
 // Explicit combined-output request. Decode retained certified assignments and
 // compose their maps with the frozen protocol before any family scalar lowering.
 LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPlan& plan, ArrayRef<int64_t> eligibleIds);
+// Exact empty finite certificate plus no commands, recipes, pending state or
+// completion obligation. Such a saved plan needs no deferred recipe artifact.
+bool isCertifiedEmptyFamilyPlan(func::FuncOp function, const PreparedLogicalPlan& plan);
 // Exact pre-CSE scalar construction count for the supported owned preparation
 // schedule. No SSA is built. Uncovered upstream/coalescing forms return unknown.
 std::optional<uint64_t> physicalFamilyConstructionOperations(const PreparedLogicalPlan& plan);

@@ -37,6 +37,37 @@ bool rejectedUnchanged(func::FuncOp function, fs::PreparedLogicalPlan& plan)
     ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
     return failed(fs::insertLogicalSynchronization(function, plan)) && render(function) == before;
 }
+bool emptyDeferredPlanChecks(MLIRContext* context)
+{
+    OpBuilder builder(context);
+    const auto location = builder.getUnknownLoc();
+    OwningOpRef<ModuleOp> module = ModuleOp::create(location);
+    builder.setInsertionPointToStart(module->getBody());
+    auto function = builder.create<func::FuncOp>(location, "empty_family", builder.getFunctionType({}, {}));
+    builder.setInsertionPointToStart(function.addEntryBlock());
+    auto terminal = builder.create<func::ReturnOp>(location);
+    fs::PreparedLogicalPlan plan(7);
+    plan.deferredOutput = true;
+    if (fs::isCertifiedEmptyFamilyPlan(function, plan)) { return false; }
+    plan.allocationCertificate = fs::explicitAllocationCertificate(fs::ExplicitAnalysis{}, 8, context);
+    if (fs::isCertifiedEmptyFamilyPlan(function, plan)) { return false; }
+    plan.allocationCertificate = fs::explicitAllocationCertificate(fs::ExplicitAnalysis{}, 7, context);
+    if (!fs::isCertifiedEmptyFamilyPlan(function, plan)) { return false; }
+    plan.completeInvocation = true;
+    if (fs::isCertifiedEmptyFamilyPlan(function, plan)) { return false; }
+    plan.completeInvocation = false;
+    plan.families.emplace_back();
+    if (fs::isCertifiedEmptyFamilyPlan(function, plan)) { return false; }
+    plan.families.clear();
+    plan.endpoints.emplace_back();
+    if (fs::isCertifiedEmptyFamilyPlan(function, plan)) { return false; }
+    plan.endpoints.clear();
+    plan.addPreparation(terminal);
+    if (fs::isCertifiedEmptyFamilyPlan(function, plan)) { return false; }
+    plan.preparation.clear();
+    if (failed(fs::insertLogicalSynchronization(function, plan)) || failed(verify(function))) { return false; }
+    return function.front().getOperations().size() == 1;
+}
 bool publicationRecipeChecks(MLIRContext* context)
 {
     OpBuilder builder(context);
@@ -520,6 +551,9 @@ LogicalResult runPreparedInsertionChecks(func::FuncOp function)
 {
     if (!endpointOrderGraphChecks() || !endpointOrderFamilyChecks(function.getContext())) {
         return function.emitError("early family refinement changed cycle membership or unfolded order");
+    }
+    if (!emptyDeferredPlanChecks(function.getContext())) {
+        return function.emitError("empty deferred qualification discarded required plan state");
     }
     if (!publicationRecipeChecks(function.getContext())) {
         return function.emitError("publication recipe changed availability or cleanup");
