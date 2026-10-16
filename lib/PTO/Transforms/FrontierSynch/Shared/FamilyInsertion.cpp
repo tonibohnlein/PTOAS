@@ -1286,8 +1286,8 @@ std::optional<uint64_t> ownedPhysicalConstruction(const PhysicalFamilyOutput& ou
             for (auto& constraint : box) { constraint.coordinate = normalizer.canonical(constraint.coordinate); }
         }
     }
-    if (failed(detail::coalesceResidueAlternatives(plan, normalizer))) { return std::nullopt; }
-    if (failed(detail::coalesceEndpointAlternatives(plan, normalizer)) || !construction.validTrace()) {
+    if (failed(detail::coalesceEndpointAlternatives(plan, normalizer))) { return std::nullopt; }
+    if (failed(detail::coalesceDomainAlternatives(plan, normalizer, true)) || !construction.validTrace()) {
         return std::nullopt;
     }
     if (sharedSelectors) {

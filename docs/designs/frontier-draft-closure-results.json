@@ -6474,5 +6474,756 @@
         "RegionExpressions::RelationBuilder::conjunction"
       ]
     }
+  },
+  "milestone5_dispatch": {
+    "baseline_revision": "ec105496a5ef2f5177688f1e3b15a863bf39e1ee",
+    "scope": "request ownership, bounded family exclusion and activity-scoped incoming path queries; exact matching and order retained",
+    "source_sha256": {
+      "lib/PTO/Transforms/FrontierSynch/SessionIdentity.cpp": "1dedccac56f485f056e26bf6a10036489687ffd5778359293be653c2491337a4",
+      "lib/PTO/Transforms/FrontierSynch/Shared/FamilyEndpointNormalization.h": "c228a0c40dc0c0c592f03e3dea0780cb2c41089449e6e292428bac9f38a44fbd",
+      "lib/PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.cpp": "e9caab696c2d6542fbc3fb4bf43ca9c3eeb1d81f8cd3fee19e0c92c206438bc2",
+      "lib/PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.cpp": "5b50b1f58b2a0347c116484d99014169584a6af27ebc25ce5fbedd33d626460b",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RegionConstruction.h": "3584f9a8793678aba2fa77cc2525e70083f22defe3f05585350b85ef71f49b14",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RegionExpressions.cpp": "059269f9453d776b592fb365bf6a0a51b342000f9e2b925d3b6dc69cd3f19b3f",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceIncomingQuery.h": "32a306f73ccf0833f0c2576f15ed802937ccef929513ee9d0ce9af20698c0e55",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceQueries.cpp": "c483df60e2f44144fe9dd4af1ca62c6e891e1e0bc0428592170b55f0c8442847",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceStorage.cpp": "5239facd111d36a818a615bcde44866d9eee508454e675bdd4f7d44f1b9e4aad",
+      "test/lit/pto/Inputs/check_frontier_stage_profile.py": "f3dd50448ac3c114a9eb2edb903a6d5acdb656a9600060911f737289170fa1fa",
+      "test/lit/pto/Inputs/check_rotating_region.py": "470841ba015f7910d2964fcfae3fc0abddc93579bdb5ea837572b1ee29c73a1c",
+      "tools/pto-test-opt/FamilyResidueCompactionChecks.h": "3ab51be162e10da91d27aea4c1426126ea7bb168342b35f671083b21db29035b",
+      "tools/pto-test-opt/RegionExpressionChecks.cpp": "3b3aa61a0c4c8e03ae9de0b9f1ffb65f3d5704aa30621f7159cd639c2cf6f8db",
+      "tools/pto-test-opt/SequenceChoiceQueryChecks.h": "ed3d01585627d7f630f3d6126f4618d82d6aeec418d24552ddc15c9c1fb396a7",
+      "tools/pto-test-opt/SequenceIncomingQueryChecks.h": "c3fa796c3267fb2ef32825b9800b03743e6c129e630839cff1b89888f7d534c6",
+      "tools/pto-test-opt/WholeInvocationIdentityChecks.cpp": "079198ff771ec104ab5303737615e5d5d0c3df5955ae8b6a654f8c04b36ab7de"
+    },
+    "tools_sha256": {
+      "pto-test-opt": "9dca2ad65545a55e808c3190d4f6b20ef1340d7f8d9bb1a7e7a52f6acc41462b",
+      "pto-sync-input-test": "f4ce38e9552de6dc8e89c46f5cf29cbe9e06545abf749a91a42bc4d3455e3db2"
+    },
+    "build": {
+      "command": "cmake --build .local/section8-refactor/source-pinned/candidate-build --target pto-test-opt pto-sync-input-test PTOASCompiler --parallel 2",
+      "outcome": "PASS",
+      "receipt": ".local/draft-closure-20261016/m5-path-build.out",
+      "new_warnings": false
+    },
+    "prefix_only_focused": {
+      "receipt": ".local/draft-closure-20261016/m5-prefix-only-focused.json",
+      "receipt_sha256": "578db2e9b15dc161359ae6d1353a4282ff283573b0f70d7fb0e99cd51b540cd9",
+      "counts": {
+        "PASS": 7
+      },
+      "seconds": 54.10643196105957,
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_boundary_rotation.pto",
+          "outcome": "PASS",
+          "seconds": 18.08662486076355
+        },
+        {
+          "name": "PTOIR :: pto/sync_prepared_insertion.pto",
+          "outcome": "PASS",
+          "seconds": 15.337742567062378
+        },
+        {
+          "name": "PTOIR :: pto/sync_frontier_public_pipeline.pto",
+          "outcome": "PASS",
+          "seconds": 8.963817358016968
+        },
+        {
+          "name": "PTOIR :: pto/sync_family_emission.pto",
+          "outcome": "PASS",
+          "seconds": 4.158019542694092
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_family_recipe.pto",
+          "outcome": "PASS",
+          "seconds": 4.17404580116272
+        },
+        {
+          "name": "PTOIR :: pto/sync_region_expression.pto",
+          "outcome": "PASS",
+          "seconds": 3.2859857082366943
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_bridge_work.pto",
+          "outcome": "PASS",
+          "seconds": 0.0890493392944336
+        }
+      ]
+    },
+    "interrupted_gate": {
+      "receipt": ".local/draft-closure-20261016/m5-prefix-only-complete.out",
+      "reason": "Stopped for reviewer-confirmed dead-suffix/opposite-arm repair; not a completed gate"
+    },
+    "pre_width_focused": {
+      "receipt": ".local/draft-closure-20261016/m5-protocol-scope-focused.json",
+      "receipt_sha256": "07b8837da07b7468e22d882370b993d6b081c4d076252a50addb606af4c27060",
+      "counts": {
+        "PASS": 11
+      },
+      "seconds": 64.0573935508728,
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_frontier_public_pipeline.pto",
+          "outcome": "PASS",
+          "seconds": 7.972829580307007
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_allocation_profile.pto",
+          "outcome": "PASS",
+          "seconds": 3.770764112472534
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_family_recipe.pto",
+          "outcome": "PASS",
+          "seconds": 3.7041542530059814
+        },
+        {
+          "name": "PTOIR :: pto/sync_region_expression.pto",
+          "outcome": "PASS",
+          "seconds": 3.0378386974334717
+        },
+        {
+          "name": "PTOIR :: pto/sync_identity_composition.pto",
+          "outcome": "PASS",
+          "seconds": 19.497421741485596
+        },
+        {
+          "name": "PTOIR :: pto/sync_prepared_insertion.pto",
+          "outcome": "PASS",
+          "seconds": 14.934957265853882
+        },
+        {
+          "name": "PTOIR :: pto/sync_family_emission.pto",
+          "outcome": "PASS",
+          "seconds": 3.963045120239258
+        },
+        {
+          "name": "PTOIR :: pto/sync_combined_family_output.pto",
+          "outcome": "PASS",
+          "seconds": 3.537761926651001
+        },
+        {
+          "name": "PTOIR :: pto/sync_mixed_deferred_output.pto",
+          "outcome": "PASS",
+          "seconds": 2.364535331726074
+        },
+        {
+          "name": "PTOIR :: pto/sync_rotating_region.pto",
+          "outcome": "PASS",
+          "seconds": 1.1592738628387451
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_bridge_work.pto",
+          "outcome": "PASS",
+          "seconds": 0.09671282768249512
+        }
+      ]
+    },
+    "width_focused": {
+      "receipt": ".local/draft-closure-20261016/m5-width-focused.json",
+      "receipt_sha256": "a7fb739aede0e14bda1888213c7c34fad520b11a6d627e4dab296d81e8e01548",
+      "counts": {
+        "PASS": 6
+      },
+      "seconds": 31.12788200378418,
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_prepared_insertion.pto",
+          "outcome": "PASS",
+          "seconds": 13.642168760299683
+        },
+        {
+          "name": "PTOIR :: pto/sync_frontier_public_pipeline.pto",
+          "outcome": "PASS",
+          "seconds": 7.959611892700195
+        },
+        {
+          "name": "PTOIR :: pto/sync_family_emission.pto",
+          "outcome": "PASS",
+          "seconds": 3.758358955383301
+        },
+        {
+          "name": "PTOIR :: pto/sync_combined_family_output.pto",
+          "outcome": "PASS",
+          "seconds": 3.3590099811553955
+        },
+        {
+          "name": "PTOIR :: pto/sync_mixed_deferred_output.pto",
+          "outcome": "PASS",
+          "seconds": 2.3482067584991455
+        },
+        {
+          "name": "PTOIR :: pto/sync_descriptor_state_index32.pto",
+          "outcome": "PASS",
+          "seconds": 0.046891212463378906
+        }
+      ]
+    },
+    "focused": {
+      "receipt": ".local/draft-closure-20261016/m5-path-focused.json",
+      "receipt_sha256": "f89f4de0a18f99e4931f3ac461d3c43a99ce92b0a1e289e3e4ac5b96ce28ef1b",
+      "counts": {
+        "PASS": 7
+      },
+      "seconds": 51.1758770942688,
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_boundary_rotation.pto",
+          "outcome": "PASS",
+          "seconds": 17.70188546180725
+        },
+        {
+          "name": "PTOIR :: pto/sync_prepared_insertion.pto",
+          "outcome": "PASS",
+          "seconds": 14.225260972976685
+        },
+        {
+          "name": "PTOIR :: pto/sync_frontier_public_pipeline.pto",
+          "outcome": "PASS",
+          "seconds": 8.375508546829224
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_family_recipe.pto",
+          "outcome": "PASS",
+          "seconds": 3.8897671699523926
+        },
+        {
+          "name": "PTOIR :: pto/sync_family_emission.pto",
+          "outcome": "PASS",
+          "seconds": 3.8211941719055176
+        },
+        {
+          "name": "PTOIR :: pto/sync_region_expression.pto",
+          "outcome": "PASS",
+          "seconds": 3.0608253479003906
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_bridge_work.pto",
+          "outcome": "PASS",
+          "seconds": 0.09035253524780273
+        }
+      ]
+    },
+    "pre_width_complete_gate": {
+      "receipt": ".local/draft-closure-20261016/m5-protocol-scope-complete.json",
+      "receipt_sha256": "ffe36991e9632500d521d025f691c3e3f51abe1a2ad9b8006f039f6ede0287db",
+      "counts": {
+        "FAIL": 2,
+        "PASS": 261
+      },
+      "seconds": 725.6735661029816,
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_repeated_region.pto",
+          "outcome": "FAIL",
+          "seconds": 91.13512086868286
+        },
+        {
+          "name": "PTOIR :: pto/sync_boundary_rotation.pto",
+          "outcome": "FAIL",
+          "seconds": 19.679365634918213
+        }
+      ]
+    },
+    "width_complete_gate": {
+      "receipt": ".local/draft-closure-20261016/m5-width-complete.json",
+      "receipt_sha256": "623e720cda28b35d937bd0f4f783bb4f25d26cffe306abdb509904bdbacf4c69",
+      "counts": {
+        "FAIL": 2,
+        "PASS": 261
+      },
+      "seconds": 780.0495369434357,
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_repeated_region.pto",
+          "outcome": "FAIL",
+          "seconds": 91.18407869338989
+        },
+        {
+          "name": "PTOIR :: pto/sync_boundary_rotation.pto",
+          "outcome": "FAIL",
+          "seconds": 23.782700061798096
+        }
+      ]
+    },
+    "intermediate_mask_focused": {
+      "receipt": ".local/draft-closure-20261016/m5-mask-focused.json",
+      "receipt_sha256": "97b535e45c61ee5e88b40294e6ad68cf8feb75df83aae902d8bba4a4ef2d86ff",
+      "counts": {
+        "FAIL": 1,
+        "PASS": 6
+      },
+      "seconds": 81.70820784568787,
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_boundary_rotation.pto",
+          "outcome": "FAIL",
+          "seconds": 30.03248929977417
+        }
+      ]
+    },
+    "complete_gate": {
+      "receipt": ".local/draft-closure-20261016/m5-path-complete.json",
+      "receipt_sha256": "597e9158709a40d8ab523cc7e76608e064bb21dd67458e8185d30ab5beb08269",
+      "counts": {
+        "FAIL": 1,
+        "PASS": 262
+      },
+      "seconds": 727.3391048908234,
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_repeated_region.pto",
+          "outcome": "FAIL",
+          "seconds": 91.13984489440918
+        }
+      ]
+    },
+    "intermediate_dispatch_gate": {
+      "receipt": ".local/draft-closure-20261016/m5-identity-complete-lit.json",
+      "receipt_sha256": "55db2ab0808f5d0b44f101975dbfb41845c9f43a396f28d6c92f9fc8d440f64a",
+      "counts": {
+        "FAIL": 3,
+        "PASS": 260
+      },
+      "seconds": 729.5163061618805,
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_repeated_region.pto",
+          "outcome": "FAIL",
+          "seconds": 91.18809270858765
+        },
+        {
+          "name": "PTOIR :: pto/sync_boundary_rotation.pto",
+          "outcome": "FAIL",
+          "seconds": 22.896785020828247
+        },
+        {
+          "name": "PTOIR :: pto/sync_family_emission.pto",
+          "outcome": "FAIL",
+          "seconds": 3.161888599395752
+        }
+      ]
+    },
+    "intermediate_compaction_gate": {
+      "receipt": ".local/draft-closure-20261016/m5-dispatch-complete-lit.json",
+      "receipt_sha256": "894145250209d15cd05ccdf51ce272d84a9cd22d4e739d94f6737c67e754d100",
+      "counts": {
+        "FAIL": 6,
+        "PASS": 257
+      },
+      "seconds": 707.4357070922852,
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_repeated_region.pto",
+          "outcome": "FAIL",
+          "seconds": 91.14512634277344
+        },
+        {
+          "name": "PTOIR :: pto/sync_boundary_rotation.pto",
+          "outcome": "FAIL",
+          "seconds": 19.845744371414185
+        },
+        {
+          "name": "PTOIR :: pto/sync_frontier_public_pipeline.pto",
+          "outcome": "FAIL",
+          "seconds": 3.4073421955108643
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_family_recipe.pto",
+          "outcome": "FAIL",
+          "seconds": 0.47502565383911133
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_allocation_profile.pto",
+          "outcome": "FAIL",
+          "seconds": 1.2048585414886475
+        },
+        {
+          "name": "PTOIR :: pto/sync_region_expression.pto",
+          "outcome": "FAIL",
+          "seconds": 0.04771566390991211
+        }
+      ]
+    },
+    "intermediate_repairs": [
+      "Finite coordinate fitting precedes pairwise domain compaction; unchanged prepared-site tests pass.",
+      "Guard interval compaction requires a frozen protocol; legacy allocation-only lanes retain request-independent grouping.",
+      "Cross-child closure oracle checks unchanged truth values with zero callback requests for native reflexive endpoints.",
+      "Profiler counts checked against emitted IR; separate repeated-crossing oracle retains unfolded matching/order. Static SET and WAIT counts need not equal."
+    ],
+    "independent_interval_oracle": {
+      "pairs": 576,
+      "values_per_pair": 256,
+      "comparisons": 147456,
+      "scope": "8-bit unsigned comparisons including both extremes; masks, opaque guards and distinct scalar rejection"
+    },
+    "delta_before_path": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+        "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+      ],
+      "status": "finished",
+      "returncode": 0,
+      "success": true,
+      "seconds": 12.196539098862559,
+      "timeout_seconds": 180,
+      "memory_limit_bytes": 4294967296,
+      "cpu_affinity": [
+        0
+      ],
+      "outcome_kind": "success",
+      "scope": "post-review final-source output diagnostic concurrent with one lit worker; no timing or device claim",
+      "tool_sha256": "d0527b517c706aebbae6d95a2b901222b57cf3c3c69f8641b28e2f6d3a8536e3",
+      "source_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+      "metrics": {
+        "bytes": 17710200,
+        "operations": {
+          "arith.constant": 23120,
+          "pto.make_tensor_view": 10,
+          "pto.get_block_idx": 1,
+          "arith.index_cast": 15,
+          "pto.get_subblock_idx": 1,
+          "arith.muli": 13,
+          "pto.alloc_tile": 39,
+          "scf.for": 49,
+          "arith.cmpi": 20324,
+          "scf.if": 91,
+          "arith.addi": 553,
+          "pto.load": 3,
+          "pto.logical_set": 172,
+          "arith.subi": 287,
+          "pto.texpands": 1,
+          "pto.partition_view": 13,
+          "pto.tload": 11,
+          "pto.barrier": 85,
+          "pto.logical_wait": 47,
+          "arith.select": 93182,
+          "pto.tcvt": 10,
+          "scf.yield": 20,
+          "pto.texp": 4,
+          "pto.tgetval": 10,
+          "arith.remui": 319,
+          "arith.xori": 18265,
+          "arith.andi": 98467,
+          "arith.ori": 58724,
+          "arith.addf": 1,
+          "arith.cmpf": 1,
+          "pto.tsetval": 5,
+          "pto.tadds": 4,
+          "pto.tlog": 1,
+          "arith.negf": 2,
+          "arith.mulf": 1,
+          "pto.trecip": 1,
+          "pto.tmov": 5,
+          "pto.tmul": 5,
+          "pto.trowsum": 4,
+          "pto.trsqrt": 2,
+          "pto.tmuls": 5,
+          "pto.tcolexpand": 2,
+          "pto.tsub": 1,
+          "pto.trowexpand": 1,
+          "pto.tadd": 1,
+          "pto.tstore": 2
+        },
+        "arithmetic": 313274,
+        "selects": 93182,
+        "ifs": 91,
+        "sets": 172,
+        "waits": 47,
+        "barriers": 85,
+        "textual_record_labels": 0
+      },
+      "ir_sha256": "7c751c878eb18adf7f175183fb4016bf414eaa4b81532d232f26efd5748f41b3",
+      "previous_ir_sha256": "7c751c878eb18adf7f175183fb4016bf414eaa4b81532d232f26efd5748f41b3",
+      "complete_ir_equal": true
+    },
+    "delta_preceding_commit_comparison": {
+      "command": [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "--mlir-disable-threading",
+        "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+        "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+      ],
+      "status": "finished",
+      "returncode": 0,
+      "success": true,
+      "seconds": 24.230869377963245,
+      "timeout_seconds": 180,
+      "memory_limit_bytes": 4294967296,
+      "cpu_affinity": [
+        0
+      ],
+      "outcome_kind": "success",
+      "scope": "construction/output diagnostic concurrent with one lit worker; no timing claim",
+      "source_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+      "tool_sha256": "74ae31616def15369b4c740048db12d84ca3a21d9835aeca214e781eaabe59e1",
+      "ir_sha256": "7c751c878eb18adf7f175183fb4016bf414eaa4b81532d232f26efd5748f41b3",
+      "metrics": {
+        "bytes": 17710200,
+        "operations": {
+          "arith.constant": 23120,
+          "pto.make_tensor_view": 10,
+          "pto.get_block_idx": 1,
+          "arith.index_cast": 15,
+          "pto.get_subblock_idx": 1,
+          "arith.muli": 13,
+          "pto.alloc_tile": 39,
+          "scf.for": 49,
+          "arith.cmpi": 20324,
+          "scf.if": 91,
+          "arith.addi": 553,
+          "pto.load": 3,
+          "pto.logical_set": 172,
+          "arith.subi": 287,
+          "pto.texpands": 1,
+          "pto.partition_view": 13,
+          "pto.tload": 11,
+          "pto.barrier": 85,
+          "pto.logical_wait": 47,
+          "arith.select": 93182,
+          "pto.tcvt": 10,
+          "scf.yield": 20,
+          "pto.texp": 4,
+          "pto.tgetval": 10,
+          "arith.remui": 319,
+          "arith.xori": 18265,
+          "arith.andi": 98467,
+          "arith.ori": 58724,
+          "arith.addf": 1,
+          "arith.cmpf": 1,
+          "pto.tsetval": 5,
+          "pto.tadds": 4,
+          "pto.tlog": 1,
+          "arith.negf": 2,
+          "arith.mulf": 1,
+          "pto.trecip": 1,
+          "pto.tmov": 5,
+          "pto.tmul": 5,
+          "pto.trowsum": 4,
+          "pto.trsqrt": 2,
+          "pto.tmuls": 5,
+          "pto.tcolexpand": 2,
+          "pto.tsub": 1,
+          "pto.trowexpand": 1,
+          "pto.tadd": 1,
+          "pto.tstore": 2
+        },
+        "arithmetic": 313274,
+        "selects": 93182,
+        "ifs": 91,
+        "sets": 172,
+        "waits": 47,
+        "barriers": 85,
+        "textual_record_labels": 0
+      },
+      "baseline_ir_sha256": "55d4ed2b2305f6fd9b413928574f5096cf25e8f085ff77f2c85a25b875568886",
+      "complete_ir_equal": false,
+      "location_expanded_ir_equal": false,
+      "location_expanded_sha256": {
+        "baseline": "ae6a62cfb3fe921ba550ed383bc9d3c990f830062548d7ee5baa4e5f8618678c",
+        "candidate": "67d70a5da16129c2e2d3b8349985b9205c54fa46b59a1841e106e1efd5ff57ef"
+      },
+      "exact_function_body_equal": true,
+      "body_sha256": {
+        "baseline": "b1474de969710b7dbae2accf26625c8233b34fe66f2403413acd8bf09b521cb0",
+        "candidate": "b1474de969710b7dbae2accf26625c8233b34fe66f2403413acd8bf09b521cb0"
+      },
+      "header_differences": "recognition diagnostic ordering and request estimates; request walks 17 to 15; source-location alias order differs",
+      "request_walks": {
+        "baseline": 17,
+        "candidate": 15
+      }
+    },
+    "remaining_phase_attribution": {
+      "receipt": ".local/draft-closure-20261016/m5-repeat-route/route.out",
+      "refusal": "symbolic storage crossings require a constructed uniform-atom or relational adapter",
+      "next_construction": "composeSymbolicRegionalSequence",
+      "scope": "bounded debugger probe stopped at relational entry; debugger exit is not compilation success; no allocator requested",
+      "diagnostic_without_external_accesses": "sequence analysis succeeds; removal changes the program and is only attribution evidence"
+    },
+    "code_check": {
+      "receipt": ".local/draft-closure-20261016/m5-path-code-check.out",
+      "errors_reported": 22,
+      "classification": "G.FMT.11-CPP false positives: every cited control body is explicitly braced",
+      "warnings": 0,
+      "diff_check": "PASS"
+    },
+    "device_execution": false,
+    "independent_reviewer_acceptance": {
+      "architecture_m1": "scoped source acceptance after index-width and shared select-arm folding repairs; runtime evidence recorded separately",
+      "compiler_expert": "scoped source acceptance after index32 multiplicity, conditional-zero prefix/suffix and unavailable opposite-arm regressions; runtime evidence recorded separately"
+    },
+    "performance_claim": "Paired Delta logical-compilation measurement only; no device or new physical-allocation claim",
+    "delta_path_measurement": {
+      "receipt": ".local/draft-closure-20261016/m5-mask-measurements/result.json",
+      "receipt_sha256": "6cd75333a6eb97040e54e252db86b5c599658e4c7a37478580af2e4d5cead7cc",
+      "scope": "Three serial interleaved full logical-compilation pairs, same input, one CPU, 4 GiB; no device or physical assignment claim",
+      "paired_changes": [
+        0.055010521503311205,
+        4.9337023336537555e-05,
+        -0.04349875292330563
+      ],
+      "median_paired_change": 4.9337023336537555e-05,
+      "runs": [
+        {
+          "pair": 0,
+          "variant": "baseline",
+          "seconds": 11.749332514125854,
+          "tool_sha256": "d0527b517c706aebbae6d95a2b901222b57cf3c3c69f8641b28e2f6d3a8536e3",
+          "source_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+          "ir_sha256": "7c751c878eb18adf7f175183fb4016bf414eaa4b81532d232f26efd5748f41b3",
+          "metrics": {
+            "bytes": 17710200,
+            "arithmetic": 313274,
+            "selects": 93182,
+            "ifs": 91,
+            "sets": 172,
+            "waits": 47,
+            "barriers": 85
+          }
+        },
+        {
+          "pair": 0,
+          "variant": "candidate",
+          "seconds": 12.395669423043728,
+          "tool_sha256": "9dca2ad65545a55e808c3190d4f6b20ef1340d7f8d9bb1a7e7a52f6acc41462b",
+          "source_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+          "ir_sha256": "fb0c69647630e182dfdce1d45fca1a8ab2b1a1e4c56346ed05be0c4b7ef3d490",
+          "metrics": {
+            "bytes": 17709123,
+            "arithmetic": 313258,
+            "selects": 93166,
+            "ifs": 91,
+            "sets": 172,
+            "waits": 47,
+            "barriers": 85
+          }
+        },
+        {
+          "pair": 1,
+          "variant": "candidate",
+          "seconds": 12.346002515871078,
+          "tool_sha256": "9dca2ad65545a55e808c3190d4f6b20ef1340d7f8d9bb1a7e7a52f6acc41462b",
+          "source_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+          "ir_sha256": "fb0c69647630e182dfdce1d45fca1a8ab2b1a1e4c56346ed05be0c4b7ef3d490",
+          "metrics": {
+            "bytes": 17709123,
+            "arithmetic": 313258,
+            "selects": 93166,
+            "ifs": 91,
+            "sets": 172,
+            "waits": 47,
+            "barriers": 85
+          }
+        },
+        {
+          "pair": 1,
+          "variant": "baseline",
+          "seconds": 12.34539343090728,
+          "tool_sha256": "d0527b517c706aebbae6d95a2b901222b57cf3c3c69f8641b28e2f6d3a8536e3",
+          "source_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+          "ir_sha256": "7c751c878eb18adf7f175183fb4016bf414eaa4b81532d232f26efd5748f41b3",
+          "metrics": {
+            "bytes": 17710200,
+            "arithmetic": 313274,
+            "selects": 93182,
+            "ifs": 91,
+            "sets": 172,
+            "waits": 47,
+            "barriers": 85
+          }
+        },
+        {
+          "pair": 2,
+          "variant": "baseline",
+          "seconds": 12.698482502717525,
+          "tool_sha256": "d0527b517c706aebbae6d95a2b901222b57cf3c3c69f8641b28e2f6d3a8536e3",
+          "source_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+          "ir_sha256": "7c751c878eb18adf7f175183fb4016bf414eaa4b81532d232f26efd5748f41b3",
+          "metrics": {
+            "bytes": 17710200,
+            "arithmetic": 313274,
+            "selects": 93182,
+            "ifs": 91,
+            "sets": 172,
+            "waits": 47,
+            "barriers": 85
+          }
+        },
+        {
+          "pair": 2,
+          "variant": "candidate",
+          "seconds": 12.146114349830896,
+          "tool_sha256": "9dca2ad65545a55e808c3190d4f6b20ef1340d7f8d9bb1a7e7a52f6acc41462b",
+          "source_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+          "ir_sha256": "fb0c69647630e182dfdce1d45fca1a8ab2b1a1e4c56346ed05be0c4b7ef3d490",
+          "metrics": {
+            "bytes": 17709123,
+            "arithmetic": 313258,
+            "selects": 93166,
+            "ifs": 91,
+            "sets": 172,
+            "waits": 47,
+            "barriers": 85
+          }
+        }
+      ]
+    },
+    "delta_fixed_protocol_replay": {
+      "receipt": ".local/draft-closure-20261016/m5-path-delta-replay.json",
+      "receipt_sha256": "5caa014d73b0a87522c77ec8a132bb5e3bc3f4bf1b513c723840dfe1f4e254b3",
+      "command": [
+        ".venv/bin/python",
+        "test/lit/pto/Inputs/check_delta_fixed_protocol.py",
+        "test/lit/pto/Inputs/delta_fixed_protocol.json",
+        "--logical",
+        ".local/draft-closure-20261016/m5-mask-measurements/delta-0-candidate/logical.out",
+        "--tracer",
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test"
+      ],
+      "success": true,
+      "seconds": 2.72177993087098,
+      "returncode": 0,
+      "report": {
+        "payloads": 72,
+        "commands": 358,
+        "scope": {
+          "bindings": {
+            "block_idx": 0,
+            "sequence_end": 1,
+            "sequence_start": 0,
+            "softplus_gt_20": false,
+            "state_index": -1,
+            "subblock_idx": 0
+          },
+          "command_graph_sha256": "44fd391dc2f6415f382c4df6c3ef129762d53a54bde2a8dfa412261f94191508",
+          "input_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+          "kind": "fixed-command-graph-and-admitted-execution"
+        },
+        "capacity_outcome": "certified-over-capacity-for-fixed-protocol",
+        "witness_direction": [
+          1,
+          5
+        ]
+      }
+    },
+    "boundary_path": {
+      "baseline_arena_nodes": 123668,
+      "caller_mask_only_nodes": 113745,
+      "candidate_arena_nodes": 103881,
+      "unchanged_limit": 104000,
+      "attribution_receipt": ".local/draft-closure-20261016/m5-boundary-stages/work.out",
+      "candidate_receipt": ".local/draft-closure-20261016/m5-path-boundary/analysis.out",
+      "candidate_receipt_sha256": "f3194fd003da0b89591733f528741164ad1cfd3cfaba4e38d10ed2cc42cdccc4",
+      "scope": "Retained arena size; shared one-level select-arm folding preserves refusal and dead-input behavior without temporary masks.",
+      "independent_boundary_closures": {
+        "ordinary": 56,
+        "multiple_cut": 64,
+        "affine_and_wrapping": 64
+      }
+    }
   }
 }

@@ -14,8 +14,90 @@ inline bool incomingQueryFailure(unsigned line)
     llvm::errs() << "incoming sequence query mismatch at line " << line << "\n";
     return false;
 }
+inline bool checkIncomingPathQueries(func::FuncOp function, const CompoundInstanceElement& phase)
+{
+    namespace fs = frontiersynch;
+    Block inputs;
+    for (unsigned mode = 0; mode < 11; ++mode) {
+        auto e = std::make_shared<fs::RegionExpressions>();
+        auto bit = [&]() { return e->input(inputs.addArgument(
+            IntegerType::get(function.getContext(), 1), function.getLoc())); };
+        const auto active = bit(), prefix = bit(), suffix = bit(), unavailable = bit();
+        const auto zero = e->constant(0), no = e->boolean(false), yes = e->boolean(true);
+        fs::SequenceAnalysisState state(function, e); state.children.resize(1);
+        auto& child = state.children.front(); child.anchors.assign(4, {&phase});
+        auto& region = child.regional; region.expressions = e; region.anchors = child.anchors;
+        region.occurrenceLoops.resize(4);
+        region.presence = [yes](fs::RegionalEvent) { return yes; };
+        std::vector<unsigned> calls;
+        region.reachability = [&](fs::RegionalEvent a, fs::RegionalEvent b) -> std::optional<fs::Expr> {
+            calls.push_back(a.type);
+            if (a.type == 0 && b.type == 1) {
+                if (mode == 1) { return std::nullopt; }
+                if (mode == 5) { return e->select(active, no, prefix); }
+                if (mode == 6) { return e->select(active, prefix, no); }
+                if (mode == 9) { return e->select(active, prefix, unavailable); }
+                if (mode == 10) { return e->select(active, unavailable, prefix); }
+                return mode == 2 ? no : prefix;
+            }
+            if (a.type == 2 && b.type == 3) {
+                if (mode == 7) { return e->select(active, no, suffix); }
+                if (mode == 8) { return e->select(active, suffix, no); }
+                if (mode == 9) { return e->select(active, suffix, unavailable); }
+                if (mode == 10) { return e->select(active, unavailable, suffix); }
+                if (mode < 3) { return suffix; }
+            }
+            return std::nullopt;
+        };
+        std::array<std::size_t, 4> ports;
+        for (unsigned i = 0; i < ports.size(); ++i) { ports[i] = state.port(0, i, zero); }
+        fs::SequenceIncomingQuery queries(state);
+        const auto size = e->size();
+        const bool inverted = mode == 6 || mode == 8 || mode == 10;
+        const auto activity = mode == 4 ? no : inverted ? e->lnot(active) : active;
+        auto answer = queries.path(2*ports[0]+1, 2*ports[1], 2*ports[2]+1, 2*ports[3], activity);
+        const std::vector<unsigned> expected = mode == 4 ? std::vector<unsigned>{} :
+            mode == 1 || mode == 2 || mode == 5 || mode == 6 ? std::vector<unsigned>{0} : std::vector<unsigned>{0, 2};
+        if (calls != expected || bool(answer) != (mode != 1 && mode != 3)) {
+            return incomingQueryFailure(__LINE__);
+        }
+        if (!answer) { continue; }
+        if (mode != 0 && mode < 9) {
+            if (e->constantValue(*answer) != 0) { return incomingQueryFailure(__LINE__); }
+            continue;
+        }
+        // A path builds one joint-output mask, not one mask for each query.
+        if (mode == 0 && e->size() - size > 2) { return incomingQueryFailure(__LINE__); }
+        for (const auto& input : e->referencedInputs(*answer)) {
+            if (input.first == unavailable) { return incomingQueryFailure(__LINE__); }
+        }
+        for (unsigned valuation = 0; valuation < 8; ++valuation) {
+            fs::RegionExpressions::Transaction evaluation(*e);
+            fs::RegionExpressions::Substitution bindings({{active, e->boolean(valuation & 1)},
+                {prefix, e->boolean(valuation & 2)}, {suffix, e->boolean(valuation & 4)}});
+            const bool expectedValue = (bool(valuation & 1) != inverted) &&
+                (valuation & 2) && (valuation & 4);
+            if (e->constantValue(e->substitute(*answer, bindings)) != unsigned(expectedValue)) {
+                return incomingQueryFailure(__LINE__);
+            }
+        }
+        for (bool enabled : {false, true}) {
+            fs::RegionExpressions::Transaction evaluation(*e);
+            // Leave the prefix unbound; neither an inactive path nor a false
+            // suffix may need it. With no activity, leave both queries unbound.
+            std::vector<std::pair<fs::Expr, fs::Expr>> values{{active, e->boolean(enabled != inverted)}};
+            if (enabled) { values.emplace_back(suffix, no); }
+            fs::RegionExpressions::Substitution bindings(values);
+            if (e->constantValue(e->substitute(*answer, bindings)) != 0) {
+                return incomingQueryFailure(__LINE__);
+            }
+        }
+    }
+    return true;
+}
 inline bool checkIncomingSequenceQueries(func::FuncOp function, const CompoundInstanceElement& phase)
 {
+    if (!checkIncomingPathQueries(function, phase)) { return false; }
     namespace fs = frontiersynch;
     using Kind = fs::PeriodicEventKind;
     Block inputs;

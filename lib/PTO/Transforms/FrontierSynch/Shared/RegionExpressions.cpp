@@ -8,6 +8,7 @@
 // Intern expressions independently of source cuts; emit shared arithmetic only
 // after checking original-IR availability at each detached preparation cut.
 #include "ScalarConstruction.h"
+#include "RegionConstruction.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include "RegionIntegerExpressionsInternal.h"
 #include "RegionSubstitutionTopology.h"
@@ -677,6 +678,18 @@ RegionExpressions::Id RegionExpressions::lnot(Id a)
     node.a = a;
     return intern(node);
 }
+RegionExpressions::Id detail::RegionConstructionAccess::selectArm(
+    const RegionExpressions& arena, RegionExpressions::Id value,
+    RegionExpressions::Id condition, bool whenTrue)
+{
+    if (!arena.valid(value) || !arena.isBoolean(condition)) { return value; }
+    using Kind = RegionExpressions::Kind;
+    if (arena.nodes[condition].kind == Kind::Not) {
+        condition = arena.nodes[condition].a; whenTrue = !whenTrue;
+    }
+    const auto& node = arena.nodes[value];
+    return node.kind == Kind::Select && node.a == condition ? (whenTrue ? node.b : node.c) : value;
+}
 RegionExpressions::Id RegionExpressions::select(Id condition, Id yes, Id no)
 {
     if (!isBoolean(condition) || !valid(yes) || !valid(no) || isBoolean(yes) != isBoolean(no)) {
@@ -694,8 +707,8 @@ RegionExpressions::Id RegionExpressions::select(Id condition, Id yes, Id no)
     }
     // Selecting the same condition twice cannot visit the opposite inner arm.
     // Preserve the outer select so inactive poison remains masked.
-    if (nodes[yes].kind == Kind::Select && nodes[yes].a == condition) { yes = nodes[yes].b; }
-    if (nodes[no].kind == Kind::Select && nodes[no].a == condition) { no = nodes[no].c; }
+    yes = detail::RegionConstructionAccess::selectArm(*this, yes, condition, true);
+    no = detail::RegionConstructionAccess::selectArm(*this, no, condition, false);
     if (yes == no) { return yes; }
     Node node;
     node.kind = Kind::Select;

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
 #include "SequenceIncomingQuery.h"
+#include "RegionConstruction.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "WriterPairIndex.h"
 namespace mlir::pto::frontiersynch {
@@ -444,6 +445,23 @@ std::optional<Expr> SequenceAnalysisState::eventReachability(SequenceEvent sourc
     if (cached != reachabilityCache.end()) { return cached->second; }
     if (source.child >= children.size() || target.child >= children.size()) { return std::nullopt; }
     if (source.child > target.child) { return no(); }
+    const bool sameOccurrence = source.child == target.child && source.type == target.type &&
+        source.ordinal == target.ordinal && source.visits == target.visits;
+    const auto eventKind = [](PeriodicEventKind kind) {
+        return kind == PeriodicEventKind::Start || kind == PeriodicEventKind::Completion;
+    };
+    if (sameOccurrence && eventKind(source.kind) && eventKind(target.kind)) {
+        // A payload's own start reaches its completion. Reflexivity also
+        // depends only on presence; the reverse C->I edge cannot exist in
+        // the accepted acyclic event graph. Preserve selected-occurrence
+        // presence without asking a child to reconstruct its rank circuit.
+        auto present = selectedPresence(*this, source);
+        if (!present) { return std::nullopt; }
+        const auto answer = source.kind == PeriodicEventKind::Completion &&
+            target.kind == PeriodicEventKind::Start ? no() : *present;
+        reachabilityCache.emplace(std::move(pair), answer);
+        return answer;
+    }
     // Reference order places every occurrence of an earlier child before
     // every occurrence of a later child. On one pipe, native start and
     // completion chains therefore decide all event-kind pairs except C->I,
@@ -616,6 +634,40 @@ std::optional<Expr> SequenceIncomingQuery::query(std::size_t source, std::size_t
 }
 std::optional<Expr> SequenceIncomingQuery::query(SequenceEvent source, SequenceEvent target, Expr activity)
 {
+    auto answer = restricted(source, target, activity);
+    if (!answer) { return std::nullopt; }
+    const Key key{activity, eventKey(source), eventKey(target)};
+    if (auto found = maskedAnswers.find(key); found != maskedAnswers.end()) { return found->second; }
+    const auto masked = state.expressions.select(activity, *answer, state.no());
+    maskedAnswers.emplace(key, masked);
+    return masked;
+}
+std::optional<Expr> SequenceIncomingQuery::path(std::size_t source, std::size_t entrySource,
+    std::size_t entryTarget, std::size_t target, Expr activity)
+{
+    for (auto port : {source, entrySource, entryTarget, target}) {
+        if (port / 2 >= state.ports.size()) { return std::nullopt; }
+    }
+    auto& e = state.expressions;
+    ++state.crossingQueryWork.prefixQueries;
+    auto prefix = restricted(state.event(source), state.event(entrySource), activity);
+    if (!prefix) { return std::nullopt; }
+    // Reuse select()'s one-level arm folding before combining outputs. This
+    // preserves both false-prefix refusal behavior and removal of unavailable
+    // opposite arms, without constructing separate activity masks.
+    *prefix = detail::RegionConstructionAccess::selectArm(e, *prefix, activity, true);
+    if (e.constantValue(*prefix) == 0) { return state.no(); }
+    ++state.crossingQueryWork.suffixQueries;
+    auto suffix = restricted(state.event(entryTarget), state.event(target), activity);
+    if (!suffix) { return std::nullopt; }
+    *suffix = detail::RegionConstructionAccess::selectArm(e, *suffix, activity, true);
+    if (e.constantValue(*suffix) == 0) { return state.no(); }
+    // Neither restricted answer is valid outside activity. Mask their joint
+    // output once, preserving lazy suffix-then-prefix runtime evaluation.
+    return e.select(activity, e.select(*suffix, *prefix, state.no()), state.no());
+}
+std::optional<Expr> SequenceIncomingQuery::restricted(SequenceEvent source, SequenceEvent target, Expr activity)
+{
     auto& e = state.expressions;
     auto valid = [&](const SequenceEvent& event) {
         auto coordinate = [&](Expr id) { return id < e.size() && !e.isBoolean(id); };
@@ -636,9 +688,8 @@ std::optional<Expr> SequenceIncomingQuery::query(SequenceEvent source, SequenceE
     // occurrence recipes are untouched. Missing residual queries still refuse.
     auto answer = state.eventReachability(a, b);
     if (!answer) { return std::nullopt; }
-    const auto masked = e.select(activity, *answer, e.boolean(false));
-    answers.emplace(key, masked);
-    return masked;
+    answers.emplace(key, *answer);
+    return answer;
 }
 bool SequenceAnalysisState::valueBridges()
 {
@@ -858,16 +909,9 @@ bool SequenceAnalysisState::symbolicCrossingReduction()
             // selected coordinates before constructing an unrestricted child DAG.
             const auto activity = expressions.select(candidateGuard,
                 expressions.select(entry.guard, distinct, no()), no());
-            ++crossingQueryWork.prefixQueries;
-            auto prefix = incomingQueries.query(2*edge.source+1, entry.source, activity);
-            if (!prefix) { return fail("child all-event query unavailable"); }
-            if (expressions.constantValue(*prefix) == 0) { continue; }
-            ++crossingQueryWork.suffixQueries;
-            auto suffix = incomingQueries.query(entry.target, 2*edge.target, activity);
-            if (!suffix) { return fail("child all-event query unavailable"); }
-            auto tail = expressions.select(entry.guard, both(distinct, *suffix), no());
-            if (expressions.constantValue(tail) == 0) { continue; }
-            alternate = either(alternate, expressions.select(tail, *prefix, no()));
+            auto path = incomingQueries.path(2*edge.source+1, entry.source, entry.target, 2*edge.target, activity);
+            if (!path) { return fail("child all-event query unavailable"); }
+            alternate = either(alternate, *path);
         }
         edge.guard = expressions.select(edge.guard, negate(alternate), no());
     }
