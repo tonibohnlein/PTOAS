@@ -23,7 +23,8 @@ def run(tool, mode, path):
     return result.stdout
 
 
-def check(document, dimensions, outer_slots=None, outer_lower=0, outer_step=1, external_work=True):
+def check(document, dimensions, outer_slots=None, outer_lower=0, outer_step=1,
+          external_work=True, visits=None):
     assert document["accepted"], document
     trace = document["trace"]
     assert not trace["error"], trace
@@ -31,7 +32,9 @@ def check(document, dimensions, outer_slots=None, outer_lower=0, outer_step=1, e
     payloads = [event for event in events if event["kind"] == "payload"]
     expected = [(0, [])] if external_work else []
     load_type, compute_type = (1, 2) if external_work else (0, 1)
-    for coordinates in itertools.product(*(range(max(0, count)) for count in dimensions)):
+    if visits is None:
+        visits = itertools.product(*(range(max(0, count)) for count in dimensions))
+    for coordinates in visits:
         actual = list(coordinates)
         if outer_slots is not None:
             actual[-2] = outer_lower + outer_step * actual[-2]
@@ -88,17 +91,21 @@ def main():
         large = run(tool, "--insert-logical", path)
         assert small == large.replace("1000000000, 1000000001", "2, 3")
         assert operation_count(small, "scf.for") == 2 and "version = 4" in small
-        # Keep the old allocatable regional numerical path with surrounding work.
+        # The named mathematical analysis must still retain numerical visits.
+        # The chosen insertion route may use owned recipes; certify its full
+        # payload and command graph instead of excluding an archive version.
         path.write_text(source.replace("%i = %zero to %m", "%i = %zero to %two"))
         fixed = json.loads(run(tool, "--sequence-analysis", path))
         assert not fixed["error"] and fixed["prepared"] and fixed["numeric_visits"] > 0, fixed
-        assert "version = 4" not in run(tool, "--insert-logical", path)
+        check(json.loads(run(tool, "--structured-trace", path)), [2, 2])
+        tested += 1
         folded = source.replace("%i = %zero to %m", "%i = %zero to %folded")
         folded = folded.replace("    scf.for %visit", "    %folded = arith.addi %one, %one : index\n    scf.for %visit")
         path.write_text(folded)
         folded_report = json.loads(run(tool, "--sequence-analysis", path))
         assert not folded_report["error"] and folded_report["numeric_visits"] > 0, folded_report
-        assert "version = 4" not in run(tool, "--insert-logical", path)
+        check(json.loads(run(tool, "--structured-trace", path)), [2, 2])
+        tested += 1
         triangular = source.replace("      scf.for %i",
                                     "      scf.for %middle = %zero to %two step %one {\n      scf.for %i")
         triangular = triangular.replace("%i = %zero to %m", "%i = %zero to %middle")
@@ -106,7 +113,12 @@ def main():
         path.write_text(triangular)
         triangular_report = json.loads(run(tool, "--sequence-analysis", path))
         assert not triangular_report["error"] and triangular_report["numeric_visits"] > 0, triangular_report
-        assert "version = 4" not in run(tool, "--insert-logical", path)
+        # This is a nonrectangular domain: middle=0 is empty, and each
+        # middle=1 iteration contains exactly i=0. Do not flatten it to 2x2.
+        visits = [(visit, middle, i) for visit in range(2)
+                  for middle in range(2) for i in range(middle)]
+        check(json.loads(run(tool, "--structured-trace", path)), [2, 2], visits=visits)
+        tested += 1
         # An evolving affine bound is outside invariant repetition but is now
         # admitted by the arithmetic recognizer. Do not require the whole
         # dispatcher to reject it, or run its expensive generator construction
