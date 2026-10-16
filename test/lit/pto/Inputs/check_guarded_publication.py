@@ -7,6 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """Check shared publication/terminal cleanup across finite and sequence routes."""
 import itertools
+from collections import Counter
 import json
 from pathlib import Path
 import re
@@ -24,6 +25,19 @@ def invoke(tool, path, mode="--structured-trace", policy="may-not-alias"):
                             capture_output=True, text=True, timeout=90, check=False)
     assert result.returncode == 0, result.stderr + result.stdout
     return result.stdout if mode == "--insert-logical-library" else json.loads(result.stdout)
+
+
+def publication_counts(document):
+    """Exactly one consumer-or-cleanup per executed logical publication."""
+    counts = {kind: Counter() for kind in ("set", "wait")}
+    for event in document["trace"]["events"]:
+        if event["kind"] not in counts:
+            continue
+        identity = (event["source_pipe"], event["target_pipe"], event["plan"],
+                    event["record"], event["source_ordinal"], tuple(event.get("members", [])))
+        counts[event["kind"]][identity] += 1
+    assert counts["set"] == counts["wait"], counts
+    assert all(count == 1 for count in counts["set"].values()), counts
 
 
 def reject_without_visit_filter(opt, path, source, reason):
@@ -90,12 +104,37 @@ def main():
                 labels += (["C"] if g and h else []) + ["E"]
                 validate(report, labels, effects)
                 physical_check(report, set(range(6)))
+                publication_counts(report)
                 # Surplus notification is consumed after every original payload,
                 # even when the consumer is skipped or the intervening loop empty.
                 if present(s, g) and not (g and h):
                     waits = [e for e in report["trace"]["events"] if e["kind"] == "wait"]
                     assert any(e["gap"] == len(labels) for e in waits), report
                 checked += 1
+        # Exclusive demands do not imply exclusive early publications. Both
+        # notifications exist before the future condition, with distinct matching
+        # identities; exactly one goes to a consumer and one to terminal cleanup.
+        for expanded, policy, s, g, h in itertools.product(
+                (False, True), ("may-not-alias", "may-alias"), (0, 1), (0, 1), (0, 1)):
+            branches = "scf.if %choice { " + compute("C") + " } else { " + compute("D") + " }"
+            body = "\n".join(["scf.if %s { " + load() + " }", loop if expanded else "", late, branches])
+            path.write_text(render(body, (s, g, h, 3), (0, 1)))
+            report = invoke(tool, path, policy=policy)
+            labels = (["L"] if s else []) + (["U"] * 3 if expanded else []) + ["C" if g and h else "D"]
+            validate(report, labels, effects)
+            physical_check(report, {0, 1})
+            publication_counts(report)
+            publications = [e for e in report["trace"]["events"] if e["kind"] == "set"]
+            assert len(publications) == (2 if s else 0), report
+            assert all(e["gap"] == 1 for e in publications), report
+            if s:
+                waits = [e for e in report["trace"]["events"] if e["kind"] == "wait"]
+                assert sorted(e["gap"] for e in waits) == [len(labels) - 1, len(labels)], report
+                path.write_text(render(body, (s, g, h, 3), (0,)))
+                refused = invoke(tool, path, policy=policy)
+                assert refused["accepted"] and not refused["allocated"], refused
+                assert refused["allocation_unchanged_on_failure"], refused
+            checked += 1
         # A selected first consumer is a singleton even when its static cut
         # executes repeatedly. Every enclosing loop must have a fixed point.
         selected_ir = None
@@ -111,6 +150,7 @@ def main():
                 count = len(range(0, n, step)) ** depth if g and h else 0
                 validate(report, ["L"] + ["C"] * count + ["E"], effects)
                 physical_check(report, set(range(6)))
+                publication_counts(report)
                 checked += 1
             if depth == 1 and step == 1 and policy == "may-not-alias":
                 selected_ir = path.read_text()
@@ -169,6 +209,7 @@ def main():
                     labels = ["L"] + ["C"] * (visits if g and h else 0) + ["E"]
                 validate(report, labels, effects)
                 physical_check(report, set(range(6)))
+                publication_counts(report)
                 checked += 1
         # A late condition private to an arm cannot be replayed in the epilogue.
         negatives = ["scf.if %s { " + "\n".join([load(), loop, late, consumer]) + " }"]
