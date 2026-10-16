@@ -14,7 +14,12 @@ implementation from executed validation and unresolved protocol work.
 The current finite-path follow-up is tracked in the
 [finite consolidation milestones](frontier-finite-consolidation.md). It refines
 finite root/regional ownership and direct realization while retaining the
-contracts and outstanding protocol limits below.
+contracts and outstanding protocol limits below. That production migration is
+implemented; its paired timing, full analysis-to-emission scaling and immediate-
+baseline corpus qualification are now recorded in the
+[finite follow-up receipt](frontier-finite-qualification-results.json).
+The tested migration is qualified; quadratic guarded/composed control and the
+inherited phased-repeat timeout remain explicit limitations.
 
 ## Current status
 

@@ -12,6 +12,7 @@
 #include "llvm/Support/JSON.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
+LogicalResult checkFiniteGuardedPreparation(const std::shared_ptr<fs::FiniteAnalysis>& owner);
 namespace {
 using Id = fs::RegionExpressions::Id;
 using Phase = const pto::CompoundInstanceElement*;
@@ -286,6 +287,7 @@ LogicalResult runFiniteQualificationChecks(func::FuncOp function, pto::GMAliasPo
     const bool concrete = mode.getValue() == "concrete";
     auto result = fs::analyzeFinite(input, concrete ? fs::FiniteStrategy::Concrete : fs::FiniteStrategy::Guarded);
     if (!result || !result->error().empty()) { return function.emitError("finite scaling analysis failed"); }
+    if (mode.getValue() == "guarded-preparation") { return checkFiniteGuardedPreparation(result); }
     auto region = fs::finiteRegionalResult(result);
     const auto beforeQueries = region.expressions->size();
     const auto zero = region.expressions->constant(0);

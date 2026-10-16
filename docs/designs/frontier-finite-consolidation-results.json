@@ -729,5 +729,23 @@
       "total": 2,
       "elapsed_seconds": 1.2234349250793457
     }
+  },
+  "qualification_status": {
+    "production_migration": "implemented",
+    "original_m5_acceptance": "closed by reviewed October 17 follow-up for the tested finite scope",
+    "followup_receipt": "frontier-finite-qualification-results.json",
+    "closed_items": [
+      "three serial interleaved immediate-baseline/candidate timing pairs for each of eight form/route combinations",
+      "16 geometric finite cases through saved/combined lowering and evaluated control, plus explicit regional construction",
+      "49/49 logical and allocated outputs byte-identical to immediate 1953d248c baseline",
+      "fresh guarded preparation, filters, failure/retry and construction counters measured"
+    ],
+    "remaining_limitations": [
+      "unchanged quadratic control on write-heavy/composed pair-record descriptions",
+      "fresh guarded requests rebuild publication recipes",
+      "inherited full-gate phased-repeat timeout",
+      "no device validation or demonstrated speedup"
+    ],
+    "correction": "The earlier completion claim preceded these measurements. The original implementation-time receipts remain historical; the linked follow-up closes their qualification gaps."
   }
 }

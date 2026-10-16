@@ -1,7 +1,11 @@
 # Finite analysis consolidation
 
-Baseline: `1953d248c`. Implementation status: M1–M5 accepted within the contracts below.
-The inherited repeated-phase timeout remains open; this is not an all-green gate.
+Baseline: `1953d248c`. Finite production migration implemented (M1–M4).
+M5 now includes the follow-up paired compiler measurements, geometric
+analysis-to-emission checks and immediate-baseline corpus comparison below.
+This qualifies the tested finite migration; it does not establish uniformly small
+control code. The inherited repeated-phase timeout remains open. The original
+completion claim preceded this evidence and was corrected before the follow-up.
 
 ## Contracts
 
@@ -58,8 +62,9 @@ hits, copied entries/bytes, constructed/live scalar code, command sites and
 executed inactive control. Scale concrete chains 32--4096; guarded few-writer
 cases 16--1024; write-heavy cases 8--128 with W=sum(w_x*m_x) charged explicitly.
 Different decompositions require equal semantics, not identical circuit sizes.
-Use three serial interleaved timing pairs for performance claims and finish with
-the full synchronization gate. Device qualification is separate.
+Complete three serial interleaved baseline/candidate timing pairs as an M5
+acceptance item, even if the result supports no speedup claim. Finish with the
+full synchronization gate. Device qualification is separate.
 
 ## Deletion ledger
 
@@ -197,7 +202,7 @@ build warnings are unchanged covered-switch defaults in SessionProducers.cpp
 and SequenceBoundary.cpp. The one changed-code G.FMT.11-CPP match is a multiline
 braced condition in PreparedInsertionChecks.cpp, inspected as a false positive.
 
-### M5 qualification
+### M5 qualification evidence (partial acceptance)
 
 The new finite qualification driver uses production pipe envelopes. Small
 flat/composed equivalence checks cover every top-level two-way partition,
@@ -224,8 +229,11 @@ Counters measure these named operations, not every DAG traversal or total
 compiler work; supplied effect/cell construction is outside the scan bound.
 
 Concrete export and requested numerical answers must construct no guarded
-analysis, and repeated preparation must reuse immutable recipes with separate
-mutable inventories. Guarded pair counts are checked against the actual supplied
+analysis, and repeated concrete preparation must reuse immutable recipes with
+separate mutable inventories. The large guarded fixtures do not currently test
+preparation or materialization. The large concrete fixtures test preparation
+reuse, but do not materialize their recipes. Their query loop checks each
+occurrence's own start-to-completion query. Guarded pair counts are checked against the actual supplied
 cell incidences and W, including write-heavy quadratic cases. Circuit-size checks
 are per tested construction, not a partition-independent representation claim.
 No planning or device speedup is claimed by this qualification milestone.
@@ -272,5 +280,169 @@ export, shares guarded ownership and direct-publication construction, and remove
 the superseded root/parent adapters in the deletion ledger. Distinct expanded-loop
 and prefix protocols remain supported through their existing qualified paths.
 
-Both reviewers accepted final M5 closure with the inherited failure retained.
-All five finite consolidation milestones are complete within this scope.
+The implementation-time reviewers accepted scoped M5 closure with the inherited
+failure retained. Subsequent review identified missing original acceptance
+items; that historical acceptance does not close the qualification work below.
+
+
+## Qualification follow-up: acceptance requirements
+
+Keep the five implementation commits. Complete this as one evidence-focused
+follow-up using the existing finite service, publication builder, allocation and
+materialization paths. Do not add another recognizer or change the accepted
+logical protocol to improve these measurements.
+
+1. **Immediate-baseline comparison.** Pin clean `1953d248c` and the candidate,
+   their compiler binaries, source/input hashes, build settings, flags and
+   resource limits. Reuse the existing LLVM build and incremental native targets.
+   Compare the primary 49 modules directly, prioritizing historical changed IDs
+   `0002`, `0007`, `0008`, `0009` and `0010`. Compare normalized logical behavior
+   or checked ordered payload/communication traces, matching and legal physical
+   reuse. Arbitrary record labels and certified ID renaming are not semantic
+   differences; normalization must not erase command multiplicity or order.
+   Stage success and aggregate operation counts alone do not close equivalence.
+   Record unsupported trace cases as remaining gaps rather than passes.
+2. **Analysis-to-emission scaling.** Extend geometrically increasing concrete,
+   guarded few-writer, guarded write-heavy and composed finite fixtures through
+   preparation, saved/reparsed allocation and combined physical lowering. Measure
+   records/families, publication qualification, total constructed arithmetic,
+   live lowered arithmetic, static command sites and evaluated control including
+   inactive guards. Evaluate representative admitted bindings, including absent
+   branches; label these executions rather than implying exhaustive coverage.
+   Exercise nontrivial inter-occurrence queries and valid child partitions.
+   Check semantic agreement independently of representation size. Keep exact
+   fixed-protocol capacity refusals distinct from missing capabilities; choose
+   feasible fixtures for emitted-code scaling without changing their protocol.
+3. **Paired compiler measurements.** Run at least three serial interleaved
+   baseline/candidate pairs for declared representative sizes of the concrete,
+   guarded and composed cases through both output routes. Keep the host, build
+   configuration, workload, flags, affinity and warm-up policy consistent. Do
+   not overlap timings with builds or other heavy jobs. Record full-process time
+   and available exclusive stages, including preparation, materialization and
+   serialization, plus memory where measured. Publish every pair and its scope;
+   a neutral result is valid evidence, while an unexplained material regression
+   needs investigation. Suite durations are not paired compiler timings.
+4. **Repeated guarded preparation.** Measure first and fresh repeated requests
+   on one retained guarded owner, distinguishing publication qualification,
+   recipe construction and mutable inventory instantiation from retained demand
+   analysis. Cover filtered and unfiltered requests and retry/failure behavior.
+   Preserve fresh mutable plans and owning invocation/history bindings. Add a
+   recipe cache only if measured reconstruction warrants it and its context can
+   be keyed soundly; filter-dependent results must not become an unfiltered cache.
+
+The concrete template's field-by-field admission check remains a documented
+maintenance concern. A directly produced immutable template is a possible later
+simplification, not a new prerequisite or authorization for a framework rewrite.
+
+The follow-up receipt below supplies these previously missing measurements.
+Retain the existing 265/266 gate result and phased-repeat limitation separately.
+No device correctness, universal guarded complexity bound or compiler speedup
+follows merely from finishing this qualification.
+
+
+### Follow-up evidence (October 17)
+
+The direct comparison against `1953d248c654b684c7320a97637a70973ae8d077`
+now covers all 49 primary PyPTO-lib modules with the same inputs, MayNotAlias
+and IDs 0–5. Every complete logical output and every allocated output is
+byte-identical to the `f7b761a8` campaign. No attributes, labels, expressions or
+commands were normalized away. This closes the five historically changed
+outputs as well as the other 44; their earlier differences came from comparison
+with an older baseline. Output and input hashes are retained in
+[the follow-up receipt](frontier-finite-qualification-results.json).
+
+The new end-to-end driver uses four geometric fixture families: concrete
+load/compute chains, one writer with guarded readers and disjoint destinations,
+guarded writers followed by a cross-pipe consumer, and alternating guarded
+load/compute regions. It checks all four valuations of the two supplied Boolean
+inputs. In addition to the production routes, an explicit library check exports
+contiguous original-operation children and invokes the existing sequence
+composer. It requires actual crossings before lowering through the normal saved
+and combined family paths. This separate check avoids assuming that the public
+dispatcher chose regional composition from a fixture's name.
+
+The repeated-preparation probe retains one guarded mathematical owner while
+requesting unfiltered, true-filtered, parity-filtered, false-filtered and failed
+preparations, followed by an unfiltered retry. Successful mutable plans remain
+alive simultaneously. It records publication qualification, recipe builds,
+inventories and newly appended expression nodes, and checks the selected edges
+against the retained demands. No recipe cache or allocation policy is changed.
+
+The geometric campaign completed all 16 cases at sizes 8, 16, 32 and 64, with
+four admitted Boolean valuations per case. Both revisions passed the independent
+payload-event closure oracle, ordered logical matching comparison and causal
+physical reuse checks for saved/reparsed and combined output. Candidate regional
+construction additionally passed those checks at each size. Cross-plan matching
+renames only the marked provenance-record field; raw identities still determine
+matching within each plan, and occurrence coordinates, cuts and coactive command
+order remain part of the comparison.
+
+At size 64, the production combined route reports:
+
+| Fixture | Retained records | Constructed scalars | Live added arithmetic | SET / WAIT sites | Maximum added arithmetic evaluations |
+|---|---:|---:|---:|---:|---:|
+| Concrete | 127 | 509 | 509 | 127 / 127 | 509 |
+| One writer, guarded readers | 64 | 575 | 575 | 64 / 64 | 323 |
+| Guarded writers, cross-pipe tail | 2,080 | 12,893 | 12,830 | 64 / 64 | 12,578 |
+| Guarded composition | 4,222 | 157,273 | 157,272 | 127 / 127 | 157,272 |
+
+Constructed scalars sum the existing preparation, compaction, mapping and barrier
+construction counters. Live and evaluated arithmetic subtract original payload
+control. Saved allocation has a separate decoded/materialized/normalized/inserted
+profile; enabling this diagnostic is checked not to change its output.
+
+The production baseline and candidate have equal recorded control profiles and
+evaluated control on these fixtures. Concrete and read-heavy construction grows
+linearly here. Write-heavy and composed inventories remain quadratic. In
+particular, the last row is **not compact source-linear control**. The explicit
+regional-library route uses 140 children and 2,206 crossings at size 64, constructs
+9,021 scalars and retains 8,896 added arithmetic operations. It has the same
+checked logical behavior but a different representation. These measurements
+identify further construction work; this qualification changes neither dispatch
+nor the selected synchronization protocol to exploit that alternative.
+
+Three serial interleaved baseline/candidate pairs were recorded at size 32 for
+each form and each output route, after one warm-up of each binary/route. No build
+or other heavy job overlapped these pairs. Both binaries use the same existing
+Release configuration, shared LLVM 19, optimization settings, CPU affinity and
+4-GiB address-space limit. Full-process times include parsing and serialization;
+saved output includes a separate allocation process. Available exclusive stage
+times are retained, grouped by stage without summing inclusive times. Uninstrumented
+serialization/materialization time is not presented as an exclusive measurement.
+
+| Fixture | Saved: median candidate/baseline | Combined: median candidate/baseline |
+|---|---:|---:|
+| Concrete | 1.005 | 1.021 |
+| Guarded readers | 0.998 | 1.028 |
+| Guarded writers | 1.002 | 0.994 |
+| Guarded composition | 1.001 | 1.001 |
+
+These results establish no speedup. Every pair, output/control count and tested
+binding is retained in the linked machine-readable receipt; raw stage logs,
+serialized artifacts and tool/input hashes remain under
+`.local/finite-qualification-followup/`. Peak memory was not measured.
+
+The isolated guarded-preparation rerun creates seven fresh inventories at each
+size. At size 64 it retains 252 demands and 3,479 expression nodes. An unfiltered
+request qualifies 252 publications and rebuilds one recipe; first and repeated
+requests take approximately 15 ms in this diagnostic run. No request appends
+expression nodes. The false filter builds no publication/recipe, a missing filter
+answer refuses, and the subsequent unfiltered retry succeeds. This establishes
+reconstruction work, not a production caching bottleneck. No cache was added.
+
+The final focused gate passed **20/20 in 125.30 seconds**, covering finite
+qualification, emission, overlays, publication, saved output and module ownership.
+The two new smoke checks also pass. The earlier full synchronization result stays
+**265/266**, with the same inherited phased-repeat timeout; it is not represented
+as a fresh full-suite run. There was no device compilation or execution.
+
+The changed-code checker has ten G.FMT.11-CPP matches caused by its greedy
+line-oriented expression matching nested calls/multiline conditions. Each affected
+body is braced; both reviewers inspected the code. Line-length findings were
+fixed. The final test-tool rebuild has no new warnings; the broader incremental
+rebuild retains the existing covered-switch warnings and shared build-only
+compatibility settings. No production static-analyzer result is claimed.
+
+Both architecture and compiler reviewers accepted the final source and follow-up
+receipts after the 20/20 focused gate. The four missing acceptance items are
+closed for this tested finite scope; the limitations above remain open.

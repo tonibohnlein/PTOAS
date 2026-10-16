@@ -15,6 +15,7 @@
 namespace mlir::pto::frontiersynch {
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(const RegionalDemandFilter& filter)
 {
+    accumulateCost(preparationWork.requests, 1);
     insertionError.clear();
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
     if (bits.isScalable() || bits.getFixedValue() != 64) {
@@ -22,6 +23,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
         return failure();
     }
     auto plan = std::make_unique<PreparedLogicalPlan>(0);
+    accumulateCost(preparationWork.inventories, 1);
     plan->groupedFamilies = true;
     plan->independentPieces = true;
     std::vector<RegionalAllocationGroup> allocationGroups;
@@ -29,7 +31,9 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
     ContextualFamilyExpressions expressions(arena);
     const auto zero = arena->constant(0);
     for (auto demand : retained) {
+        accumulateCost(preparationWork.demandVisits, 1);
         if (filter) {
+            accumulateCost(preparationWork.filterQueries, 1);
             auto condition = filter({demand.source, zero, PeriodicEventKind::Completion},
                                     {demand.target, zero, PeriodicEventKind::Start});
             if (!condition || !arena->isBoolean(*condition)) {
@@ -49,6 +53,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
         family.id = record; family.sourcePipe = p; family.targetPipe = q; family.local = p == q;
         family.sourceCut = a.after; family.targetCut = b.before;
         family.members.push_back({record, demand.source, demand.target, {}, {}});
+        accumulateCost(preparationWork.publicationRequests, 1);
         auto direct = prepareDirectPublicationFamily(function, expressions, std::move(family),
             demand.guard, demand.guard, demand.guard, insertionError);
         if (failed(direct)) { return failure(); }
@@ -68,6 +73,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
         endpoint.piece.namespaceId = namespaces.at(endpoint.piece.members.front().record);
     }
     if (!endpoints.empty()) {
+        accumulateCost(preparationWork.recipeBuilds, 1);
         auto recipe = buildContextualFamilyEndpointRecipe(expressions, endpoints);
         if (failed(recipe)) {
             insertionError = "finite guarded family predicate or identity unavailable: " + arena->lastEmissionError();
