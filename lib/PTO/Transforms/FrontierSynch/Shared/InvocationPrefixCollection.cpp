@@ -35,9 +35,12 @@ std::shared_ptr<const RegionalPrefixContribution> sequencePrefixContribution(
     for (const auto& child : state->children) {
         auto owner = child.regional.invocationPrefix ? child.regional.invocationPrefix->input :
             (child.prefixMathematics ? child.prefixMathematics->input : nullptr);
+        if (!owner && child.finite && child.finite->originalInput()) {
+            owner = child.finite->originalInput()->storageOwner();
+        }
         if (!owner) {
             const bool empty = child.anchors.empty() && child.regional.anchors.empty() &&
-                child.explicitAnalysis.phases.empty();
+                (!child.finite || !child.finite->concrete() || child.finite->concrete()->phases.empty());
             if (!empty) { return {}; }
             continue;
         }

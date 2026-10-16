@@ -1,6 +1,6 @@
 # Finite analysis consolidation
 
-Baseline: `1953d248c`. Implementation status: M1 accepted; M2–M5 remain open.
+Baseline: `1953d248c`. Implementation status: M1–M2 accepted; M3–M5 remain open.
 
 ## Contracts
 
@@ -96,3 +96,37 @@ G.FMT.11-CPP matches are multiline conditions with braced bodies (AnalysisReques
 FiniteAnalysis, NormalizedControlChecks, SyncLogicalInsertionChecks and
 WholeInvocationIdentityChecks); inspected and classified as regex false positives.
 No production analyzer or device validation is claimed.
+
+### M2 numerical regional export and child ownership
+
+The finite service now exports concrete rows and stored numerical boundaries
+through the existing regional interface. Only requested answers are wrapped in
+shared expressions. Guarded exports retain the same finite owner. Original
+contiguous slices share validated source facts; creating a slice copies only its
+own roots. Legacy reference-based callers use an explicitly borrowed input, and
+cannot export a detached prefix owner without an owned source context.
+
+Sequence children retain this finite result instead of a separate by-value
+explicit analysis. The parent-dependent concrete query/preparation adapter and
+its recipe-template cache have been deleted. Immutable concrete recipes are
+cached by the finite owner and instantiated with fresh mutable inventories.
+Prefix collection and sequence prefix contributions use the retained owner;
+expanded and numerical periodic coordinate adapters remain separate.
+
+The new oracle tries every two-way contiguous partition, including empty
+children, compares active demand pairs, all four event-kind queries and actual
+storage boundary occurrences, and exercises callbacks after their caller releases
+the result. Original occurrences, not expression or record identifiers, determine
+agreement. Existing guarded, envelope, prefix and retry tests cover those clients.
+
+Both reviewers accepted the source scope, conditional on runtime validation.
+Review caught and removed whole-root copying per slice; physical-fragment cost
+accounting was retained. The incremental compiler/tool build and direct partition
+oracle passed. The 17 changed-code checker matches are braced conditions/loops
+misclassified by its line-oriented G.FMT.11-CPP pattern; each was inspected. No
+new compiler warning or production-analyzer result is claimed.
+
+The M2 focused gate passed 32/32 in 121.68 seconds (`m2-focused.json` and
+`m2-focused.out`), including guarded publication, numerical finite crossings,
+regional/session retries, conditional upgrades, overlays and prefix clients.
+This is a focused gate; the final synchronization campaign remains M5.

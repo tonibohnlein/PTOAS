@@ -54,7 +54,7 @@ struct Child {
     std::vector<TemplateEndpointAnchor> anchors;
     std::vector<Pattern> patterns;
     SmallVector<std::size_t> dischargedEffects;
-    ExplicitAnalysis explicitAnalysis;
+    std::shared_ptr<FiniteAnalysis> finite;
     PeriodicAnalysis periodic;
     NumericTemplateEndpoints endpoints;
     std::shared_ptr<const NumericTemplate> numericTemplate;
@@ -94,6 +94,7 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     const ArithmeticRegionalAllocationPolicy allocationPolicy;
     func::FuncOp function;
     const SyncInput* input = nullptr;
+    std::shared_ptr<const FiniteOccurrenceInput> finiteInput;
     const ProgramRecognition* program = nullptr;
     std::shared_ptr<PhaseIndex> indexOwner;
     PhaseIndex& index;
@@ -246,6 +247,7 @@ struct SequenceAnalysisState : std::enable_shared_from_this<SequenceAnalysisStat
     bool collect(std::size_t rootNode = 0);
     FailureOr<RegionalAnalysis> originalRegion(std::size_t node, std::string& diagnostic);
     bool resolvedChild(std::size_t node);
+    bool finiteChild(ArrayRef<Operation*> roots, FiniteStrategy strategy);
     bool explicitChild(const StructureNode& node);
     bool conditionalChild(const StructureNode& node);
     bool loopChild(const StructureNode& node);

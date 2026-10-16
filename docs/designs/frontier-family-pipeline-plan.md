@@ -11,6 +11,11 @@ commit. Earlier plans and measurements remain in the
 [current namespace checkpoint receipt](frontier-explicit-namespace-checkpoint.md) separates reviewed
 implementation from executed validation and unresolved protocol work.
 
+The current finite-path follow-up is tracked in the
+[finite consolidation milestones](frontier-finite-consolidation.md). It refines
+finite root/regional ownership and direct realization while retaining the
+contracts and outstanding protocol limits below.
+
 ## Current status
 
 | Work | Implementation acceptance | Kernel compilation | Fixed-protocol capacity investigation |

@@ -23,7 +23,8 @@ inline bool checkSequenceExplicitRetry(const frontiersynch::SequenceAnalysis& an
     const auto original = sourceIR();
     unsigned checked = 0;
     for (const auto& child : analysis.state->children) {
-        if (child.loop || child.explicitAnalysis.reduction.retained.empty()) { continue; }
+        if (!child.finite || !child.finite->concrete() ||
+            child.finite->concrete()->reduction.retained.empty()) { continue; }
         const auto prepare = child.regional.prepare;
         if (!prepare) { return false; }
         auto left = prepare(), right = prepare();

@@ -25,6 +25,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "mlir/IR/Diagnostics.h"
 #include "NumericalRequestOracle.h"
+#include "FiniteRegionalChecks.h"
 #include "NumericalLogicalTraceChecks.h"
 using namespace mlir;
 LogicalResult checkCrossingCostSelection(func::FuncOp function, pto::GMAliasPolicy)
@@ -1226,6 +1227,9 @@ LogicalResult checkExactFormFastPath(func::FuncOp function, pto::GMAliasPolicy p
         &owner->originalInput()->storage() != session.input() ||
         owner != queries.mathematical->finiteDemands || session.constructionCounts().explicitReductions != 1) {
         return function.emitError("finite concrete ownership or capability reuse changed");
+    }
+    if (!pto::test::checkFiniteRegionalPartitions(owner)) {
+        return function.emitError("finite partition queries, boundaries or ownership disagree");
     }
     auto prepared = session.prepareLogical(demands);
     const auto& explicitAnalysis = *demands.mathematical->concreteDemands();
