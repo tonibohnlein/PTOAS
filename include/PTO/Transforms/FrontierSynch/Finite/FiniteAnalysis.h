@@ -20,19 +20,28 @@ class FiniteOccurrenceInput {
 public:
     func::FuncOp function() const { return originalFunction; }
     ArrayRef<Operation*> roots() const { return originalRoots; }
-    const SyncInput& storage() const { return *inputOwner; }
+    const SyncInput& storage() const { return *inputView; }
+    std::shared_ptr<const SyncInput> storageOwner() const { return inputOwner; }
+    bool wholeFunction() const { return whole; }
     const PhaseIndex& index() const { return *indexOwner; }
 private:
     friend std::shared_ptr<const FiniteOccurrenceInput> finiteFunctionInput(func::FuncOp,
         std::shared_ptr<const SyncInput>, std::shared_ptr<const PhaseIndex>);
-    FiniteOccurrenceInput(func::FuncOp function, std::shared_ptr<const SyncInput> storage,
+    friend std::shared_ptr<const FiniteOccurrenceInput> finiteBorrowedFunctionInput(
+        func::FuncOp, const SyncInput&, std::shared_ptr<const PhaseIndex>);
+    friend std::shared_ptr<const FiniteOccurrenceInput> finiteRegionInput(
+        std::shared_ptr<const FiniteOccurrenceInput>, ArrayRef<Operation*>);
+    FiniteOccurrenceInput(func::FuncOp function, const SyncInput& storage,
                           std::shared_ptr<const PhaseIndex> index)
-        : originalFunction(function), inputOwner(std::move(storage)), indexOwner(std::move(index)) {}
+        : originalFunction(function), inputView(&storage), indexOwner(std::move(index)) {}
     func::FuncOp originalFunction;
     SmallVector<Operation*> originalRoots;
+    const SyncInput* inputView;
     std::shared_ptr<const SyncInput> inputOwner;
+    bool whole = true;
     std::shared_ptr<const PhaseIndex> indexOwner;
 };
+struct FiniteRecipeTemplate;
 class FiniteAnalysis {
 public:
     FiniteAnalysis(std::shared_ptr<const FiniteOccurrenceInput> input, ExplicitAnalysis result)
@@ -49,9 +58,19 @@ private:
     std::shared_ptr<const FiniteOccurrenceInput> input;
     std::variant<ExplicitAnalysis, FiniteGuardedAnalysis> representation;
     std::string preparationError;
+    std::shared_ptr<const FiniteRecipeTemplate> recipe;
 };
 std::shared_ptr<const FiniteOccurrenceInput> finiteFunctionInput(func::FuncOp function,
     std::shared_ptr<const SyncInput> storage, std::shared_ptr<const PhaseIndex> index);
+// Legacy reference-based sequence entry points borrow storage explicitly. They
+// cannot advertise detached prefix ownership. Production passes use the owner factory.
+std::shared_ptr<const FiniteOccurrenceInput> finiteBorrowedFunctionInput(func::FuncOp function,
+    const SyncInput& storage, std::shared_ptr<const PhaseIndex> index);
+// One adjacent original block slice, including indivisible structured operations.
+std::shared_ptr<const FiniteOccurrenceInput> finiteRegionInput(
+    std::shared_ptr<const FiniteOccurrenceInput> source, ArrayRef<Operation*> roots);
+RegionalAnalysis finiteRegionalResult(std::shared_ptr<FiniteAnalysis> analysis,
+    std::shared_ptr<RegionExpressions> expressions = {});
 std::shared_ptr<FiniteAnalysis> analyzeFinite(std::shared_ptr<const FiniteOccurrenceInput> input,
     FiniteStrategy strategy, std::shared_ptr<RegionExpressions> expressions = {});
 } // namespace mlir::pto::frontiersynch

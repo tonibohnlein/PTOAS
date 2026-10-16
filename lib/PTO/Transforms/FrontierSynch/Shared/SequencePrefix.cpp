@@ -481,8 +481,8 @@ LogicalResult collectSequencePrefixChildren(
             if (failed(collectInvocationPrefix(child.prefixMathematics, collection, diagnostic))) {
                 return failure();
             }
-        } else if (!child.explicitAnalysis.phases.empty()) {
-            if (failed(appendExplicitPrefixRealization(child.explicitAnalysis, collection, diagnostic))) {
+        } else if (child.finite && child.finite->concrete()) {
+            if (failed(appendExplicitPrefixRealization(*child.finite->concrete(), collection, diagnostic))) {
                 return failure();
             }
         } else if (!child.anchors.empty()) {

@@ -86,6 +86,7 @@ struct NumericBodyMathematics;
 struct GuardedRotatingSpecialization;
 struct GuardedRotatingMathematics;
 struct SequenceRegionResolver {
+    std::shared_ptr<const FiniteOccurrenceInput> finiteInput;
     ArithmeticRegionalAllocationPolicy allocationPolicy = ArithmeticRegionalAllocationPolicy::SingleId;
     // Materialize only the form needed by the next adapter. Legacy supplied
     // programs already own their forms. This callback never constructs demands.

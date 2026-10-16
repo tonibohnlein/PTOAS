@@ -28,7 +28,10 @@ std::optional<int64_t> sequenceInteger(Value value)
 FailureOr<RegionalAnalysis> SequenceAnalysisState::originalRegion(std::size_t node, std::string& diagnostic)
 {
     if (resolveOriginal) { return resolveOriginal(node, requireEndpoints, diagnostic); }
-    auto analyzed = analyzeSequenceRegion(function, *input, *program, node, arena, indexOwner, requireEndpoints);
+    SequenceRegionResolver context;
+    context.finiteInput = finiteInput;
+    auto analyzed = analyzeSequenceRegionWithResolver(function, *input, *program, node, arena, indexOwner,
+                                                     requireEndpoints, std::move(context));
     if (!analyzed.error.empty()) { diagnostic = analyzed.error; return failure(); }
     return sequenceRegionalResult(analyzed);
 }
@@ -45,50 +48,32 @@ bool SequenceAnalysisState::resolvedChild(std::size_t node)
     children.push_back(std::move(child));
     return true;
 }
-bool SequenceAnalysisState::explicitChild(const StructureNode& node)
+bool SequenceAnalysisState::finiteChild(ArrayRef<Operation*> roots, FiniteStrategy strategy)
 {
-
-    bool envelopes = llvm::any_of(node.payloads, [&](auto id) {
-        return program->payloads[id].phase->macroOpInstanceId >= 0;
-    });
-    if (envelopes) {
-        auto finite = analyzeFiniteGuarded(function, node.operations, index, *input, arena);
-        if (!finite.error.empty()) { return fail(finite.error); }
-        Child child;
-        child.regional = finiteGuardedRegionalResult(finite);
-        children.push_back(std::move(child));
-        return true;
-    }
-    if (!node.explicitResult || node.explicitResult->state != RecognitionState::Applicable) {
-        return fail("sequence explicit child has an unsupported control or prerequisite obligation");
-    }
-    SmallVector<const CompoundInstanceElement*> phases;
-    for (auto id : node.payloads) { phases.push_back(program->payloads[id].phase); }
-    if (phases.empty()) { return true; }
+    if (!finiteInput) { finiteInput = finiteBorrowedFunctionInput(function, *input, indexOwner); }
+    auto original = finiteRegionInput(finiteInput, roots);
+    if (!original) { return fail("finite child requires a contiguous original occurrence interval"); }
     Child child;
-    child.trips = c(1);
-    child.explicitAnalysis = analyzeExplicit(phases, index, *input, true);
-    if (!child.explicitAnalysis.error.empty()) { return fail(child.explicitAnalysis.error); }
-    child.dischargedEffects = child.explicitAnalysis.dischargedEffects;
-    for (uint32_t type = 0; type < phases.size(); ++type) {
-        auto* phase = phases[type];
-        auto* op = phase->elementOp;
-        child.anchors.push_back({phase, {}, {op->getBlock(), op}, {op->getBlock(), op->getNextNode()}});
-        for (auto id : input->accesses().effectsFor(phase)) {
-            const auto& effect = input->accesses().effects()[id];
-            if (llvm::is_contained(child.explicitAnalysis.dischargedEffects, id)) {
-                // The explicit adapter already proved these phases conflict-free
-                // against every other phase in the shared input.
-                continue;
-            }
-            for (const auto& range : effect.ranges) {
-                child.patterns.push_back({range, type, 0, 1,
-                    effect.mode == SyncAccessMode::Read, effect.mode == SyncAccessMode::Write});
-            }
-        }
+    child.finite = analyzeFinite(original, strategy, arena);
+    if (!child.finite || !child.finite->error().empty()) {
+        return fail(child.finite ? child.finite->error() : "finite child unavailable");
     }
+    child.regional = finiteRegionalResult(child.finite, arena);
+    if (!child.regional.presence) { return fail("finite child regional export unavailable"); }
+    child.anchors = child.regional.anchors;
     children.push_back(std::move(child));
     return true;
+}
+bool SequenceAnalysisState::explicitChild(const StructureNode& node)
+{
+    const bool envelopes = llvm::any_of(node.payloads, [&](auto id) {
+        return program->payloads[id].phase->macroOpInstanceId >= 0;
+    });
+    if (!envelopes && (!node.explicitResult || node.explicitResult->state != RecognitionState::Applicable)) {
+        return fail("sequence explicit child has an unsupported control or prerequisite obligation");
+    }
+    if (node.payloads.empty()) { return true; }
+    return finiteChild(node.operations, envelopes ? FiniteStrategy::Guarded : FiniteStrategy::Concrete);
 }
 bool SequenceAnalysisState::numericPatterns(Child& child, const NumericTemplate& numeric)
 {
@@ -549,12 +534,7 @@ bool SequenceAnalysisState::collect(std::size_t rootNode)
         }
         if (end == position) { return fail("sequence child lacks an exact regional interface"); }
         if (guarded) {
-            auto analysis = analyzeFiniteGuarded(function,roots,index,*input,arena);
-            if (!analysis.error.empty()) { return fail(analysis.error); }
-            Child child;
-            child.regional = finiteGuardedRegionalResult(analysis);
-            child.anchors = child.regional.anchors;
-            children.push_back(std::move(child));
+            if (!finiteChild(roots, FiniteStrategy::Guarded)) { return false; }
         } else {
             StructureNode fused;
             fused.kind = StructureKind::ExplicitRun;

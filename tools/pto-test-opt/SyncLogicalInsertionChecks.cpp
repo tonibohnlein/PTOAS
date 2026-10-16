@@ -1671,7 +1671,7 @@ LogicalResult runFiniteGuardedAnalysisChecks(func::FuncOp function, pto::GMAlias
     index.reset();
     const auto& analysis = *retained->guarded();
     const auto& input = retained->originalInput()->storage();
-    auto regional = fs::finiteGuardedRegionalResult(analysis);
+    auto regional = fs::finiteRegionalResult(retained);
     auto prepared = retained->prepare();
     auto retry = retained->prepare();
     if (succeeded(prepared) != succeeded(retry) ||

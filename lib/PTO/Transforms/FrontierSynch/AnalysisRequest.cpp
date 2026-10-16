@@ -741,7 +741,7 @@ std::shared_ptr<const RegionalAnalysis> allocationRegion(const MathematicalResul
         return std::make_shared<const RegionalAnalysis>(sequenceRegionalResult(*demands.sequenceDemands));
     }
     if (demands.finiteDemands && demands.finiteDemands->guarded()) {
-        return std::make_shared<const RegionalAnalysis>(finiteGuardedRegionalResult(*demands.finiteDemands->guarded()));
+        return std::make_shared<const RegionalAnalysis>(finiteRegionalResult(demands.finiteDemands));
     }
     return {};
 }

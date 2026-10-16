@@ -877,6 +877,8 @@ SequenceRegionResolver FrontierAnalysis::regionalResolver(
     std::shared_ptr<const MathematicalResult> retainedNumerical)
 {
     SequenceRegionResolver resolver;
+    if (!finiteInput) { finiteInput = finiteFunctionInput(function, storage, structuralIndex); }
+    resolver.finiteInput = finiteInput;
     resolver.allocationPolicy = arithmeticAllocationPolicy();
     auto tagged = [this](const RegionalAnalysis& source, std::shared_ptr<const MathematicalResult> owner) {
         RegionalAnalysis exported = source;

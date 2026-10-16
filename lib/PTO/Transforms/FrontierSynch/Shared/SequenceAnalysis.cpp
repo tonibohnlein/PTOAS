@@ -284,6 +284,10 @@ SequenceAnalysis analyzeSequenceRegionWithResolver(func::FuncOp function, const 
     auto state = std::make_shared<SequenceAnalysisState>(function, std::move(expressions),
         std::move(sharedIndex), program.allocationPolicy);
     state->input = &input;
+    state->finiteInput = resolver.finiteInput;
+    if (state->finiteInput && &state->finiteInput->storage() != &input) {
+        result.error = "finite sequence input belongs to different source facts"; return result;
+    }
     state->constructionOrigin = "requested-region";
     state->diagnosticRegion = node;
     state->originalRegionId = node;
@@ -410,6 +414,7 @@ std::optional<SequenceAnalysis> upgradeSequenceEndpoints(const SequenceAnalysis&
             source->indexOwner, source->allocationPolicy);
         state->upgradeSource = source;
         state->input = source->input; state->program = source->program;
+        state->finiteInput = source->finiteInput;
         state->completeInvocation = source->completeInvocation;
         state->reconstructPrerequisites = source->reconstructPrerequisites;
         state->requiredOuterLoops = source->requiredOuterLoops;
