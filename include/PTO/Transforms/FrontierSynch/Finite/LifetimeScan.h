@@ -58,8 +58,9 @@ struct StorageScanResult {
 // hardware contract marks these explicitly). This is a caller-supplied proof,
 // not an arbitrary pairwise exemption. IDs are local to one scan: remap them
 // before merging independently built inputs or repeating a dynamic scope.
+struct StorageScanWork;
 StorageScanResult scanStorageLifetimes(llvm::ArrayRef<ExplicitEffects> occurrences,
                                       llvm::ArrayRef<StorageGenerator> prerequisites = {},
-                                      StorageProtectionPolicy protection = {});
+                                      StorageProtectionPolicy protection = {}, StorageScanWork* work = nullptr);
 } // namespace mlir::pto::frontiersynch
 #endif

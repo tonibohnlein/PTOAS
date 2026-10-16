@@ -1,0 +1,733 @@
+{
+  "scope": "Finite consolidation M1-M5; host compiler qualification, no device execution or speedup claim",
+  "baseline": "1953d248c654b684c7320a97637a70973ae8d077",
+  "committed_milestones": {
+    "M1": "a8b3c528e3f41ad087a2bdd0c440c8e563733caf",
+    "M2": "27ff1a3e3",
+    "M3": "30b594567",
+    "M4": "268e416dcf1aac1e920e6de7c4ddc38977ea3867"
+  },
+  "m5_source_sha256": {
+    "include/PTO/Transforms/FrontierSynch/Finite/ExplicitAnalysis.h": "b33aa680a06453273817683015a4e204ca88a7279975759b11c05d57a72fd41c",
+    "include/PTO/Transforms/FrontierSynch/Finite/FiniteAnalysis.h": "d823b1b4cc3d1a987f097b0fd58fd6863f133cd306d0ccbccbe03f7310cf3ba8",
+    "include/PTO/Transforms/FrontierSynch/Finite/LifetimeScan.h": "663c245c27bde39e9e8559f33404b8dedeb2e5f8ae861869e7a56ece452443cf",
+    "lib/PTO/Transforms/FrontierSynch/Finite/ExplicitAnalysis.cpp": "c5e99f4e601a4ab12b1f7f0fed7bf5da012d589a41fc9841491f13da7dc949b1",
+    "lib/PTO/Transforms/FrontierSynch/Finite/FiniteAnalysis.cpp": "42e1f65cf41412a58ca154745336aa506d598ce5a568f5ef47662b58cb6e2d39",
+    "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.cpp": "d01be14ac511156458284a520958a974e3dfeeb64a38d8e12b8372f3407f2118",
+    "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInternal.h": "82fd5d008414582efaab436dfcdd378c1e251cbdf81ebd6f0954f35c99f90fa1",
+    "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedQueries.cpp": "b236478ed6e001b21658a900df3f647b1ae9ce1d4f0bf62fb1057bbddb4213ac",
+    "lib/PTO/Transforms/FrontierSynch/Finite/FiniteRegional.cpp": "ab249056cabf7a2f4ace9ced1d23109f1fbfb27220d176d99c54b360f75ac7ac",
+    "lib/PTO/Transforms/FrontierSynch/Finite/LifetimeScan.cpp": "3ff2f2c23ae313944b7ed51e192e79c5ec1e784e97cfdbc943fbd7f6d1ff1493",
+    "lib/PTO/Transforms/FrontierSynch/Shared/GuardedStorageScan.h": "07730df99149592c8b5457e551ccc0b3beab2804a960d98e9a75eb03ed0c7758",
+    "tools/pto-test-opt/CMakeLists.txt": "475719712e725f3aaf4cdb75c0520edf94104cf0a60e4ca7986bced3b4901490",
+    "tools/pto-test-opt/SyncLogicalInsertionChecks.cpp": "cb585e8b8de0636cb7310831e51d18033b3cc7d1f919376c2a9bb618fe23f9a3",
+    "test/lit/pto/Inputs/check_finite_qualification.py": "cffe190f43a5c7bb5de5eadef0563866c7b3c201bc99c4e4be11376542764269",
+    "test/lit/pto/sync_finite_partition_macro.pto": "27ac7b6d59d86dd5067319097bde903d8f0d80326cc15e30379debb1d41a84c7",
+    "test/lit/pto/sync_finite_qualification.pto": "acf9e960059240c04ce0f9f70e1bd550cd6d54d612af4338cd1fb71a231ecfe8",
+    "tools/pto-test-opt/FiniteQualificationChecks.cpp": "75027561b1d20c65309722cd16a0ab4aff67724881c10f8020538a6006e1e82e"
+  },
+  "planner_sha256": "eaa61fe22662f4e03ed8eb1676b7322c8af7159007b5e0843c9ec59406e0621b",
+  "semantic_qualification": {
+    "description": "Flat/composed equality on original finite identities, all four event queries, presence, boundaries and demands. Existing graph/cover tests provide independent conflict oracles.",
+    "partitions": 57,
+    "comparisons": 13596,
+    "small_cases": 4,
+    "limitations": "Zero ordinals and no visit frames in this comparator; repeated invocation is covered by separate command trace tests."
+  },
+  "scaling": {
+    "scope": "Named inspected-work counters, not total compiler cost; query_nodes counts added nodes for requested numerical answers. Pair visits include both guarded scans; candidates are per scan.",
+    "rows": [
+      {
+        "mode": "concrete",
+        "boundary_entries": 9,
+        "hazard_visits": 61,
+        "incidences": 80,
+        "numerical_queries": 32,
+        "query_nodes": 0,
+        "recipe_hits": 1,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 42,
+        "retained_witnesses": 61,
+        "root_copy_bytes": 1008,
+        "sites": 32,
+        "slice_root_copies": 42
+      },
+      {
+        "mode": "concrete",
+        "boundary_entries": 9,
+        "hazard_visits": 125,
+        "incidences": 160,
+        "numerical_queries": 64,
+        "query_nodes": 0,
+        "recipe_hits": 1,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 74,
+        "retained_witnesses": 125,
+        "root_copy_bytes": 1776,
+        "sites": 64,
+        "slice_root_copies": 74
+      },
+      {
+        "mode": "concrete",
+        "boundary_entries": 9,
+        "hazard_visits": 253,
+        "incidences": 320,
+        "numerical_queries": 128,
+        "query_nodes": 0,
+        "recipe_hits": 1,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 138,
+        "retained_witnesses": 253,
+        "root_copy_bytes": 3312,
+        "sites": 128,
+        "slice_root_copies": 138
+      },
+      {
+        "mode": "concrete",
+        "boundary_entries": 9,
+        "hazard_visits": 509,
+        "incidences": 640,
+        "numerical_queries": 256,
+        "query_nodes": 0,
+        "recipe_hits": 1,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 266,
+        "retained_witnesses": 509,
+        "root_copy_bytes": 6384,
+        "sites": 256,
+        "slice_root_copies": 266
+      },
+      {
+        "mode": "concrete",
+        "boundary_entries": 9,
+        "hazard_visits": 1021,
+        "incidences": 1280,
+        "numerical_queries": 512,
+        "query_nodes": 0,
+        "recipe_hits": 1,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 522,
+        "retained_witnesses": 1021,
+        "root_copy_bytes": 12528,
+        "sites": 512,
+        "slice_root_copies": 522
+      },
+      {
+        "mode": "concrete",
+        "boundary_entries": 9,
+        "hazard_visits": 2045,
+        "incidences": 2560,
+        "numerical_queries": 1024,
+        "query_nodes": 0,
+        "recipe_hits": 1,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 1034,
+        "retained_witnesses": 2045,
+        "root_copy_bytes": 24816,
+        "sites": 1024,
+        "slice_root_copies": 1034
+      },
+      {
+        "mode": "concrete",
+        "boundary_entries": 9,
+        "hazard_visits": 4093,
+        "incidences": 5120,
+        "numerical_queries": 2048,
+        "query_nodes": 0,
+        "recipe_hits": 1,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 2058,
+        "retained_witnesses": 4093,
+        "root_copy_bytes": 49392,
+        "sites": 2048,
+        "slice_root_copies": 2058
+      },
+      {
+        "mode": "concrete",
+        "boundary_entries": 9,
+        "hazard_visits": 8189,
+        "incidences": 10240,
+        "numerical_queries": 4096,
+        "query_nodes": 0,
+        "recipe_hits": 1,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 4106,
+        "retained_witnesses": 8189,
+        "root_copy_bytes": 98544,
+        "sites": 4096,
+        "slice_root_copies": 4106
+      },
+      {
+        "mode": "guarded",
+        "W": 33,
+        "candidates": 16,
+        "expressions": 37,
+        "incidences": 50,
+        "pair_visits": 32,
+        "query_nodes": 0,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 59,
+        "root_copy_bytes": 1416,
+        "selectors": 134,
+        "sites": 17,
+        "slice_root_copies": 59
+      },
+      {
+        "mode": "guarded",
+        "W": 65,
+        "candidates": 32,
+        "expressions": 69,
+        "incidences": 98,
+        "pair_visits": 64,
+        "query_nodes": 0,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 107,
+        "root_copy_bytes": 2568,
+        "selectors": 262,
+        "sites": 33,
+        "slice_root_copies": 107
+      },
+      {
+        "mode": "guarded",
+        "W": 129,
+        "candidates": 64,
+        "expressions": 133,
+        "incidences": 194,
+        "pair_visits": 128,
+        "query_nodes": 0,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 203,
+        "root_copy_bytes": 4872,
+        "selectors": 518,
+        "sites": 65,
+        "slice_root_copies": 203
+      },
+      {
+        "mode": "guarded",
+        "W": 257,
+        "candidates": 128,
+        "expressions": 261,
+        "incidences": 386,
+        "pair_visits": 256,
+        "query_nodes": 0,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 395,
+        "root_copy_bytes": 9480,
+        "selectors": 1030,
+        "sites": 129,
+        "slice_root_copies": 395
+      },
+      {
+        "mode": "guarded",
+        "W": 513,
+        "candidates": 256,
+        "expressions": 517,
+        "incidences": 770,
+        "pair_visits": 512,
+        "query_nodes": 0,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 779,
+        "root_copy_bytes": 18696,
+        "selectors": 2054,
+        "sites": 257,
+        "slice_root_copies": 779
+      },
+      {
+        "mode": "guarded",
+        "W": 1025,
+        "candidates": 512,
+        "expressions": 1029,
+        "incidences": 1538,
+        "pair_visits": 1024,
+        "query_nodes": 0,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 1547,
+        "root_copy_bytes": 37128,
+        "selectors": 4102,
+        "sites": 513,
+        "slice_root_copies": 1547
+      },
+      {
+        "mode": "guarded",
+        "W": 2049,
+        "candidates": 1024,
+        "expressions": 2053,
+        "incidences": 3074,
+        "pair_visits": 2048,
+        "query_nodes": 0,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 3083,
+        "root_copy_bytes": 73992,
+        "selectors": 8198,
+        "sites": 1025,
+        "slice_root_copies": 3083
+      },
+      {
+        "mode": "guarded",
+        "W": 64,
+        "candidates": 28,
+        "expressions": 169,
+        "incidences": 16,
+        "pair_visits": 112,
+        "query_nodes": 0,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 18,
+        "root_copy_bytes": 432,
+        "selectors": 48,
+        "sites": 8,
+        "slice_root_copies": 18
+      },
+      {
+        "mode": "guarded",
+        "W": 256,
+        "candidates": 120,
+        "expressions": 473,
+        "incidences": 32,
+        "pair_visits": 480,
+        "query_nodes": 0,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 26,
+        "root_copy_bytes": 624,
+        "selectors": 96,
+        "sites": 16,
+        "slice_root_copies": 26
+      },
+      {
+        "mode": "guarded",
+        "W": 1024,
+        "candidates": 496,
+        "expressions": 1465,
+        "incidences": 64,
+        "pair_visits": 1984,
+        "query_nodes": 0,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 42,
+        "root_copy_bytes": 1008,
+        "selectors": 192,
+        "sites": 32,
+        "slice_root_copies": 42
+      },
+      {
+        "mode": "guarded",
+        "W": 4096,
+        "candidates": 2016,
+        "expressions": 4985,
+        "incidences": 128,
+        "pair_visits": 8064,
+        "query_nodes": 0,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 74,
+        "root_copy_bytes": 1776,
+        "selectors": 384,
+        "sites": 64,
+        "slice_root_copies": 74
+      },
+      {
+        "mode": "guarded",
+        "W": 16384,
+        "candidates": 8128,
+        "expressions": 18169,
+        "incidences": 256,
+        "pair_visits": 32512,
+        "query_nodes": 0,
+        "residual_effects": 0,
+        "residual_phases": 0,
+        "retained_roots": 138,
+        "root_copy_bytes": 3312,
+        "selectors": 768,
+        "sites": 128,
+        "slice_root_copies": 138
+      }
+    ]
+  },
+  "primary_pypto_lib": {
+    "alias_policy": "may-not-alias",
+    "eligible_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "logical_success": 49,
+    "physical_success": 49,
+    "total": 49,
+    "cpp_requested": false,
+    "device_runs": 0,
+    "comparison_scope": "Same input hashes and successful stage outcomes against historical rebase campaign, not paired timing or semantic trace equality.",
+    "historical_checkout": "3c166285004fc78e72f2493c397cb3633ff6f88f",
+    "historical_working_diff_sha256": "417ca6c65b266dfdc6395b0417d480042ac409c1130e8e7b359274eb2b914001",
+    "inputs": [
+      {
+        "id": "0000",
+        "sha256": "8aa3491afbabdffdc703a5df8090712964e5440e5fcb7bc2de40e0634578c411"
+      },
+      {
+        "id": "0001",
+        "sha256": "138e4b22cb37800778c21dae6aa677116fd5e045f069b51d755b747526892572"
+      },
+      {
+        "id": "0002",
+        "sha256": "7fc04f6c61368697a77f88ad873a4a58b3d543f161b568aac24f4c24bbdb12ad"
+      },
+      {
+        "id": "0003",
+        "sha256": "663d4a5b4f18e88994b573b94c8d0129c3aa9a40c45c8b8cc7e0b6cddea73cef"
+      },
+      {
+        "id": "0004",
+        "sha256": "924a41d73f8584f6808c5cec69a54390446304255de90d9e9f01287748a6cb03"
+      },
+      {
+        "id": "0005",
+        "sha256": "c2431f5ba5f9cf3f7d1300abe076c38d8fb91e78fb93d604b67a057358a1a703"
+      },
+      {
+        "id": "0006",
+        "sha256": "613cd3354a23fbb4273463771b6636af1373d84b93f1e2ecd97920ac103c1bb7"
+      },
+      {
+        "id": "0007",
+        "sha256": "aa63044e86736e1c2ba2d36807c3cd79cbbdc391118131d26ec1d45752ae431c"
+      },
+      {
+        "id": "0008",
+        "sha256": "cb5a08db78e56bd05045c7c94dad5f0f8c29a76dfa579b9d1a188e27f2e7f499"
+      },
+      {
+        "id": "0009",
+        "sha256": "384a210f7e16635e2bfdefbfc45ca7c9567ef50b5d3458164069bb50665fe9ad"
+      },
+      {
+        "id": "0010",
+        "sha256": "9ec660aea969c9a77b1db51ae44d854b38579292f9b04656525f18912b5b11bf"
+      },
+      {
+        "id": "0011",
+        "sha256": "88e07acdb5aca0195b9408c4389ecf5e7f34dae559cea445fc26c6b35490b47a"
+      },
+      {
+        "id": "0034",
+        "sha256": "053f39b6ca12070c1c87f3b970c5ab10c23ee6e6cb5878d7dab1d7a67f59aad2"
+      },
+      {
+        "id": "0035",
+        "sha256": "8dc5c969a93a5086e9b8e1309932197690f5ebf7d781fe27d7cefccbc2a1a349"
+      },
+      {
+        "id": "0036",
+        "sha256": "e97ef64cd3baa377053240d2ac075e40d81a5a9095a383a54edab24fcd7e802e"
+      },
+      {
+        "id": "0037",
+        "sha256": "8f720df29a0ec8a62452e12c62becd7209e8d36a1f5772ea10bb408c86d55a14"
+      },
+      {
+        "id": "0038",
+        "sha256": "3bfec807cced2bfd378bbac062c7fbe0622897123176926ca7b963e458176c89"
+      },
+      {
+        "id": "0039",
+        "sha256": "5d3b978c39126b94deae41d72a8a20d2176f8d3ffc8d4fe66fc3dce34d434bf8"
+      },
+      {
+        "id": "0040",
+        "sha256": "b258009ffc11f2ff9fdfbe1b2431cf7e2fe3b9401fe50889e94abac1dc82334d"
+      },
+      {
+        "id": "0041",
+        "sha256": "b2bc134f9291b00beb3f824f23051c04e15f7b1dcbae1661093c46133d3ed189"
+      },
+      {
+        "id": "0042",
+        "sha256": "bf464ba4bcf53d2874bf0c26410a9567487f8db434d67b37ecc905406574d0ee"
+      },
+      {
+        "id": "0043",
+        "sha256": "d55392748462b0ecdc9d378bd4265ce7dd1af945434309e6e24f4d25cf911589"
+      },
+      {
+        "id": "0044",
+        "sha256": "e449eab45a551d43b2224176c1ce6d0acb609d1b27689768b359d3050c2a05a9"
+      },
+      {
+        "id": "0045",
+        "sha256": "81241fa80fe97d40a81f60e440b3c057b46883fdc820485c8be29ed1ad2d3fc3"
+      },
+      {
+        "id": "0046",
+        "sha256": "6a714623aed4ddddf8afdb6d51f88d8a5403fc1d44ed896bd4fc224edf6659c8"
+      },
+      {
+        "id": "0047",
+        "sha256": "c38bebe909a21e318ab0b430897edd94320c3b600fc1fe36a97541021cca913d"
+      },
+      {
+        "id": "0048",
+        "sha256": "88a8bcf8b07f59979f22b1f2a586f20e122474e9d0ea89ee88c11b98f84db321"
+      },
+      {
+        "id": "0049",
+        "sha256": "4aa2e13e8e527a63a61e3ed18192142cf3d14c11b72fea1af76cd01efe477c07"
+      },
+      {
+        "id": "0050",
+        "sha256": "8cab94112b406daaa012186be0ba420350d41617fe9b452c3233612d0a66f114"
+      },
+      {
+        "id": "0051",
+        "sha256": "967dbe255819f90c258519d2bd036874e19ef7e9a401300dd7947c0c9467afa5"
+      },
+      {
+        "id": "0052",
+        "sha256": "3d3975ad7437296840a86eaf055415c59961ecf084961faee654aafcca0cc4fb"
+      },
+      {
+        "id": "0053",
+        "sha256": "2d338e046b6019a54c01079e2b0a37437ee7900294f5c4ac0557d5b3c5657c16"
+      },
+      {
+        "id": "0054",
+        "sha256": "5be31599cbba59d10880b2b0003af557831c3718e3ad56f0ba3479170b9c7f5f"
+      },
+      {
+        "id": "0055",
+        "sha256": "53b63fb46e0e08e2d1f28c3713afc86ed50043125fe972bf79dcd21dcfa32ff5"
+      },
+      {
+        "id": "0056",
+        "sha256": "81a312e127649b499f898df5df17b6ff09a1acfb40645557802b8dfc26590ccb"
+      },
+      {
+        "id": "0057",
+        "sha256": "da61f56ecd3d1a010dc234d03a637e1509b2b55d83d46064b9a9e24f85c05182"
+      },
+      {
+        "id": "0058",
+        "sha256": "c01e9826a3e043a4f2ace8e27bc39df78a5829ee9d16f0d7c362112e956dbeb8"
+      },
+      {
+        "id": "0059",
+        "sha256": "8182c1ae61c53710cdb360cc9dee0100c95a84f4e63139286f4126e935d8072d"
+      },
+      {
+        "id": "0060",
+        "sha256": "fe1f31d1fba82dc0df560f05c78fa95fe2bf6d4c0cecdadd2cb50bfa7103d446"
+      },
+      {
+        "id": "0061",
+        "sha256": "c47c6a58772cfdb889f53a072b050c07fe1920ec23bed88dd6205d42b2325655"
+      },
+      {
+        "id": "0062",
+        "sha256": "72cb0c179b53f43511c9afe3c5cbe48c6564822132ca2ff753817943292fab36"
+      },
+      {
+        "id": "0063",
+        "sha256": "35c4f74fe04033c12885866735398ec0bb60252290b5f3c2d3f4ddad1cfaf16d"
+      },
+      {
+        "id": "0064",
+        "sha256": "a9764af4f5fcedc42b9befb3681709c227a2aa1c0318a8792fd429cb94d461a6"
+      },
+      {
+        "id": "0065",
+        "sha256": "894f8df3d631ca1c23b598f5b8fb5d3b6643d201f0e900c970f19e4d04d72be3"
+      },
+      {
+        "id": "0066",
+        "sha256": "79839518b7cd766cda991aa6311dbe9b1ae313a4de4978c897b360058d55c408"
+      },
+      {
+        "id": "0067",
+        "sha256": "89581a9d6f1e5d3319c25ee3c23945148fc2a80588c7b87655f6092192024597"
+      },
+      {
+        "id": "0068",
+        "sha256": "a73c7b63174fca917a048064d65ec33c1910bdd8a61de6062bd78daef5445124"
+      },
+      {
+        "id": "0069",
+        "sha256": "9b685df0952b6176e8f7ef2ee2a93078ae89117e8c77610b9fc7c707f95c01ec"
+      },
+      {
+        "id": "0070",
+        "sha256": "b2039a34bdf1fa7094198b3bf9a75225fd5d43b855a77440ac0c4b5dfae6b1e3"
+      }
+    ],
+    "changed_logical_metrics": [
+      {
+        "id": "0002",
+        "before": {
+          "arithmetic": 184,
+          "sets": 16,
+          "waits": 16,
+          "ifs": 33,
+          "barriers": 1
+        },
+        "after": {
+          "arithmetic": 196,
+          "sets": 13,
+          "waits": 13,
+          "ifs": 27,
+          "barriers": 1
+        }
+      },
+      {
+        "id": "0007",
+        "before": {
+          "arithmetic": 234,
+          "sets": 23,
+          "waits": 23,
+          "ifs": 49,
+          "barriers": 3
+        },
+        "after": {
+          "arithmetic": 246,
+          "sets": 20,
+          "waits": 20,
+          "ifs": 43,
+          "barriers": 3
+        }
+      },
+      {
+        "id": "0008",
+        "before": {
+          "arithmetic": 248,
+          "sets": 21,
+          "waits": 21,
+          "ifs": 44,
+          "barriers": 2
+        },
+        "after": {
+          "arithmetic": 268,
+          "sets": 16,
+          "waits": 16,
+          "ifs": 34,
+          "barriers": 2
+        }
+      },
+      {
+        "id": "0009",
+        "before": {
+          "arithmetic": 248,
+          "sets": 21,
+          "waits": 21,
+          "ifs": 44,
+          "barriers": 2
+        },
+        "after": {
+          "arithmetic": 268,
+          "sets": 16,
+          "waits": 16,
+          "ifs": 34,
+          "barriers": 2
+        }
+      },
+      {
+        "id": "0010",
+        "before": {
+          "arithmetic": 248,
+          "sets": 21,
+          "waits": 21,
+          "ifs": 44,
+          "barriers": 2
+        },
+        "after": {
+          "arithmetic": 268,
+          "sets": 16,
+          "waits": 16,
+          "ifs": 34,
+          "barriers": 2
+        }
+      }
+    ]
+  },
+  "gate_receipts": {
+    "m5-focused": {
+      "elapsed_seconds": 1.2165908813476562,
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_finite_partition_macro.pto",
+          "code": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_qualification.pto",
+          "code": "PASS"
+        }
+      ]
+    },
+    "m5-frontier": {
+      "elapsed_seconds": 4.1251630783081055,
+      "tests": [
+        {
+          "name": "PTOIR :: pto/frontier_closed_callees.pto",
+          "code": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/frontier_deferred_callee_events.pto",
+          "code": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/frontier_macro_envelopes.pto",
+          "code": "PASS"
+        }
+      ]
+    },
+    "full_synchronization": {
+      "total": 266,
+      "passed": 265,
+      "elapsed_seconds": 724.7386391162872,
+      "nonpassing": [
+        {
+          "name": "PTOIR :: pto/sync_repeated_region.pto",
+          "code": "FAIL"
+        }
+      ],
+      "limitation": "Inherited check_repeated_phases.py structured-trace subprocess timeout at 90 seconds; initial 17 nested closures pass. No expectation or timeout changed."
+    },
+    "historical_full_synchronization": {
+      "total": 263,
+      "passed": 262,
+      "elapsed_seconds": 727.3391048908234,
+      "nonpassing": [
+        {
+          "name": "PTOIR :: pto/sync_repeated_region.pto",
+          "code": "FAIL"
+        }
+      ]
+    }
+  },
+  "review": "Architecture and compiler reviewers accepted M5 after the full campaign, with the inherited repeated-phase timeout explicitly unresolved.",
+  "post_gate_whitespace_cleanup": {
+    "path": "test/lit/pto/sync_finite_partition_macro.pto",
+    "before_sha256": "27ac7b6d59d86dd5067319097bde903d8f0d80326cc15e30379debb1d41a84c7",
+    "after_sha256": "5d411a727661337ce0ed0329ffd37cc25fb059fbf73f5f2e393858720751fe9f",
+    "change": "Remove trailing whitespace only; rerun finite qualification tests.",
+    "revalidation": {
+      "passed": 2,
+      "total": 2,
+      "elapsed_seconds": 1.2234349250793457
+    }
+  }
+}

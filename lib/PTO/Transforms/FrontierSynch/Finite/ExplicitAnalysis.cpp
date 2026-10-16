@@ -14,6 +14,7 @@
 #include "../Shared/WriterPairIndex.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include <limits>
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 void boundary(ExplicitAnalysis& result)
@@ -108,6 +109,7 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
         phases.size(), [&](std::size_t i) { return !roles[i].hasWriters(); },
         [&](std::size_t i) { return needsOverlap[i]; });
     candidates.pairs([&](std::size_t a, std::size_t b) {
+        accumulateCost(result.residualPhaseVisits, 1);
         const auto p = static_cast<uint32_t>(phases[a]->kPipeValue);
         const auto q = static_cast<uint32_t>(phases[b]->kPipeValue);
         if (ptoStorageProtection().protectsScalar(p, q)) {
@@ -115,6 +117,7 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
         }
         bool conflict = false;
         roles[a].cross(roles[b], [&](std::size_t i, std::size_t j) {
+            accumulateCost(result.residualEffectVisits, 1);
             const auto x = effects[a][i], y = effects[b][j];
             if (!hardwareProtectsConflict(p, modeledProtection[x], q, modeledProtection[y]) &&
                 input.accesses().residualConflict(x, y)) {
@@ -134,7 +137,7 @@ ExplicitAnalysis analyzeSpan(ArrayRef<const CompoundInstanceElement*> phases, co
         return result;
     }
     llvm::append_range(residual, prerequisites.demands);
-    result.scan = scanStorageLifetimes(result.occurrences, residual, ptoStorageProtection());
+    result.scan = scanStorageLifetimes(result.occurrences, residual, ptoStorageProtection(), &result.scanWork);
     if (!result.scan.error.empty()) {
         result.error = result.scan.error;
         return result;

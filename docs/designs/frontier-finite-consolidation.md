@@ -1,6 +1,7 @@
 # Finite analysis consolidation
 
-Baseline: `1953d248c`. Implementation status: M1–M4 accepted; M5 remains open.
+Baseline: `1953d248c`. Implementation status: M1–M5 accepted within the contracts below.
+The inherited repeated-phase timeout remains open; this is not an all-green gate.
 
 ## Contracts
 
@@ -64,11 +65,11 @@ the full synchronization gate. Device qualification is separate.
 
 | Existing owner/adapter | Replacement | Remaining callers / deletion gate |
 | --- | --- | --- |
-| Root explicitAnalysis + MathematicalResult::explicitDemands | finite owner, concrete strategy | M1: session, guarantees, allocation, prefix compatibility, test adapters |
-| MathematicalResult::finiteGuardedDemands | finite owner, guarded strategy | M1: original finite callers; ExpandedFinite remains a distinct coordinate adapter |
-| Explicit/guarded root preparation dispatch | finite recipe request | M1 routes, M3 shared recipe builder |
-| Sequence explicit-child export reconstruction | common finite regional export | M2, including prefix compatibility |
-| Explicit/guarded endpoint construction loops | common direct recipe builder | M3 after command/cleanup oracles |
+| Root explicitAnalysis + MathematicalResult::explicitDemands | finite owner, concrete strategy | Removed in M1; callers use finiteDemands/concreteDemands() |
+| MathematicalResult::finiteGuardedDemands | finite owner, guarded strategy | Removed in M1; ExpandedFinite remains a distinct coordinate adapter |
+| Explicit/guarded root preparation dispatch | finite recipe request | Root dispatch replaced in M1; direct construction shared in M3 |
+| Sequence explicit-child export reconstruction | common finite regional export | Removed in M2, including prefix compatibility; no parent-owned concrete cache remains |
+| Explicit/guarded endpoint construction loops | common direct recipe builder | Duplicate publication/cleanup assembly removed in M3; demand enumeration remains producer-owned |
 | Distinct prefix users and expanded-loop analysis | unchanged qualified protocols/adapters | outside this migration, caller inventory must preserve support |
 
 ## Evidence
@@ -195,3 +196,81 @@ which also bounds the LLVM thread pool used by the compiler launcher. The two
 build warnings are unchanged covered-switch defaults in SessionProducers.cpp
 and SequenceBoundary.cpp. The one changed-code G.FMT.11-CPP match is a multiline
 braced condition in PreparedInsertionChecks.cpp, inspected as a false positive.
+
+### M5 qualification
+
+The new finite qualification driver uses production pipe envelopes. Small
+flat/composed equivalence checks cover every top-level two-way partition,
+including empty children, and both three-child parenthesizations. They compare
+active demands, all four event-kind reachability answers, presence and actual
+boundary occurrences under every Boolean valuation. Nested branches, RMW and
+simultaneous V/S scatter envelopes stay indivisible. This checks composition
+against flat analysis; independent conflict correctness remains the responsibility
+of the existing explicit graph/covers and command-causality oracles.
+
+Queries are constructed before valuation rollback transactions, so query caches
+cannot retain rolled-back expression IDs. Finite crossing and boundary keys
+require ordinal zero and no enclosing visits before comparing original phases.
+These checks complement the repeated-invocation trace coverage in M3/M4.
+
+Scaling fixtures exercise concrete chains through 4096 payloads, guarded
+few-writer collections through 1024 readers, and guarded write-heavy collections
+through 128 writers. Both guarded writer-pair passes count inspected source and
+pair positions separately from candidate callbacks. Residual phase/effect checks,
+concrete incidence/witness visits, numerical queries, boundary entries, recipe
+builds/cache hits, and actual root-copy entries are separate counters. The slice
+gate constructs one child per original root and requires one copied entry each.
+Counters measure these named operations, not every DAG traversal or total
+compiler work; supplied effect/cell construction is outside the scan bound.
+
+Concrete export and requested numerical answers must construct no guarded
+analysis, and repeated preparation must reuse immutable recipes with separate
+mutable inventories. Guarded pair counts are checked against the actual supplied
+cell incidences and W, including write-heavy quadratic cases. Circuit-size checks
+are per tested construction, not a partition-independent representation claim.
+No planning or device speedup is claimed by this qualification milestone.
+
+The new qualification tests passed 2/2 in 1.22 seconds: 57 valid partitions and
+parenthesizations, with 13,596 semantic comparisons across four small cases.
+The separate macro-envelope, deferred-callee and closed-child end-to-end gate
+passed 3/3 in 4.13 seconds. At 4096 concrete payloads the scan inspected 10,240
+incidences and 8189 hazards; 4096 numerical queries added zero expression nodes.
+With 1024 guarded readers, the two scans inspected 2048 pairs and retained 2053
+expression nodes. With 128 potential writers, they inspected 32,512 pairs and
+retained 18,169 nodes. These are structural measurements of the tested forms;
+they do not promise linear write-heavy or arbitrary guarded construction.
+
+The primary PyPTO-lib campaign passed 49/49 logical compilations and 49/49
+six-ID allocations with MayNotAlias. The input hashes and stage outcomes agree
+with the historical rebase campaign at `3c166285004fc78e72f2493c397cb3633ff6f88f`
+plus its recorded working diff. This is not a paired M1 baseline. Five modules
+have changed logical arithmetic/command counts; whole-corpus trace equality
+and planning speedup are not claimed. This campaign did not request C++ output
+or device execution; M4 separately checked six C++ outputs.
+
+Both reviewers accepted the final M5 source and focused qualification evidence.
+The changed-code checker reports twelve multiline-condition brace matches and
+two Python subprocess matches. The C++ bodies are braced. The Python harness
+resolves its tool, uses an argument vector without a shell, sets a timeout and
+checks the return code, as required by the loaded Python rule text; the checker's
+blanket child-process prohibition does not match that rule. These findings were
+reviewed explicitly, not counted as a clean analyzer run. The incremental build
+completed without new warnings; existing covered-switch warnings remain.
+
+The complete synchronization gate passed 265/266 in 724.74 seconds. Its sole
+failure is the previously recorded `sync_repeated_region.pto` phased-repeat
+structured-trace subprocess timeout at 90 seconds; the initial 17 nested closure
+checks pass. The historical full gate passed 262/263 with the same failure.
+No timeout or expected outcome was relaxed. This remaining repeated-phase
+construction limitation is outside the finite consolidation scope and stays open.
+
+The [machine-readable receipt](frontier-finite-consolidation-results.json)
+retains source hashes, input hashes, actual scaling rows, campaign scope and
+changed corpus metrics. Local raw logs remain under the evidence directory above.
+The completed migration retains concrete numerical analysis through regional
+export, shares guarded ownership and direct-publication construction, and removes
+the superseded root/parent adapters in the deletion ledger. Distinct expanded-loop
+and prefix protocols remain supported through their existing qualified paths.
+
+Both reviewers accepted final M5 closure with the inherited failure retained.
+All five finite consolidation milestones are complete within this scope.

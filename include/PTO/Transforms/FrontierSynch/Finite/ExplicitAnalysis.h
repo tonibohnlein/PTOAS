@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Finite/LifetimeScanInput.h"
 #include <optional>
 #include <unordered_map>
 namespace mlir::pto::frontiersynch {
@@ -28,6 +29,8 @@ struct ExplicitAnalysis {
     SmallVector<const CompoundInstanceElement*> phases;
     std::vector<ExplicitEffects> occurrences;
     StorageScanResult scan;
+    StorageScanWork scanWork;
+    uint64_t residualPhaseVisits = 0, residualEffectVisits = 0;
     ExplicitReduction reduction;
     std::vector<ExplicitCellBoundary> storageBoundary;
     SmallVector<std::size_t> dischargedEffects; // Globally independent root-block GM effects.

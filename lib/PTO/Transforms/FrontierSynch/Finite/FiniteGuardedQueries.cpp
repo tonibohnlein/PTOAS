@@ -66,7 +66,7 @@ void FiniteGuardedState::closeAndReduce()
                 auto [j, y] = uses[b];
                 plain &= !ptoStorageProtection().protectsScalar(pipe(i), pipe(j)) &&
                     !hardwareProtectsConflict(pipe(i), x.protectionGroup, pipe(j), y.protectionGroup);
-            }, [](bool&, std::size_t) {});
+            }, [](bool&, std::size_t) {}, &qualificationWork);
         detail::scanWriterPairs(writers, yes(),
             [&](std::size_t a, std::size_t b, Expr noWriter) {
                 auto [i, x] = uses[a];
@@ -80,7 +80,7 @@ void FiniteGuardedState::closeAndReduce()
             }, [&](Expr& noWriter, std::size_t position) {
                 auto [i, mode] = uses[position];
                 if (plain && mode.write) { noWriter = both(noWriter, negate(presence[i])); }
-            });
+            }, &constructionWork);
     }
     for (auto edge : residual) {
         add(edge.source, edge.target, both(presence[edge.source], presence[edge.target]));

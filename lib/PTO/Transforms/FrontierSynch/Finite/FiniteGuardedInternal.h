@@ -12,6 +12,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "PTO/Transforms/FrontierSynch/Shared/GuardedRanks.h"
 #include "llvm/ADT/MapVector.h"
+#include "../Shared/GuardedStorageScan.h"
 namespace mlir::pto::frontiersynch {
 struct RegionalRelationData;
 class GeneralArithmeticGeneratorStage;
@@ -49,6 +50,8 @@ struct FiniteGuardedState {
     std::vector<RegionalStorageBoundary> storageBoundary;
     std::map<uint32_t, std::vector<RegionalSelector>> firstPayloads, lastPayloads;
     RegionalCost cost;
+    detail::GuardedStorageScanWork qualificationWork, constructionWork;
+    uint64_t residualPhaseVisits = 0, residualEffectVisits = 0;
     const SyncStorageEffects* accessModel = nullptr;
     GMAliasPolicy gmAliasPolicy = GMAliasPolicy::MayAlias;
     std::string insertionError;

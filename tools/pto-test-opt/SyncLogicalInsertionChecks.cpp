@@ -1645,8 +1645,10 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
     return success(before == after && regionScope && contractAudit && boundedCacheStable && preparationRetry);
 }
 
+LogicalResult runFiniteQualificationChecks(func::FuncOp function, pto::GMAliasPolicy policy);
 LogicalResult runFiniteGuardedAnalysisChecks(func::FuncOp function, pto::GMAliasPolicy policy)
 {
+    if (function->hasAttr("test.finite_qualification")) { return runFiniteQualificationChecks(function, policy); }
     auto storage = std::make_shared<pto::SyncInput>(policy);
     auto index = std::make_shared<fs::PhaseIndex>();
     if (failed(storage->build(function)) || failed(index->build(function, *storage))) { return failure(); }

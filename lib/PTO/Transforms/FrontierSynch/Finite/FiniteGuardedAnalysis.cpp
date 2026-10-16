@@ -69,12 +69,14 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
     }
     WriterPairIndex candidates(phases.size(), [&](std::size_t i) { return !roles[i].hasWriters(); });
     candidates.pairs([&](std::size_t a, std::size_t b) {
+        accumulateCost(state.residualPhaseVisits, 1);
         if (phases[a]->elementOp == phases[b]->elementOp ||
             ptoStorageProtection().protectsScalar(state.effects[a].pipe, state.effects[b].pipe)) {
             return true;
         }
         bool conflict = false;
         roles[a].cross(roles[b], [&](std::size_t i, std::size_t j) {
+            accumulateCost(state.residualEffectVisits, 1);
             const auto x = effects[a][i], y = effects[b][j];
             const bool protectedPair = hardwareProtectsConflict(
                 state.effects[a].pipe, modeledGroups[x], state.effects[b].pipe, modeledGroups[y]);
