@@ -83,10 +83,11 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
   let dependentDialects = ["mlir::pto::PTODialect", "mlir::scf::SCFDialect", "mlir::arith::ArithDialect"];
 }
 
-def PTOFrontierAllocate : Pass<"pto-frontier-allocate", "func::FuncOp"> {
+def PTOFrontierAllocate : Pass<"pto-frontier-allocate", "mlir::ModuleOp"> {
   let summary = "Allocate physical event IDs without changing logical handoffs";
   let description = [{
-    Consumes the cyclic allocation certificate emitted by frontier analysis.
+    Owns the module symbol context while allocating each function.
+    Consumes the allocation certificates emitted by frontier analysis.
     Allocates the supplied eligible IDs independently per direction and lowers logical
     SET/WAIT commands. Fails before mutation if the certificate is unavailable,
     invalid, or its budgets do not fit. No shared-pool optimization or repair.

@@ -8,6 +8,7 @@
 // A saved numerical family is executable logical mathematics, not a callback or
 // a placeholder physical assignment. Decode and qualify it before emitting SSA.
 #include "PTO/Transforms/FrontierSynch/Shared/DeferredFamily.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FunctionStaging.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
@@ -466,17 +467,9 @@ LogicalResult allocateDeferredFamilyOutput(func::FuncOp function, ArrayRef<int64
     if (!function) { return failure(); }
     // Decode and lower in an isolated clone. A malformed artifact, unavailable
     // mapping or failed insertion cannot consume the saved protocol.
-    OwningOpRef<ModuleOp> staging = ModuleOp::create(function.getLoc());
-    if (auto parent = function->getParentOfType<ModuleOp>()) {
-        (*staging)->setAttrs(parent->getAttrs());
-        // Original payload calls/globals keep their symbol context while the
-        // target alone is changed and committed. No sibling mutation escapes.
-        for (auto& sibling : *parent.getBody()) {
-            if (&sibling != function.getOperation()) { staging->getBody()->push_back(sibling.clone()); }
-        }
-    }
-    auto clone = cast<func::FuncOp>(function->clone());
-    staging->getBody()->push_back(clone);
+    FunctionStaging staging(function);
+    if (!staging.function) { return failure(); }
+    auto clone = staging.function;
     auto plan = readDeferredFamilyOutput(clone);
     if (failed(plan)) { return failure(); }
     // The decoded plan names the original payload anchors, so marker removal
@@ -489,8 +482,7 @@ LogicalResult allocateDeferredFamilyOutput(func::FuncOp function, ArrayRef<int64
     if (failed(planPhysicalFamilyOutput(clone, **plan, eligibleIds)) ||
         failed(insertLogicalSynchronization(clone, **plan))) { return failure(); }
     if (failed(verify(clone))) { return failure(); }
-    function->setAttrs(clone->getAttrs());
-    function.getBody().takeBody(clone.getBody());
+    staging.commit(function);
     return success();
 }
 } // namespace mlir::pto::frontiersynch

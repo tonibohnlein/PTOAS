@@ -8,6 +8,8 @@
 #ifndef PTO_DEFERRED_FAMILY_CHECKS_H
 #define PTO_DEFERRED_FAMILY_CHECKS_H
 #include "PTO/Transforms/FrontierSynch/Shared/DeferredFamily.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FunctionStaging.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
 namespace {
@@ -748,6 +750,39 @@ bool checkDeferredFamilies(mlir::MLIRContext* context)
         auto target = parsed->lookupSymbol<func::FuncOp>("deferred");
         if (failed(fs::allocatePhysicalEventIds(target, {3})) || failed(verify(*parsed)) ||
             !parsed->lookupSymbol<func::FuncOp>("payload")) { return fail(__LINE__); }
+    }
+    stage = "transitive staging symbol closure";
+    {
+        context->getOrLoadDialect<memref::MemRefDialect>();
+        auto module = parseSourceString<ModuleOp>(R"mlir(
+          module {
+            memref.global "private" @data : memref<1xi64> = dense<7>
+            func.func private @leaf() -> i64 {
+              %data = memref.get_global @data : memref<1xi64>
+              %zero = arith.constant 0 : index
+              %value = memref.load %data[%zero] : memref<1xi64>
+              return %value : i64
+            }
+            func.func private @helper() -> i64 {
+              %value = func.call @leaf() : () -> i64
+              return %value : i64
+            }
+            func.func @target() -> i64 {
+              %value = func.call @helper() : () -> i64
+              return %value : i64
+            }
+            func.func @unrelated() { return }
+          }
+        )mlir", context);
+        if (!module) { return fail(__LINE__); }
+        auto before = deferredText(*module);
+        auto target = module->lookupSymbol<func::FuncOp>("target");
+        fs::FunctionStaging staging(target);
+        if (!staging.function || failed(verify(*staging.module)) ||
+            staging.module->lookupSymbol("unrelated") || !staging.module->lookupSymbol("data") ||
+            !staging.module->lookupSymbol("leaf") || !staging.module->lookupSymbol("helper") ||
+            std::distance(staging.module->getBody()->begin(), staging.module->getBody()->end()) != 4 ||
+            deferredText(*module) != before) { return fail(__LINE__); }
     }
     stage = "unsupported concrete plan atomicity";
     // Unsupported concrete plans must fail before changing source IR.

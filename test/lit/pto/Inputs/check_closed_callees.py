@@ -66,7 +66,7 @@ def main():
                 assert result.stdout.count(operation) == program.count(operation), operation
         nested = "module {\n" + source[source.index("module attributes"):] + "\n}\n"
         nested_result = run(nested, ["--pass-pipeline=builtin.module(pto-frontier-analysis,"
-                                    "builtin.module(func.func(pto-frontier-allocate{eligible-ids=0,1,2,3,4,5})))"])
+                                    "builtin.module(pto-frontier-allocate{eligible-ids=0,1,2,3,4,5}))"])
         assert "pto.logical_set" not in nested_result.stdout
         # Actuals can alias despite different formal names. Called bodies use
         # the same may-alias model under either root policy.

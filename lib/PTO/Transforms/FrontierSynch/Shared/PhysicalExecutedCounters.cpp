@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalExecutedCounters.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FunctionStaging.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
@@ -431,17 +432,10 @@ LogicalResult allocateExecutedFamilyCounters(func::FuncOp function,
     if (failed(families)) { return failure(); }
     auto commands = preflight(function, *number(certificate, "plan"), *families);
     if (failed(commands)) { return failure(); }
-    // ExecutionContexts' FunctionCopy is private. Preserve its symbol-context
-    // transaction contract here: the original body is replaced only on success.
-    OwningOpRef<ModuleOp> module(ModuleOp::create(function.getLoc()));
-    if (auto parent = function->getParentOfType<ModuleOp>()) {
-        (*module)->setAttrs(parent->getAttrs());
-        for (auto sibling : parent.getOps<func::FuncOp>()) {
-            if (sibling != function) { module->push_back(sibling.clone()); }
-        }
-    }
-    IRMapping mapping;
-    auto copy = function.clone(mapping); module->push_back(copy);
+    FunctionStaging staging(function);
+    if (!staging.function) { return failure(); }
+    auto copy = staging.function;
+    const auto& mapping = staging.mapping;
     Commands copiedCommands;
     for (const auto& [operation, record] : *commands) { copiedCommands[mapping.lookup(operation)] = record; }
     SmallVector<Value> counters;
@@ -458,7 +452,7 @@ LogicalResult allocateExecutedFamilyCounters(func::FuncOp function,
         op->removeAttr("pto.endpoint_cut"); op->removeAttr("pto.endpoint_piece"); op->removeAttr("pto.family_loop");
     });
     if (failed(verify(copy))) { return function.emitError("executed counter lowering produced invalid structured IR"); }
-    function->setAttrs(copy->getAttrs()); function.getBody().takeBody(copy.getBody());
+    staging.commit(function);
     return success();
 }
 } // namespace mlir::pto::frontiersynch
