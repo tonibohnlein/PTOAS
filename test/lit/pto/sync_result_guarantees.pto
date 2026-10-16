@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt --pto-frontier-analysis="prepare-allocation=false" %s | FileCheck %s --check-prefix=DIRECT
+// RUN: pto-test-opt --pto-frontier-analysis="completion-only=true" %s | FileCheck %s --check-prefix=COMPLETION
+// DIRECT-LABEL: func.func @adjacent
+// DIRECT-SAME: basis = "shared-modeled-effects"
+// DIRECT-SAME: original_effect_precision = "not-independently-certified"
+// DIRECT-SAME: realization_order = "equivalent-to-selected-order"
+// DIRECT-SAME: realized_loss_bound = "unavailable"
+// DIRECT-SAME: reduction = "covers"
+// DIRECT-SAME: selected_order = "equivalent"
+// DIRECT-LABEL: func.func @nonadjacent
+// DIRECT-SAME: realization_order = "may-strengthen-selected-order"
+// DIRECT-SAME: reduction = "covers"
+// DIRECT-SAME: selected_order = "equivalent"
+// COMPLETION-LABEL: func.func @adjacent
+// COMPLETION-SAME: completion_contract = {
+// COMPLETION-SAME: parent_event_ids = 0
+// COMPLETION-SAME: placement = "scc-local"
+// COMPLETION-SAME: storage_classes = 1
+// COMPLETION-SAME: invocation_exit = "completed"
+// COMPLETION-SAME: realization_order = "covers-modeled-order"
+// COMPLETION-SAME: realized_loss_bound = "unavailable"
+// COMPLETION-SAME: reduction = "unavailable"
+// COMPLETION-SAME: selected_order = "covering"
+// COMPLETION-LABEL: func.func @nonadjacent
+// COMPLETION-SAME: realization_order = "covers-modeled-order"
+!tile = !pto.tile_buf<vec, 1x8xf32>
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @adjacent() {
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    pto.texpands ins(%one : f32) outs(%a : !tile)
+    pto.tadds ins(%a, %one : !tile, f32) outs(%a : !tile)
+    return
+  }
+  func.func @nonadjacent() {
+    %base = arith.constant 0 : i64
+    %other = arith.constant 1024 : i64
+    %one = arith.constant 1.0 : f32
+    %a = pto.alloc_tile addr = %base : !tile
+    %b = pto.alloc_tile addr = %other : !tile
+    pto.texpands ins(%one : f32) outs(%a : !tile)
+    pto.texpands ins(%one : f32) outs(%b : !tile)
+    pto.tadds ins(%a, %one : !tile, f32) outs(%a : !tile)
+    return
+  }
+}

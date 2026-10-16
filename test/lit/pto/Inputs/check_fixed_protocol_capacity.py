@@ -99,6 +99,39 @@ def capacity(report):
     return {"payloads": len(pipes), "commands": len(commands), "directions": results}
 
 
+def scoped_capacity_report(fixture, result, eligible_ids=tuple(range(6))):
+    """Keep a fixed-execution width separate from uniform allocation/compilation."""
+    assert len(set(eligible_ids)) == len(eligible_ids) and all(0 <= i <= 5 for i in eligible_ids)
+    trace = fixture["report"]["trace"]
+    # The witness depends on actual cuts, matching and command order. Control
+    # operation counts are measurements and do not identify the command graph.
+    fixed = {"payloads": trace["payloads"], "events": trace["events"]}
+    fingerprint = hashlib.sha256(json.dumps(fixed, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    excluded = any(row["minimum_ids"] > len(eligible_ids) for row in result["directions"])
+    return dict(result, scope={"kind": "fixed-command-graph-and-admitted-execution",
+                              "input_sha256": fixture["input_sha256"],
+                              "bindings": fixture["bindings"], "command_graph_sha256": fingerprint},
+                eligible_ids=list(eligible_ids),
+                capacity_outcome=("certified-over-capacity-for-fixed-protocol" if excluded
+                                  else "not-excluded-by-this-execution"),
+                uniform_allocation="not-established-by-this-witness",
+                kernel_compilation="not-established-by-this-witness",
+                alternative_protocols="not-analyzed", device_execution="not-run")
+
+
+def check_capacity_scope():
+    fixture = {"input_sha256": "test-only", "bindings": {}, "report": feedback_case(False)}
+    original = scoped_capacity_report(fixture, capacity(fixture["report"]), (0,))
+    assert original["capacity_outcome"] == "certified-over-capacity-for-fixed-protocol"
+    fixture["report"] = feedback_case(True)
+    alternative = scoped_capacity_report(fixture, capacity(fixture["report"]), (0,))
+    assert alternative["capacity_outcome"] == "not-excluded-by-this-execution"
+    assert original["scope"]["command_graph_sha256"] != alternative["scope"]["command_graph_sha256"]
+    assert alternative["uniform_allocation"] == "not-established-by-this-witness"
+    assert alternative["kernel_compilation"] == "not-established-by-this-witness"
+    assert alternative["alternative_protocols"] == "not-analyzed"
+
+
 def feedback_case(feedback):
     # Both P->Q handoffs occur in textual order. A Q->P return handshake,
     # when present, makes the first consumption precede the second publication.
@@ -187,6 +220,7 @@ def main():
     feedback_case(False)
     feedback_case(True)
     check_protocol_comparison()
+    check_capacity_scope()
     # Reject malformed evidence rather than silently dropping commands.
     for damage in ("gap", "kind", "pipe", "unmatched", "duplicate", "cycle"):
         bad = feedback_case(False)
@@ -228,7 +262,7 @@ def main():
         assert same_fixed_protocol(replay["trace"], fixture["report"]["trace"]), \
             "fixed protocol changed; investigate before refreshing"
         assert capacity(replay) == result
-    print(json.dumps(result, sort_keys=True))
+    print(json.dumps(scoped_capacity_report(fixture, result), sort_keys=True))
 
 
 if __name__ == "__main__":

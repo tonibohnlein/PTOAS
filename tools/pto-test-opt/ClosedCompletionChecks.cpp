@@ -175,7 +175,9 @@ bool eventfulImport(MLIRContext& context)
     child->setAttr("pto.closed_completion", certificate);
     auto completion = fs::CompletionRegion::buildCoarse(parent, pto::GMAliasPolicy::MayAlias, error);
     if (!completion || completion->inputOwner()->hasFineStorage() || completion->inputOwner()->descriptorState() ||
-        completion->importedFunctions().size() != 1) {
+        completion->importedFunctions().size() != 1 || completion->childContracts().completedExit != 1 ||
+        completion->childContracts().eventFree || completion->childContracts().closedDescendants ||
+        !completion->completesInvocation()) {
         llvm::errs() << error << "\n";
         return failedAt(__LINE__);
     }

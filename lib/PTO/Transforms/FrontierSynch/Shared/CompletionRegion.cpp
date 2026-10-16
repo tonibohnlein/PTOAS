@@ -265,6 +265,18 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
     return owner;
 }
 bool CompletionRegion::ownsClosedCall(Operation* call) const { return importedCalls.contains(call); }
+CompletionRegion::ChildContracts CompletionRegion::childContracts() const
+{
+    ChildContracts result;
+    for (const auto& child : children) {
+        switch (child->resourceClosure()) {
+            case ClosedCompletionChild::ResourceClosure::Empty: ++result.eventFree; break;
+            case ClosedCompletionChild::ResourceClosure::CompletedExit: ++result.completedExit; break;
+            case ClosedCompletionChild::ResourceClosure::ClosedDescendants: ++result.closedDescendants; break;
+        }
+    }
+    return result;
+}
 bool CompletionRegion::validateClosedChildren() const
 {
     DenseSet<const ClosedCompletionChild*> checked;

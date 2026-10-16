@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import tempfile
 
+from check_fixed_protocol_capacity import scoped_capacity_report
 from check_fixed_protocol_capacity import (capacity, check_protocol_comparison, feedback_case,
                                            same_fixed_protocol)
 from check_logical_insertion import closure_with_commands
@@ -144,7 +145,7 @@ def main():
         assert same_fixed_protocol(replay["trace"], fixture["report"]["trace"]), \
             "fixed protocol changed; investigate before refreshing"
         assert check(replay) == result
-    print(json.dumps(result, sort_keys=True))
+    print(json.dumps(scoped_capacity_report(fixture, result), sort_keys=True))
 
 
 if __name__ == "__main__":

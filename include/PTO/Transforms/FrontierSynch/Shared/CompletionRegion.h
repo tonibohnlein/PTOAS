@@ -34,6 +34,11 @@ public:
     static std::shared_ptr<const CompletionRegion> qualifyExistingChild(func::FuncOp function,
         std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error,
         ClosedCompletionImportContext& context);
+    struct ChildContracts {
+        uint64_t eventFree = 0, completedExit = 0, closedDescendants = 0;
+    };
+    ChildContracts childContracts() const;
+    bool completesInvocation() const { return !summaryOnly; }
     const CompletionTransferResult& transfer() const { return result; }
     std::shared_ptr<const SyncInput> inputOwner() const { return input; }
     // The parent publishes no events. Imported children own their closed IDs;

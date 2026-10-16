@@ -10,6 +10,7 @@
 // are assigned by the following allocation pass. Analysis-only mode retains
 // the mathematical certification checkpoint without changing the original IR.
 #include "AnalysisSessionInternal.h"
+#include "PTO/Transforms/FrontierSynch/ResultGuarantees.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ClosedCallees.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
@@ -510,6 +511,7 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
         auto plan = std::make_unique<frontiersynch::PreparedLogicalPlan>(0);
         plan->completeInvocation = true;
         plan->completionOwner = std::move(completion);
+        frontiersynch::attachResultGuarantees(*plan, function.getContext());
         return plan;
     }
     frontiersynch::FrontierAnalysis analysis(function, allocationPolicy);
@@ -568,6 +570,7 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
                 ((*prepared)->completionOwner ? "not-needed" :
                     ((*prepared)->allocationCertificate ? "available" : "unavailable"))));
         (*prepared)->recognitionReport = allocationReport.getDictionary(function.getContext());
+        frontiersynch::attachResultGuarantees(**prepared, function.getContext());
         if (result.mathematical && result.mathematical->arithmeticPeriodicDemands) {
             const auto& conversion = result.mathematical->arithmeticPeriodicDemands->conversion;
             NamedAttrList report((*prepared)->recognitionReport);
