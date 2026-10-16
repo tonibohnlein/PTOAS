@@ -77,23 +77,71 @@ bool publicationRecipeChecks(MLIRContext* context)
     family.id = 0; family.sourcePipe = 1; family.targetPipe = 2;
     family.sourceCut = sourceCut; family.targetCut = consumerCut;
     family.members.push_back({0, 0, 0, {}, {}});
-    family.targetChoices = fs::qualifyTerminalCleanupCuts(
-        {consumerCut, {terminal->getBlock(), terminal}}, owner, guard);
-    if (!family.targetChoices) { return false; }
-    plan.families.push_back(family);
-    std::vector<fs::ContextualEndpointFamily> endpoints;
-    for (auto [cut, kind, predicate] : {
-        std::make_tuple(source.getOperation(), fs::EndpointKind::Set, (*recipe)->sourceGuard),
-        std::make_tuple(consumer.getOperation(), fs::EndpointKind::Wait, guard),
-        std::make_tuple(terminal.getOperation(), fs::EndpointKind::Wait, (*recipe)->cleanupGuard)}) {
-        fs::ContextualEndpointFamily endpoint;
-        endpoint.piece.cut = {cut->getBlock(), cut}; endpoint.piece.kind = kind;
-        endpoint.piece.sourcePipe = 1; endpoint.piece.targetPipe = 2;
-        endpoint.piece.members.push_back({0, {}});
-        endpoint.activity = predicate; endpoint.ordinal = arena.constant(0);
-        endpoints.push_back(std::move(endpoint));
+    fs::ContextualFamilyExpressions expressions(owner);
+    auto bundle = fs::prepareDirectPublicationFamily(function, expressions, family, guard, guard, guard, error);
+    if (failed(bundle) || bundle->owner != owner || !bundle->terminalLifetime ||
+        !bundle->family.targetChoices || bundle->endpoints.size() != 3 || render(function) != original) {
+        return false;
     }
-    auto delayed = fs::buildContextualFamilyEndpointRecipe(owner, endpoints);
+    if (bundle->endpoints[0].activity != (*recipe)->sourceGuard ||
+        bundle->endpoints[1].activity != guard || bundle->endpoints[2].activity != (*recipe)->cleanupGuard ||
+        bundle->publicationGuard != (*recipe)->publicationGuard) { return false; }
+    for (const auto& endpoint : bundle->endpoints) {
+        if (endpoint.piece.members.size() != 1 || endpoint.piece.members.front().record != family.id ||
+            arena.constantValue(endpoint.ordinal) != 0) { return false; }
+    }
+    // Failure returns no bundle, leaves the destination and original IR intact,
+    // and does not damage the availability context used for a later valid retry.
+    auto invalid = family;
+    invalid.members.push_back(invalid.members.front());
+    if (succeeded(fs::prepareDirectPublicationFamily(function, expressions, invalid, guard, guard, guard, error)) ||
+        !plan.families.empty() || !plan.endpoints.empty() || render(function) != original) { return false; }
+    invalid = family;
+    invalid.sourceCut.block = nullptr;
+    if (succeeded(fs::prepareDirectPublicationFamily(function, expressions, invalid, guard, guard, guard, error))) {
+        return false;
+    }
+    auto local = family;
+    local.targetPipe = local.sourcePipe;
+    local.local = true;
+    auto barrier = fs::prepareDirectPublicationFamily(function, expressions, local, guard, guard, guard, error);
+    if (failed(barrier) || barrier->terminalLifetime || barrier->family.targetChoices ||
+        barrier->endpoints.size() != 1 || barrier->endpoints.front().piece.kind != fs::EndpointKind::Barrier) {
+        return false;
+    }
+    local.targetCut = sourceCut;
+    if (succeeded(fs::prepareDirectPublicationFamily(function, expressions, local, guard, guard, guard, error))) {
+        return false;
+    }
+    // A caller can forbid replay that the generic expression service supports.
+    // That restriction must reach all required cuts, including a local barrier.
+    auto deny = [](fs::RegionExpressions::Id, Operation*) { return failure(); };
+    if (succeeded(fs::prepareDirectPublicationFamily(function, expressions, family,
+            guard, guard, guard, error, {}, deny))) { return false; }
+    local.targetCut = consumerCut;
+    if (succeeded(fs::prepareDirectPublicationFamily(function, expressions, local,
+            guard, guard, guard, error, {}, deny))) { return false; }
+    auto denyCleanup = [&](fs::RegionExpressions::Id expression, Operation* cut) {
+        if (cut == terminal.getOperation()) { return failure(); }
+        return success(succeeded(expressions.prepare(expression, cut)));
+    };
+    if (succeeded(fs::prepareDirectPublicationFamily(function, expressions, family,
+            guard, guard, guard, error, {}, denyCleanup))) { return false; }
+    auto replayOwner = std::make_shared<fs::RegionExpressions>();
+    fs::ContextualFamilyExpressions replayExpressions(replayOwner);
+    const auto replayGuard = replayOwner->input(condition);
+    auto replay = fs::prepareDirectPublicationFamily(function, replayExpressions, family,
+        replayGuard, replayGuard, replayGuard, error);
+    if (failed(replay) || replay->terminalLifetime) { return false; }
+    auto originalOnly = [&](fs::RegionExpressions::Id expression, Operation* cut) {
+        if (expression == replayGuard && cut == sourceCut.before) { return failure(); }
+        return success(succeeded(replayExpressions.prepare(expression, cut)));
+    };
+    auto restricted = fs::prepareDirectPublicationFamily(function, replayExpressions, family,
+        replayGuard, replayGuard, replayGuard, error, {}, originalOnly);
+    if (failed(restricted) || !restricted->terminalLifetime || render(function) != original) { return false; }
+    plan.families.push_back(std::move(bundle->family));
+    auto delayed = fs::buildContextualFamilyEndpointRecipe(expressions, bundle->endpoints);
     if (failed(delayed) || !plan.preparation.empty()) { return false; }
     plan.familyRecipe = *delayed;
     if (failed(fs::materializeLogicalFamilies(plan)) || plan.endpoints.size() != 3 ||

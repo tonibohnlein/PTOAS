@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/GuardedPublication.h"
 #include "PTO/Transforms/FrontierSynch/Shared/Recognition.h"
 #include "../Shared/WriterPairIndex.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -278,16 +279,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
     auto arena = std::make_shared<RegionExpressions>();
     const auto enabled = arena->boolean(true), identity = arena->constant(0);
     std::vector<ContextualEndpointFamily> endpoints;
-    auto append = [&](Operation* cut, EndpointKind kind, uint32_t source, uint32_t target, uint32_t record) {
-        ContextualEndpointFamily endpoint;
-        endpoint.piece.cut = {cut->getBlock(), cut};
-        endpoint.piece.kind = kind;
-        endpoint.piece.namespaceId = record;
-        endpoint.piece.sourcePipe = source; endpoint.piece.targetPipe = target;
-        endpoint.piece.members.push_back({record, {}});
-        endpoint.activity = enabled; endpoint.ordinal = identity;
-        endpoints.push_back(std::move(endpoint));
-    };
+    ContextualFamilyExpressions expressions(arena);
+    std::string error;
     uint32_t record = 0;
     for (const auto& edge : analysis.reduction.retained) {
         const auto sourcePipe = analysis.occurrences[edge.source].pipe;
@@ -306,13 +299,11 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
         family.sourceCut = {source->getBlock(), source->getNextNode()};
         family.targetCut = {target->getBlock(), target};
         family.members.push_back({static_cast<uint32_t>(record), edge.source, edge.target, {}, {}});
-        plan->families.push_back(std::move(family));
-        if (sourcePipe == targetPipe) {
-            append(target, EndpointKind::Barrier, sourcePipe, targetPipe, record);
-        } else {
-            append(source->getNextNode(), EndpointKind::Set, sourcePipe, targetPipe, record);
-            append(target, EndpointKind::Wait, sourcePipe, targetPipe, record);
-        }
+        auto direct = prepareDirectPublicationFamily(function, expressions, std::move(family),
+            enabled, enabled, enabled, error);
+        if (failed(direct)) { return failure(); }
+        for (auto& endpoint : direct->endpoints) { endpoints.push_back(std::move(endpoint)); }
+        plan->families.push_back(std::move(direct->family));
         ++record;
     }
     // Match the shared insertion rule: SETs, local barriers, then WAITs.
@@ -329,7 +320,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareExplicitInsertion(
     }
     // Preserve the existing first-cut constant sharing, but retain owned roots
     // until allocation selects which matching inputs need scalar construction.
-    auto recipe = buildContextualFamilyEndpointRecipe(arena, endpoints, {{enabled, first}, {identity, first}});
+    auto recipe = buildContextualFamilyEndpointRecipe(expressions, endpoints, {{enabled, first}, {identity, first}});
     if (failed(recipe)) { return failure(); }
     plan->familyRecipe = std::move(*recipe);
     plan->groupedFamilies = plan->independentPieces = true;

@@ -27,9 +27,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
     std::vector<RegionalAllocationGroup> allocationGroups;
     std::vector<ContextualEndpointFamily> endpoints;
     ContextualFamilyExpressions expressions(arena);
-    auto available = [&](Expr expression, Operation* cut) {
-        return success(succeeded(expressions.prepare(expression, cut)));
-    };
     const auto zero = arena->constant(0);
     for (auto demand : retained) {
         if (filter) {
@@ -52,42 +49,17 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteGuardedState::prepare(cons
         family.id = record; family.sourcePipe = p; family.targetPipe = q; family.local = p == q;
         family.sourceCut = a.after; family.targetCut = b.before;
         family.members.push_back({record, demand.source, demand.target, {}, {}});
-        auto append = [&](TemplateEndpointCut cut, EndpointKind kind, Expr activity) {
-            ContextualEndpointFamily endpoint;
-            endpoint.piece.cut = cut;
-            endpoint.piece.namespaceId = record;
-            endpoint.piece.sourcePipe = p; endpoint.piece.targetPipe = q;
-            endpoint.piece.kind = kind;
-            endpoint.piece.members.push_back({record, {}});
-            endpoint.activity = activity; endpoint.ordinal = zero;
-            endpoints.push_back(std::move(endpoint));
-        };
-        if (p == q) {
-            append(b.before, EndpointKind::Barrier, demand.guard);
-        } else {
-            auto publication = preparePublicationRecipe(function, *arena, a.after, b.before,
-                demand.guard, demand.guard, demand.guard, available, insertionError);
-            if (failed(publication)) { return failure(); }
-            const auto& protocol = **publication;
-            if (protocol.cleanupCut) {
-                family.targetChoices = qualifyTerminalCleanupCuts(
-                    {b.before, {protocol.cleanupCut->getBlock(), protocol.cleanupCut}}, arena, demand.guard);
-                if (!family.targetChoices) {
-                    insertionError = "finite guarded cleanup requires a singleton consumer recipe"; return failure();
-                }
-            }
+        auto direct = prepareDirectPublicationFamily(function, expressions, std::move(family),
+            demand.guard, demand.guard, demand.guard, insertionError);
+        if (failed(direct)) { return failure(); }
+        if (p != q) {
             allocationGroups.push_back({p, q, 1, {{record, 0, 0,
                 {demand.source, zero, PeriodicEventKind::Start},
-                {demand.target, zero, PeriodicEventKind::Completion}, protocol.publicationGuard}}, {},
-                bool(protocol.cleanupCut)});
-            append(a.after, EndpointKind::Set, protocol.sourceGuard);
-            append(b.before, EndpointKind::Wait, demand.guard);
-            if (protocol.cleanupCut) {
-                append({protocol.cleanupCut->getBlock(), protocol.cleanupCut}, EndpointKind::Wait,
-                       protocol.cleanupGuard);
-            }
+                {demand.target, zero, PeriodicEventKind::Completion}, direct->publicationGuard}}, {},
+                direct->terminalLifetime});
         }
-        plan->families.push_back(std::move(family));
+        for (auto& endpoint : direct->endpoints) { endpoints.push_back(std::move(endpoint)); }
+        plan->families.push_back(std::move(direct->family));
     }
     // Record provenance is retained while stream namespaces remain shared by
     // direction/displacement, exactly as in the concrete endpoint path.

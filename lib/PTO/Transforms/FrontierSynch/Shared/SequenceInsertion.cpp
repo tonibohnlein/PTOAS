@@ -288,21 +288,21 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         family.sourcePipe = p; family.targetPipe = q; family.local = p == q;
         family.sourceCut = aa.after; family.targetCut = ab.before;
         family.members.push_back({record, a.type, b.type, aa.coordinates, ab.coordinates});
-        result->families.push_back(std::move(family));
-        auto append = [&](TemplateEndpointCut cut, EndpointKind kind, Expr guard,
-                          ArrayRef<TemplateCoordinate> coordinates) {
-            ContextualEndpointFamily endpoint;
-            endpoint.piece.cut = cut;
-            endpoint.piece.namespaceId = record;
-            endpoint.piece.sourcePipe = p; endpoint.piece.targetPipe = q;
-            endpoint.piece.kind = kind;
-            endpoint.piece.members.push_back({record, {coordinates.begin(), coordinates.end()}});
-            endpoint.activity = guard;
-            endpoint.ordinal = c(0);
-            crossingFamilies.push_back(std::move(endpoint));
-            numericalEndpoints.push_back(numerical);
-        };
         if (numerical) {
+            result->families.push_back(std::move(family));
+            auto append = [&](TemplateEndpointCut cut, EndpointKind kind, Expr guard,
+                              ArrayRef<TemplateCoordinate> coordinates) {
+                ContextualEndpointFamily endpoint;
+                endpoint.piece.cut = cut;
+                endpoint.piece.namespaceId = record;
+                endpoint.piece.sourcePipe = p; endpoint.piece.targetPipe = q;
+                endpoint.piece.kind = kind;
+                endpoint.piece.members.push_back({record, {coordinates.begin(), coordinates.end()}});
+                endpoint.activity = guard;
+                endpoint.ordinal = c(0);
+                crossingFamilies.push_back(std::move(endpoint));
+                numericalEndpoints.push_back(numerical);
+            };
             if (p != q) {
                 append(aa.after, EndpointKind::Set, endpointGuard(a, retained), aa.coordinates);
                 allocationCrossings.push_back({p, q, 1, {{record, 0, 0,
@@ -316,48 +316,37 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> SequenceAnalysisState::prepareWi
         }
         shareEndpointValues(retained, a, b, aa.after.before, ab.before.before);
         auto targetGuard = endpointGuard(b, retained);
-        if (p == q) {
-            if (failed(available(targetGuard, ab.before.before))) {
-                return fail("sequence barrier predicate unavailable at its cut");
-            }
-            append(ab.before, EndpointKind::Barrier, targetGuard, ab.coordinates);
-            return true;
+        auto sourceGuard = retained;
+        std::optional<SelectedPublication> selected;
+        if (p != q) {
+            auto sourcePresence = regionalPresence(ca.regional, a.event());
+            if (!sourcePresence) { return fail("sequence publication requires exact source presence"); }
+            sourceGuard = endpointGuard(a, retained);
+            selected = SelectedPublication{*sourcePresence, endpointGuard(a, *sourcePresence)};
         }
-        // Settle selective versus early publication and terminal cleanup from
-        // exact expressions. The allocation view owns this protocol before any
-        // detached scalar arithmetic or command operands are materialized.
-        auto sourcePresence = regionalPresence(ca.regional, a.event());
-        if (!sourcePresence) { return fail("sequence publication requires exact source presence"); }
-        auto sourceGuard = endpointGuard(a, retained);
-        auto selectedSource = endpointGuard(a, *sourcePresence);
         if (!diagnostic.empty()) { return false; }
-        auto publication = preparePublicationRecipe(function, expressions, aa.after, ab.before,
-            sourceGuard, retained, targetGuard, available, diagnostic,
-            SelectedPublication{*sourcePresence, selectedSource});
-        if (failed(publication)) {
+        auto direct = prepareDirectPublicationFamily(function, familyExpressions, std::move(family),
+            sourceGuard, retained, targetGuard, diagnostic, selected, available);
+        if (failed(direct)) {
             llvm::raw_string_ostream detail(diagnostic);
             detail << "; crossing record " << record << " from " << aa.phase->elementOp->getLoc()
                    << " to " << ab.phase->elementOp->getLoc();
             return false;
         }
-        const auto& protocol = **publication;
-        if (protocol.cleanupCut) {
-            auto choices = qualifyTerminalCleanupCuts(
-                {ab.before, {protocol.cleanupCut->getBlock(), protocol.cleanupCut}}, arena, targetGuard);
-            if (!choices) { return fail("sequence cleanup requires a singleton consumer recipe"); }
-            result->families.back().targetChoices = std::move(choices);
+        if (p != q) {
+            // Keep uniform allocation activity for selective publication. Only
+            // early publications acquire a terminal-surviving lifetime.
+            allocationCrossings.push_back({p, q, 1, {{record, 0, 0,
+                {typeOffsets[a.child] + a.type, a.ordinal, PeriodicEventKind::Start, a.visits},
+                {typeOffsets[b.child] + b.type, b.ordinal, PeriodicEventKind::Completion, b.visits},
+                direct->terminalLifetime ? direct->publicationGuard : allocationActive, {}, true}}, {},
+                direct->terminalLifetime});
         }
-        allocationCrossings.push_back({p, q, 1, {{record, 0, 0,
-            {typeOffsets[a.child] + a.type, a.ordinal, PeriodicEventKind::Start, a.visits},
-            {typeOffsets[b.child] + b.type, b.ordinal, PeriodicEventKind::Completion, b.visits},
-            protocol.cleanupCut ? protocol.publicationGuard : allocationActive, {}, true}}, {},
-            bool(protocol.cleanupCut)});
-        append(aa.after, EndpointKind::Set, protocol.sourceGuard, aa.coordinates);
-        append(ab.before, EndpointKind::Wait, targetGuard, ab.coordinates);
-        if (protocol.cleanupCut) {
-            append({protocol.cleanupCut->getBlock(), protocol.cleanupCut}, EndpointKind::Wait,
-                   protocol.cleanupGuard, {});
+        for (auto& endpoint : direct->endpoints) {
+            crossingFamilies.push_back(std::move(endpoint));
+            numericalEndpoints.push_back(false);
         }
+        result->families.push_back(std::move(direct->family));
         return true;
     };
     std::vector<uint8_t> qualified;

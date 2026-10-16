@@ -1,6 +1,6 @@
 # Finite analysis consolidation
 
-Baseline: `1953d248c`. Implementation status: M1–M2 accepted; M3–M5 remain open.
+Baseline: `1953d248c`. Implementation status: M1–M3 accepted; M4–M5 remain open.
 
 ## Contracts
 
@@ -130,3 +130,40 @@ The M2 focused gate passed 32/32 in 121.68 seconds (`m2-focused.json` and
 `m2-focused.out`), including guarded publication, numerical finite crossings,
 regional/session retries, conditional upgrades, overlays and prefix clients.
 This is a focused gate; the final synchronization campaign remains M5.
+
+### M3 common direct-publication construction
+
+Concrete finite, guarded finite and contextual sequence crossings now use
+`prepareDirectPublicationFamily` in the existing publication service. It returns
+one owned, fully qualified family and its actual command predicates before the
+caller appends any plan inventory. Numerical grouped crossings retain their
+compact builder. The three producers retain demand enumeration and allocation
+coordinates, but their duplicate contextual SET/WAIT/cleanup assembly is removed.
+
+The helper accepts one zero-displacement record, keeps member and enclosing
+invocation identity, and shares the existing direct/early publication policy.
+Terminal-choice evidence owns its predicate arena. Local barriers check consumer
+availability without acquiring publication or cleanup. Sequence allocation still
+uses uniform demand activity for selective publication and publication activity
+for terminal-surviving early publication. No realization-order guarantee is
+promoted by this refactor; the existing guarantee/placement checks remain owners.
+
+Architecture review caught an initial availability-policy bypass. The corrected
+helper accepts the producer's availability restriction at every required cut;
+sequence passes its existing no-replay policy. The regression distinguishes a
+pure guard the generic service can replay from the same guard restricted to
+original availability, which requires early publication and cleanup.
+
+Additional tests require two simultaneous early SETs for complementary future
+demand guards, with exactly one consumer-or-cleanup WAIT for each identity.
+They check absent sources, both producer routes, alias policies, two-ID success
+and one-ID refusal. API tests cover invalid cuts, multi-member refusal, local
+barriers, required-cut denial and retry with unchanged original IR. Existing
+selected-repeat and missing-history oracles remain in the gate.
+
+Both source reviewers accepted the corrected M3 scope. The incremental build
+passed without new warnings; the focused gate passed 24/24 in 120.86 seconds
+(`m3-focused.json`/`.out`), including saved contextual/mixed/cleanup output and
+combined physical output. The nine changed-code G.FMT.11-CPP matches are
+multiline braced conditions, reviewed as false positives. This consolidation
+claims neither reduced demand count nor a planning/device speedup.

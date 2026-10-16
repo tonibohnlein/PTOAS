@@ -160,6 +160,78 @@ FailureOr<std::shared_ptr<const GuardedPublicationRecipe>> preparePublicationRec
     if (failed(recipe)) { return failure(); }
     return std::make_shared<const GuardedPublicationRecipe>(std::move(*recipe));
 }
+FailureOr<DirectPublicationFamily> prepareDirectPublicationFamily(func::FuncOp function,
+    ContextualFamilyExpressions& expressions, EndpointFamily family,
+    RegionExpressions::Id sourceGuard, RegionExpressions::Id activity, RegionExpressions::Id consumerGuard,
+    std::string& error, std::optional<SelectedPublication> selectedSource,
+    const EndpointExpressionAvailability& availabilityPolicy)
+{
+    error.clear();
+    auto owner = expressions.arena();
+    if (!owner || !function || family.members.size() != 1 || family.members.front().record != family.id ||
+        family.displacement || family.sourceChoices || family.targetChoices ||
+        family.local != (family.sourcePipe == family.targetPipe)) {
+        error = "direct family requires one original zero-displacement record"; return failure();
+    }
+    auto& arena = *owner;
+    for (auto guard : {sourceGuard, activity, consumerGuard}) {
+        if (guard >= arena.size() || !arena.isBoolean(guard)) {
+            error = "direct family requires exact Boolean predicates"; return failure();
+        }
+    }
+    for (auto cut : {family.sourceCut, family.targetCut}) {
+        if (!cut.before || cut.block != cut.before->getBlock() ||
+            cut.before->getParentOfType<func::FuncOp>() != function) {
+            error = "direct family requires original invocation cuts"; return failure();
+        }
+    }
+    DirectPublicationFamily result{owner, std::move(family), {}, activity, false};
+    const auto& member = result.family.members.front();
+    auto append = [&](TemplateEndpointCut cut, EndpointKind kind, RegionExpressions::Id guard,
+                      ArrayRef<TemplateCoordinate> coordinates) {
+        ContextualEndpointFamily endpoint;
+        endpoint.piece.cut = cut;
+        endpoint.piece.namespaceId = result.family.id;
+        endpoint.piece.sourcePipe = result.family.sourcePipe;
+        endpoint.piece.targetPipe = result.family.targetPipe;
+        endpoint.piece.kind = kind;
+        endpoint.piece.order = kind == EndpointKind::Set ? result.family.sourceOrder : result.family.targetOrder;
+        endpoint.piece.members.push_back({member.record, {coordinates.begin(), coordinates.end()}});
+        endpoint.activity = guard;
+        endpoint.ordinal = arena.constant(0);
+        result.endpoints.push_back(std::move(endpoint));
+    };
+    auto available = [&](RegionExpressions::Id expression, Operation* cut) {
+        if (availabilityPolicy) { return availabilityPolicy(expression, cut); }
+        return success(succeeded(expressions.prepare(expression, cut)));
+    };
+    if (result.family.local) {
+        if (failed(available(consumerGuard, result.family.targetCut.before))) {
+            error = "direct barrier predicate unavailable at its cut"; return failure();
+        }
+        append(result.family.targetCut, EndpointKind::Barrier, consumerGuard, member.targetCoordinates);
+        return result;
+    }
+    auto publication = preparePublicationRecipe(function, arena, result.family.sourceCut, result.family.targetCut,
+        sourceGuard, activity, consumerGuard, available, error, selectedSource);
+    if (failed(publication)) { return failure(); }
+    const auto& protocol = **publication;
+    result.publicationGuard = protocol.publicationGuard;
+    result.terminalLifetime = bool(protocol.cleanupCut);
+    if (protocol.cleanupCut) {
+        result.family.targetChoices = qualifyTerminalCleanupCuts(
+            {result.family.targetCut, {protocol.cleanupCut->getBlock(), protocol.cleanupCut}}, owner, consumerGuard);
+        if (!result.family.targetChoices) {
+            error = "direct cleanup requires a singleton consumer recipe"; return failure();
+        }
+    }
+    append(result.family.sourceCut, EndpointKind::Set, protocol.sourceGuard, member.sourceCoordinates);
+    append(result.family.targetCut, EndpointKind::Wait, consumerGuard, member.targetCoordinates);
+    if (protocol.cleanupCut) {
+        append({protocol.cleanupCut->getBlock(), protocol.cleanupCut}, EndpointKind::Wait, protocol.cleanupGuard, {});
+    }
+    return result;
+}
 LogicalResult appendPublicationCleanup(const GuardedPublication& publication,
     uint32_t record, uint32_t sourcePipe, uint32_t targetPipe,
     ArrayRef<RegionExpressions::Id> identity, RegionExpressions& arena,

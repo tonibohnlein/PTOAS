@@ -8,7 +8,7 @@
 // Shared early-publication policy. Cleanup is terminal, never a regional drain.
 #ifndef PTO_FRONTIERSYNCH_GUARDEDPUBLICATION_H
 #define PTO_FRONTIERSYNCH_GUARDEDPUBLICATION_H
-#include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include <functional>
 #include <optional>
@@ -71,6 +71,32 @@ FailureOr<std::shared_ptr<const GuardedPublicationRecipe>> preparePublicationRec
     RegionExpressions::Id sourceGuard, RegionExpressions::Id activity, RegionExpressions::Id consumerGuard,
     const EndpointExpressionAvailability& available, std::string& error,
     std::optional<SelectedPublication> selectedSource = {});
+// One fixed logical publication record, assembled transactionally before scalar
+// code exists. The caller certifies exact occurrence selection and activity;
+// this service qualifies availability and the existing early-publication policy.
+// Matching is (record, selected member coordinates, enclosing invocation, zero),
+// not zero alone. Enclosing invocations are owned by the normal recipe wrappers.
+struct DirectPublicationFamily {
+    std::shared_ptr<RegionExpressions> owner;
+    EndpointFamily family;
+    SmallVector<ContextualEndpointFamily, 3> endpoints;
+    // This is occurrence activity for allocation, distinct from the cut-qualified
+    // SET predicate. A producer keeps its uniform activity for selective SETs and
+    // uses this predicate for an early publication surviving until cleanup.
+    RegionExpressions::Id publicationGuard = RegionExpressions::invalid;
+    bool terminalLifetime = false;
+};
+// Only a single, zero-displacement record is accepted. Numerical grouped families
+// keep their compact builder. On failure no plan inventory has been modified.
+// Grouping must use returned command activity, never the input demand activity:
+// exclusive demands can require simultaneous early publications. An optional
+// availability policy preserves producer restrictions (such as no scalar replay)
+// on every barrier, consumer, publication and cleanup predicate.
+FailureOr<DirectPublicationFamily> prepareDirectPublicationFamily(func::FuncOp function,
+    ContextualFamilyExpressions& expressions, EndpointFamily family,
+    RegionExpressions::Id sourceGuard, RegionExpressions::Id activity, RegionExpressions::Id consumerGuard,
+    std::string& error, std::optional<SelectedPublication> selectedSource = {},
+    const EndpointExpressionAvailability& availabilityPolicy = {});
 // Append the alternative WAIT using the same record and matching tuple as the
 // ordinary pair. The final tuple component is the logical occurrence identity;
 // preceding components follow the normal memberCoordinates convention.
