@@ -10,18 +10,24 @@
 #ifndef PTO_FRONTIERSYNCH_GUARDED_STORAGE_SCAN_H
 #define PTO_FRONTIERSYNCH_GUARDED_STORAGE_SCAN_H
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include <cstddef>
 #include <map>
 #include <vector>
 namespace mlir::pto::frontiersynch::detail {
+struct GuardedStorageScanWork {
+    uint64_t sourceVisits = 0, pairVisits = 0, candidateVisits = 0;
+};
 template <typename State, typename Visit, typename Advance>
 void scanWriterPairs(const std::vector<bool>& writers, const State& initial,
-                     Visit visit, Advance advance)
+                     Visit visit, Advance advance, GuardedStorageScanWork* work = nullptr)
 {
     for (std::size_t writer = 0; writer < writers.size(); ++writer) {
+        if (work) { accumulateCost(work->sourceVisits, 1); }
         if (!writers[writer]) { continue; }
         auto forward = initial;
         for (std::size_t other = writer + 1; other < writers.size(); ++other) {
+            if (work) { accumulateCost(work->pairVisits, 1); accumulateCost(work->candidateVisits, 1); }
             visit(writer, other, forward);
             advance(forward, other);
         }
@@ -29,7 +35,11 @@ void scanWriterPairs(const std::vector<bool>& writers, const State& initial,
         for (std::size_t end = writer; end; --end) {
             const auto other = end - 1;
             // Writer/writer pairs were already visited in the forward scan.
-            if (!writers[other]) { visit(other, writer, backward); }
+            if (work) { accumulateCost(work->pairVisits, 1); }
+            if (!writers[other]) {
+                if (work) { accumulateCost(work->candidateVisits, 1); }
+                visit(other, writer, backward);
+            }
             advance(backward, other);
         }
     }

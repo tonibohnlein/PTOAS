@@ -23,6 +23,7 @@ public:
     const SyncInput& storage() const { return *inputView; }
     std::shared_ptr<const SyncInput> storageOwner() const { return inputOwner; }
     bool wholeFunction() const { return whole; }
+    uint64_t rootCopies() const { return *rootCopyWork; }
     const PhaseIndex& index() const { return *indexOwner; }
 private:
     friend std::shared_ptr<const FiniteOccurrenceInput> finiteFunctionInput(func::FuncOp,
@@ -32,13 +33,15 @@ private:
     friend std::shared_ptr<const FiniteOccurrenceInput> finiteRegionInput(
         std::shared_ptr<const FiniteOccurrenceInput>, ArrayRef<Operation*>);
     FiniteOccurrenceInput(func::FuncOp function, const SyncInput& storage,
-                          std::shared_ptr<const PhaseIndex> index)
-        : originalFunction(function), inputView(&storage), indexOwner(std::move(index)) {}
+                          std::shared_ptr<const PhaseIndex> index, std::shared_ptr<uint64_t> work = {})
+        : originalFunction(function), inputView(&storage),
+          rootCopyWork(work ? std::move(work) : std::make_shared<uint64_t>(0)), indexOwner(std::move(index)) {}
     func::FuncOp originalFunction;
     SmallVector<Operation*> originalRoots;
     const SyncInput* inputView;
     std::shared_ptr<const SyncInput> inputOwner;
     bool whole = true;
+    std::shared_ptr<uint64_t> rootCopyWork;
     std::shared_ptr<const PhaseIndex> indexOwner;
 };
 struct FiniteRecipeTemplate;
@@ -48,6 +51,8 @@ public:
         : input(std::move(input)), representation(std::move(result)) {}
     FiniteAnalysis(std::shared_ptr<const FiniteOccurrenceInput> input, FiniteGuardedAnalysis result)
         : input(std::move(input)), representation(std::move(result)) {}
+    // Diagnostic work only; never used for acceptance or semantic decisions.
+    struct Work { uint64_t numericalQueries = 0, boundaryEntries = 0, recipeBuilds = 0, recipeHits = 0; } work;
     const ExplicitAnalysis* concrete() const { return std::get_if<ExplicitAnalysis>(&representation); }
     const FiniteGuardedAnalysis* guarded() const { return std::get_if<FiniteGuardedAnalysis>(&representation); }
     const std::string& error() const;

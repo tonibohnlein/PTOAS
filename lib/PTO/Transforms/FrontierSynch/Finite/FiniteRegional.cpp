@@ -51,6 +51,13 @@ RegionalAnalysis concreteRegional(std::shared_ptr<FiniteAnalysis> owner, std::sh
         if (boundary.lastWriter) { cell.lastWriters.push_back(selected(*boundary.lastWriter)); }
         for (const auto& [pipe, type] : boundary.firstReaders) { cell.firstReaders[pipe].push_back(selected(type)); }
         for (const auto& [pipe, type] : boundary.lastReaders) { cell.lastReaders[pipe].push_back(selected(type)); }
+        accumulateCost(owner->work.boundaryEntries, cell.firstWriters.size() + cell.lastWriters.size());
+        for (const auto& entry : cell.firstReaders) {
+            accumulateCost(owner->work.boundaryEntries, entry.second.size());
+        }
+        for (const auto& entry : cell.lastReaders) {
+            accumulateCost(owner->work.boundaryEntries, entry.second.size());
+        }
         out.storageBoundary.push_back(std::move(cell));
     }
     out.cost.children = 1;
@@ -69,6 +76,7 @@ RegionalAnalysis concreteRegional(std::shared_ptr<FiniteAnalysis> owner, std::sh
         -> std::optional<RegionExpressions::Id> {
         auto pa = present(a), pb = present(b);
         if (!pa || !pb) { return std::nullopt; }
+        accumulateCost(owner->work.numericalQueries, 1);
         auto answer = explicitEventPrecedes(*owner->concrete(), {a.type, a.kind}, {b.type, b.kind});
         if (!answer) { return std::nullopt; }
         return arena->land(arena->boolean(*answer), arena->land(*pa, *pb));

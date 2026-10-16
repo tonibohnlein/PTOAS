@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --gm-alias=may-not-alias --finite-guarded-analysis %s
+!tile = !pto.tile_buf<vec, 1x32xf16>
+!indices = !pto.tile_buf<vec, 1x32xi16>
+module attributes {pto.target_arch = "a3"} {
+  func.func @guarded_macro_writers(%take: i1, %output: !pto.partition_tensor_view<1x32xf16>)
+      attributes {test.finite_qualification = "partitions"} {
+    %a = arith.constant 0 : i64
+    %b = arith.constant 64 : i64
+    %c = arith.constant 128 : i64
+    %src = pto.alloc_tile addr = %a : !tile
+    %idx = pto.alloc_tile addr = %b : !indices
+    %dst = pto.alloc_tile addr = %c : !tile
+    scf.if %take {
+      pto.tscatter ins(%src, %idx : !tile, !indices) outs(%dst : !tile)
+    }
+    pto.tstore ins(%dst : !tile) outs(%output : !pto.partition_tensor_view<1x32xf16>)
+    return
+  }
+}

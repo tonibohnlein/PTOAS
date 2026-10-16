@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/Recognition.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 namespace mlir::pto::frontiersynch {
 struct FiniteRecipeTemplate {
@@ -43,7 +44,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteAnalysis::prepare()
     preparationError.clear();
     if (!input || !error().empty()) { return failure(); }
     if (const auto* value = concrete()) {
-        if (recipe) { return recipe->instantiate(); }
+        if (recipe) { accumulateCost(work.recipeHits, 1); return recipe->instantiate(); }
+        accumulateCost(work.recipeBuilds, 1);
         auto prepared = prepareExplicitInsertion(input->function(), *value, false);
         if (failed(prepared)) { return failure(); }
         if (!input->wholeFunction()) { (*prepared)->completeInvocation = false; }
@@ -79,6 +81,7 @@ std::shared_ptr<const FiniteOccurrenceInput> finiteBorrowedFunctionInput(func::F
     for (auto& operation : function.front()) {
         if (!operation.hasTrait<OpTrait::IsTerminator>()) { input->originalRoots.push_back(&operation); }
     }
+    accumulateCost(*input->rootCopyWork, input->originalRoots.size());
     return input;
 }
 std::shared_ptr<const FiniteOccurrenceInput> finiteFunctionInput(func::FuncOp function,
@@ -88,6 +91,7 @@ std::shared_ptr<const FiniteOccurrenceInput> finiteFunctionInput(func::FuncOp fu
     auto borrowed = finiteBorrowedFunctionInput(function, *storage, std::move(index));
     if (!borrowed) { return {}; }
     auto owned = std::make_shared<FiniteOccurrenceInput>(*borrowed);
+    accumulateCost(*owned->rootCopyWork, owned->originalRoots.size());
     owned->inputOwner = std::move(storage);
     return owned;
 }
@@ -102,9 +106,10 @@ std::shared_ptr<const FiniteOccurrenceInput> finiteRegionInput(
         previous = root;
     }
     auto input = std::shared_ptr<FiniteOccurrenceInput>(
-        new FiniteOccurrenceInput(source->function(), source->storage(), source->indexOwner));
+        new FiniteOccurrenceInput(source->function(), source->storage(), source->indexOwner, source->rootCopyWork));
     input->inputOwner = source->inputOwner;
     input->originalRoots.assign(roots.begin(), roots.end());
+    accumulateCost(*input->rootCopyWork, roots.size());
     input->whole = false;
     return input;
 }

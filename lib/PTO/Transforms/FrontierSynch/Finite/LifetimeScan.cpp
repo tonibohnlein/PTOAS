@@ -187,7 +187,7 @@ StorageScanResult scanStorageLifetimes(
 }
 StorageScanResult scanStorageLifetimes(
     llvm::ArrayRef<ExplicitEffects> occurrences, llvm::ArrayRef<StorageGenerator> prerequisites,
-    StorageProtectionPolicy protection)
+    StorageProtectionPolicy protection, StorageScanWork* work)
 {
     auto metadata = [&](std::size_t id) {
         return StorageOccurrenceMetadata{occurrences[id].payload, occurrences[id].pipe};
@@ -200,6 +200,7 @@ StorageScanResult scanStorageLifetimes(
         }
         return true;
     };
-    return scanStorageLifetimes(StorageScanInput{occurrences.size(), metadata, accesses}, prerequisites, protection);
+    return scanStorageLifetimes(StorageScanInput{occurrences.size(), metadata, accesses},
+                                prerequisites, protection, true, work);
 }
 } // namespace mlir::pto::frontiersynch
