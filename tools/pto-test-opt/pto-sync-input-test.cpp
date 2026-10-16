@@ -32,6 +32,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeRegional.h"
 #include "PTO/IR/PTO.h"
 #include "SyncPhaseCopyChecks.h"
+#include "SequenceExplicitRetryChecks.h"
 #include "SyncLogicalInsertionChecks.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -513,6 +514,20 @@ LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy p
       }
     }
     return function.emitError("allocation retry repeated work, changed commands or lost exact demands");
+  }
+  if (function->hasAttr("test.require_bounded_regional_allocation")) {
+    const auto sequence = logical.mathematical->sequenceDemands;
+    if (!sequence || !pto::test::checkSequenceExplicitRetry(*sequence)) {
+      return function.emitError("explicit sequence retry lost its immutable recipe or shared mutable preparation");
+    }
+    auto third = session.prepareLogical(logical);
+    if (failed(third) || failed(session.attachAllocation(logical, **third)) ||
+        (*third)->allocationCertificate != (*left)->allocationCertificate ||
+        session.constructionCounts().allocationExports != 1 ||
+        !(*third)->endpoints.empty() || !(*third)->preparation.empty()) {
+      return function.emitError("third sequence retry reconstructed allocation or eager scalar preparation");
+    }
+    llvm::outs() << "explicit sequence retry: immutable recipe, fresh plans, isolated materialization\n";
   }
   if (function->hasAttr("test.require_bounded_regional_allocation") &&
       !checkBoundedRegionalAllocationRecipe(function, policy)) {
@@ -1332,7 +1347,20 @@ LogicalResult checkRetainedDemands(func::FuncOp function, pto::GMAliasPolicy pol
   auto fallback = session.analyze(logical);
   if (fallback.status != AnalysisStatus::UnmetObligation || fallback.completion ||
       fallback.mathematical != first.mathematical) {
-    return function.emitError("fallback replaced the retained exact result");
+    auto diagnostic = function.emitError("fallback replaced the retained exact result");
+    diagnostic << " (first=" << first.mathematical->backend << ", fallback="
+               << (fallback.mathematical ? fallback.mathematical->backend : "none")
+               << ", status=" << static_cast<unsigned>(fallback.status)
+               << ", stage=" << static_cast<unsigned>(fallback.stage)
+               << ", completion=" << bool(fallback.completion)
+               << ", compact=" << bool(fallback.mathematical && fallback.mathematical->compactDemands)
+               << ", same_owner=" << (fallback.mathematical == first.mathematical)
+               << ", queries=" << fallback.available.queries << ", selectors=" << fallback.available.selectors
+               << ", synchronization=" << fallback.available.synchronization << ")";
+    for (const auto& obligation : fallback.obligations) {
+      diagnostic << "; stage " << static_cast<unsigned>(obligation.stage) << ": " << obligation.diagnostic;
+    }
+    return failure();
   }
   return success();
 }

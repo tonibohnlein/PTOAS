@@ -17,6 +17,32 @@
 #include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch {
 namespace {
+// An explicit child belongs to this immutable adapter, including its original
+// input and cuts. Retain only scalar-free construction; every call still owns a
+// fresh mutable plan. Callback copies made by endpoint upgrades share this owner.
+struct ExplicitAdapterTemplate {
+    int64_t planId;
+    bool nestedIdentities, independentPieces, groupedFamilies;
+    std::shared_ptr<const FamilyEndpointRecipe> recipe;
+    std::vector<EndpointFamily> families;
+
+    explicit ExplicitAdapterTemplate(const PreparedLogicalPlan& plan)
+        : planId(plan.planId), nestedIdentities(plan.nestedIdentities),
+          independentPieces(plan.independentPieces), groupedFamilies(plan.groupedFamilies),
+          recipe(plan.familyRecipe), families(plan.families.begin(), plan.families.end()) {}
+
+    std::unique_ptr<PreparedLogicalPlan> instantiate() const
+    {
+        auto plan = std::make_unique<PreparedLogicalPlan>(planId);
+        plan->completeInvocation = false;
+        plan->nestedIdentities = nestedIdentities;
+        plan->independentPieces = independentPieces;
+        plan->groupedFamilies = groupedFamilies;
+        plan->familyRecipe = recipe;
+        plan->families.assign(families.begin(), families.end());
+        return plan;
+    }
+};
 // Promote only a supplied complete uniform-atom certificate. Querying one byte
 // of a family never establishes that its selected occurrences are uniform.
 bool promoteUniformStorage(RegionalAnalysis& region)
@@ -431,11 +457,29 @@ void SequenceAnalysisState::bindAdapters()
             }
             return both(reaches, both(*pa, *pb));
         };
-        out.prepare = [this, id]() -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
+        auto explicitRecipe = std::make_shared<std::shared_ptr<const ExplicitAdapterTemplate>>();
+        out.prepare = [this, id, explicitRecipe]() -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
             auto& current = children[id];
             if (!current.loop) {
+                if (*explicitRecipe) { return (*explicitRecipe)->instantiate(); }
                 auto prepared = prepareExplicitInsertion(function, current.explicitAnalysis, false);
-                if (succeeded(prepared)) { (*prepared)->completeInvocation = false; }
+                if (failed(prepared)) { return failure(); }
+                (*prepared)->completeInvocation = false;
+                // Do not retain a future producer extension with SSA, private
+                // state, or allocation work in this scalar-free cache.
+                if ((*prepared)->preparation.empty() && (*prepared)->endpoints.empty() &&
+                    !(*prepared)->allocationPreparation && !(*prepared)->allocationCertificate &&
+                    !(*prepared)->regionalAllocation && !(*prepared)->privateState &&
+                    !(*prepared)->familyProtocol && !(*prepared)->physicalOutput && !(*prepared)->executedOutput &&
+                    !(*prepared)->allocationProofs && !(*prepared)->mathematicalOwner && !(*prepared)->deferredOutput &&
+                    !(*prepared)->completionOwner && !(*prepared)->compactBoundingOwner &&
+                    !(*prepared)->recognitionReport && !(*prepared)->allocationProfile &&
+                    !(*prepared)->profileControl &&
+                    llvm::all_of((*prepared)->families, [](const auto& family) {
+                        return !family.sourceChoices && !family.targetChoices;
+                    })) {
+                    *explicitRecipe = std::make_shared<const ExplicitAdapterTemplate>(**prepared);
+                }
                 return prepared;
             }
             auto prepared = std::make_unique<PreparedLogicalPlan>(0);
