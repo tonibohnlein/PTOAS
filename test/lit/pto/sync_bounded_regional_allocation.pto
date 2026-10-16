@@ -16,6 +16,7 @@
 // LOGICAL: pto.finite_allocation
 // LOGICAL-SAME: strategy = "regional-palettes"
 // LOGICAL: pto.logical_
+// SESSION: explicit sequence retry: immutable recipe, fresh plans, isolated materialization
 // SESSION: bounded regional allocation: session recipe consumed, cached export
 // SESSION: allocation-session: sequence available=1 retained-demands cached-export
 // PHYSICAL-NOT: pto.logical_
