@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/DeferredFamily.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "FamilyMaterialization.h"
+#include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "FamilyEndpointNormalization.h"
 #include "CountedCleanupSelection.h"
 #include "SelectorGuardPlan.h"
@@ -98,6 +99,8 @@ struct NormalizedFamilyInventory {
     bool translateNamespaces = false;
 };
 struct PhysicalFamilyOutput {
+    bool emptyInvocation = false;
+    int64_t emptyPlanId = 0;
     std::shared_ptr<const FamilyEndpointRecipe> protocol;
     DictionaryAttr certificate;
     SmallVector<int64_t> eligibleIds;
@@ -1978,10 +1981,21 @@ ArrayRef<uint64_t> normalizedFamilyProtocolKey(const FamilyEndpointRecipe& recip
 {
     return recipe.normalized ? ArrayRef<uint64_t>(recipe.normalized->identity) : ArrayRef<uint64_t>{};
 }
+namespace {
+bool emptyPhysicalPlan(const PreparedLogicalPlan& plan)
+{
+    return !plan.completeInvocation && !plan.deferredOutput && !plan.familyRecipe && !plan.familyProtocol &&
+        !plan.privateState && !plan.completionOwner && !plan.executedOutput && !plan.allocationPreparation &&
+        !plan.allocationProofs && !plan.regionalAllocation && !plan.compactBoundingOwner &&
+        plan.preparation.empty() && plan.endpoints.empty() && plan.families.empty();
+}
+} // namespace
 bool validFamilyEndpointProtocol(const PreparedLogicalPlan& plan)
 {
     if (!plan.familyProtocol) {
-        return !plan.physicalOutput && !plan.executedOutput;
+        return !plan.executedOutput && (!plan.physicalOutput ||
+            (plan.physicalOutput->emptyInvocation && plan.physicalOutput->emptyPlanId == plan.planId &&
+             emptyPhysicalPlan(plan)));
     }
     if (!plan.familyProtocol->normalized) {
         return false;
@@ -2023,6 +2037,23 @@ LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPla
 {
     if (plan.privateState) {
         return plan.privateState->requestPhysical(function, plan, eligibleIds);
+    }
+    // The producer may certify a whole invocation that executes no events.
+    // Accept only the existing exact empty finite encoding and an empty plan;
+    // a missing family recipe alone is never evidence of zero resource demand.
+    if (function && !plan.physicalOutput && emptyPhysicalPlan(plan) &&
+        plan.allocationCertificate == explicitAllocationCertificate(ExplicitAnalysis{}, plan.planId,
+            function.getContext())) {
+        if (failed(preflightPhysicalOutput(function, plan.allocationCertificate))) { return failure(); }
+        auto decoded = decodePhysicalAllocationCertificate(function, plan.allocationCertificate, eligibleIds);
+        if (failed(decoded) || decoded->planId != plan.planId || !decoded->records.empty()) { return failure(); }
+        auto output = std::make_shared<PhysicalFamilyOutput>();
+        output->emptyInvocation = true;
+        output->emptyPlanId = plan.planId;
+        output->certificate = plan.allocationCertificate;
+        output->eligibleIds.assign(eligibleIds.begin(), eligibleIds.end());
+        plan.physicalOutput = std::move(output);
+        return success();
     }
     auto strategy = plan.allocationCertificate ?
         plan.allocationCertificate.getAs<StringAttr>("strategy") : StringAttr{};

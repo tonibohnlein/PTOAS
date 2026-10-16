@@ -27,6 +27,8 @@
 #include "PTO/Transforms/FrontierSynch/Shared/FiniteVisitRecognition.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRecognition.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRegional.h"
+#include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
 namespace mlir::pto::frontiersynch {
 namespace {
 void recordSequenceCosts(AnalysisSessionState& session, const SequenceAnalysis& sequence, std::size_t region)
@@ -238,6 +240,30 @@ const StructureNode* wholeInvocationLoop(func::FuncOp function, const SyncInput&
     const ProgramRecognition& program, const PhaseIndex& index)
 {
     return wholeLoop(function, input, program, index);
+}
+bool staticallyEmptyWholeInvocation(const MathematicalResult& demands, func::FuncOp function,
+    const SyncInput& input, const ProgramRecognition& program, const PhaseIndex& index)
+{
+    if (!function || demands.region != 0 || demands.input.get() != &input) { return false; }
+    const auto* original = wholeInvocationLoop(function, input, program, index);
+    if (!original || hasManualOnCoreSynchronization(function) ||
+        function.walk([](Operation* operation) {
+            return isPreservedSyncProtocol(operation) ? WalkResult::interrupt() : WalkResult::advance();
+        }).wasInterrupted()) { return false; }
+    if (demands.identityComposition) {
+        const auto& owner = *demands.identityComposition;
+        if (!owner.applies(&input, &index, &program, function) || owner.loop != original->anchor) { return false; }
+    }
+    auto loop = dyn_cast<scf::ForOp>(original->anchor);
+    if (!loop || !loop.getInductionVar().getType().isIndex()) { return false; }
+    const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
+    if (bits.isScalable() || bits.getFixedValue() != 64) { return false; }
+    APInt lower, upper, step;
+    return matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) &&
+        matchPattern(loop.getUpperBound(), m_ConstantInt(&upper)) &&
+        matchPattern(loop.getStep(), m_ConstantInt(&step)) && lower.getBitWidth() == upper.getBitWidth() &&
+        lower.isSignedIntN(64) && upper.isSignedIntN(64) && step.isSignedIntN(64) &&
+        step.getSExtValue() > 0 && lower.sge(upper);
 }
 std::shared_ptr<const NormalizedControlDescription> FrontierAnalysis::normalizedRegion(std::size_t region)
 {

@@ -57,6 +57,12 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetained(const MathematicalResult& demands)
 {
     std::string error;
+    if (storage && program && structuralIndex &&
+        staticallyEmptyWholeInvocation(demands, function, *storage, *program, *structuralIndex)) {
+        // Retain the mathematics, but this exact invocation executes neither
+        // endpoints nor payloads and therefore needs no terminal completion.
+        return std::make_unique<PreparedLogicalPlan>(0);
+    }
     if (demands.identityComposition) {
         const auto& owner = *demands.identityComposition;
         if (demands.region != owner.region ||
