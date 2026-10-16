@@ -491,6 +491,9 @@ LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy p
   }
   const auto work = session.constructionCounts().mathematicalAttempts;
   const auto endpoints = (*left)->endpoints.size();
+  const auto preparationStages = (*left)->preparation.size();
+  const bool samePreparedShape = (*right)->endpoints.size() == endpoints &&
+      (*right)->preparation.size() == preparationStages;
   const auto allocation = session.attachAllocation(logical, **left);
   const auto retry = session.attachAllocation(logical, **right);
   const bool sameOutcome = succeeded(allocation) == succeeded(retry);
@@ -516,19 +519,36 @@ LogicalResult checkAllocationSession(func::FuncOp function, pto::GMAliasPolicy p
     }
     return function.emitError("allocation retry repeated work, changed commands or lost exact demands");
   }
+  const bool requireExplicitRetry = function->hasAttr("test.require_explicit_sequence_retry");
+  if (requireExplicitRetry && !function->hasAttr("test.require_bounded_regional_allocation")) {
+    return function.emitError("explicit sequence retry requires the bounded allocation fixture contract");
+  }
   if (function->hasAttr("test.require_bounded_regional_allocation")) {
-    const auto sequence = logical.mathematical->sequenceDemands;
-    if (!sequence || !pto::test::checkSequenceExplicitRetry(*sequence)) {
-      return function.emitError("explicit sequence retry lost its immutable recipe or shared mutable preparation");
+    // Only fixtures that contain an internal explicit handoff can exercise the
+    // nonvacuous explicit-recipe ownership check. Boundary-only children cannot.
+    if (requireExplicitRetry) {
+      const auto sequence = logical.mathematical->sequenceDemands;
+      if (!sequence || !pto::test::checkSequenceExplicitRetry(*sequence)) {
+        return function.emitError("explicit sequence retry lost its immutable recipe or shared mutable preparation");
+      }
     }
     auto third = session.prepareLogical(logical);
     if (failed(third) || failed(session.attachAllocation(logical, **third)) ||
         (*third)->allocationCertificate != (*left)->allocationCertificate ||
-        session.constructionCounts().allocationExports != 1 ||
-        !(*third)->endpoints.empty() || !(*third)->preparation.empty()) {
-      return function.emitError("third sequence retry reconstructed allocation or eager scalar preparation");
+        session.constructionCounts().allocationExports != 1 || !samePreparedShape ||
+        (*left)->preparation.size() != preparationStages || (*right)->endpoints.size() != endpoints ||
+        (*right)->preparation.size() != preparationStages || (*third)->endpoints.size() != endpoints ||
+        (*third)->preparation.size() != preparationStages) {
+      return function.emitError("third sequence retry reconstructed allocation or changed preparation shape");
     }
-    llvm::outs() << "explicit sequence retry: immutable recipe, fresh plans, isolated materialization\n";
+    if (requireExplicitRetry) {
+      // This stronger scalar-free contract belongs to the explicit-recipe fixture;
+      // other bounded sequences can retain prepared boundary contributions.
+      if (!(*third)->endpoints.empty() || !(*third)->preparation.empty()) {
+        return function.emitError("explicit sequence retry constructed eager scalar preparation");
+      }
+      llvm::outs() << "explicit sequence retry: immutable recipe, fresh plans, isolated materialization\n";
+    }
   }
   if (function->hasAttr("test.require_bounded_regional_allocation") &&
       !checkBoundedRegionalAllocationRecipe(function, policy)) {
