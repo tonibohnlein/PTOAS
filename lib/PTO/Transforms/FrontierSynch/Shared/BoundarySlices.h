@@ -17,6 +17,14 @@ struct BoundarySlice {
     // Certified bound on max(end-begin,0), independent of runtime parameters.
     std::optional<uint64_t> maximumLength;
 };
+// Owned evidence from collectBoundarySlices: intervals are ordered, disjoint
+// subsets of the original loop's visit domain. Child adapters must match both
+// original endpoints before using this evidence; it is not a general alias fact.
+struct BoundaryPartition {
+    scf::ForOp loop;
+    std::shared_ptr<RegionExpressions> expressions;
+    std::vector<PeriodicSlice> intervals;
+};
 // Partition Boolean atoms using original absolute loop ordinals, including
 // outer AND/OR expressions. RetainChildControl stops at proper nested loops
 // and leaves unpartitioned predicates with their original child provider.

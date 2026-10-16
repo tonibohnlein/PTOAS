@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "SequenceAnalysisInternal.h"
 #include "SequenceStorageIndex.h"
+#include "BoundarySlices.h"
 #include "InvocationPrefixCollection.h"
 #include "../Structured/OrderCoveredPeriodic.h"
 #include "RecognitionInternal.h"
@@ -87,12 +88,13 @@ bool uniformCrossingCovered(const RegionalAnalysis& source, std::size_t effect,
     return model.uniformConflict(effect, other) && hasBoundary(source, effect) && hasBoundary(target, other);
 }
 // A discharge for repeated GM writers is relative to distinct visits of its
-// original loop. Revalidate that proof for disjoint constant ordinal slices;
+// original loop. Revalidate that proof for constant slices or a retained partition;
 // neither an identical effect ID nor independent phases proves this alone.
-bool disjointDeferredVisits(const RegionalAnalysis& source, const RegionalAccessBoundary& access,
-                            const RegionalAnalysis& target, std::size_t other,
-                            const PhaseIndex& index)
+bool disjointDeferredVisits(const Child& sourceChild, const RegionalAccessBoundary& access,
+                            const Child& targetChild, std::size_t other, const PhaseIndex& index)
 {
+    const auto& source = sourceChild.regional;
+    const auto& target = targetChild.regional;
     const bool sameContext = source.expressions && source.expressions == target.expressions &&
         source.accessModel && source.accessModel == target.accessModel && access.effect == other &&
         access.effect < source.accessModel->effects().size();
@@ -100,7 +102,7 @@ bool disjointDeferredVisits(const RegionalAnalysis& source, const RegionalAccess
     const auto& modeled = source.accessModel->effects()[access.effect];
     if (!modeled.memory || modeled.memory->scope != AddressSpace::GM) { return false; }
     auto bounds = [](const RegionalAnalysis& region, const RegionalAccessBoundary& value)
-        -> std::optional<std::tuple<scf::ForOp, uint64_t, uint64_t>> {
+        -> std::optional<std::tuple<scf::ForOp, Expr, Expr>> {
         const auto type = value.first.event.type;
         const bool flat = type == value.last.event.type && type < region.occurrenceLoops.size() &&
             type < region.anchors.size() && region.anchors[type].coordinates.empty() &&
@@ -114,10 +116,11 @@ bool disjointDeferredVisits(const RegionalAnalysis& source, const RegionalAccess
         }
         auto loop = region.occurrenceLoops[type];
         if (!loop || loop->getParentOfType<scf::ForOp>()) { return std::nullopt; }
-        auto first = region.expressions->constantValue(value.first.event.ordinal);
-        auto last = region.expressions->constantValue(value.last.event.ordinal);
-        if (!first || !last || *first > *last) { return std::nullopt; }
-        return std::make_tuple(loop, *first, *last);
+        if (!validRegionalEvent(region, value.first.event) || !validRegionalEvent(region, value.last.event) ||
+            value.first.present != value.last.present || !region.expressions->isBoolean(value.first.present)) {
+            return std::nullopt;
+        }
+        return std::make_tuple(loop, value.first.event.ordinal, value.last.event.ordinal);
     };
     auto left = bounds(source, access);
     if (!left) { return false; }
@@ -128,9 +131,27 @@ bool disjointDeferredVisits(const RegionalAnalysis& source, const RegionalAccess
             auto right = bounds(target, value);
             const bool sameLoop = right && std::get<0>(*left) == std::get<0>(*right);
             if (!sameLoop) { return false; }
-            const bool disjoint = std::get<2>(*left) < std::get<1>(*right) ||
-                std::get<2>(*right) < std::get<1>(*left);
-            if (!disjoint) { return false; }
+            auto& e = *source.expressions;
+            auto matchesPartition = [&](const Child& child, const auto& span) {
+                const auto owner = child.boundaryPartition;
+                if (!owner || owner->expressions != source.expressions || owner->loop != std::get<0>(span) ||
+                    child.boundarySlice >= owner->intervals.size()) { return false; }
+                const auto interval = owner->intervals[child.boundarySlice];
+                return interval.begin == std::get<1>(span) &&
+                    e.sub(interval.end, e.constant(1)) == std::get<2>(span);
+            };
+            if (sourceChild.boundaryPartition == targetChild.boundaryPartition &&
+                sourceChild.boundarySlice != targetChild.boundarySlice &&
+                matchesPartition(sourceChild, *left) && matchesPartition(targetChild, *right)) {
+                found = true;
+                continue;
+            }
+            const auto firstA = e.constantValue(std::get<1>(*left));
+            const auto lastA = e.constantValue(std::get<2>(*left));
+            const auto firstB = e.constantValue(std::get<1>(*right));
+            const auto lastB = e.constantValue(std::get<2>(*right));
+            if (!firstA || !lastA || !firstB || !lastB || *firstA > *lastA || *firstB > *lastB ||
+                !(*lastA < *firstB || *lastB < *firstA)) { return false; }
             found = true;
         }
     }
@@ -156,7 +177,7 @@ bool deferredCrossingsCovered(ArrayRef<Child> children, const PhaseIndex& index,
                     for (auto effect : source.accessModel->effectsFor(anchor.phase)) {
                         const bool unsupported = source.accessModel->mayConflict(access.effect, effect) &&
                             !uniformCrossingCovered(source, access.effect, target, effect) &&
-                            !disjointDeferredVisits(source, access, target, effect, index);
+                            !disjointDeferredVisits(children[i], access, children[j], effect, index);
                         if (unsupported) {
                             error = "deferred effect " + std::to_string(access.effect) +
                                 " conflicts with sibling effect " + std::to_string(effect);

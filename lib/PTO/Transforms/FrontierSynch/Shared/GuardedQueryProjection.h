@@ -81,28 +81,38 @@ inline GuardedQueryProjection projectGuardedRankQuery(
     if (!graph) { result.status = GuardedQueryProjectionStatus::MissingGraph; return result; }
     if (graph->arena != &e) { result.status = GuardedQueryProjectionStatus::ForeignArena; return result; }
     if (!graph->totalGuards) { result.status = GuardedQueryProjectionStatus::PartialGuard; return result; }
+    // The retained graph is reference-forward. No occurrence preceding the
+    // source can be reached from it, including through a native chain. Seed
+    // empty native state at the source and ignore edges entering this interval
+    // from earlier occurrences; do not construct their guard expressions.
+    if (source.type > target.type || target.type >= graph->payloads.size()) {
+        result.status = GuardedQueryProjectionStatus::InvalidProjection;
+        return result;
+    }
     RegionExpressions::Transaction transaction(e);
     const auto before = e.size();
     const auto no = e.boolean(false), yes = e.boolean(true);
     std::vector<RegionExpressions::Id> starts(graph->columnCount, no), completions(graph->columnCount, no);
-    std::vector<RegionExpressions::Id> completed(target.type + 1, no);
+    std::vector<RegionExpressions::Id> completed(std::size_t(target.type) - source.type + 1, no);
     auto answer = no;
-    for (uint32_t site = 0; site <= target.type; ++site) {
+    for (std::size_t site = source.type; site <= target.type; ++site) {
         ++result.occurrences;
         const auto column = graph->columns[site];
         const auto present = graph->payloads[site].present;
         auto start = starts[column];
         for (const auto& edge : graph->incoming[site]) {
+            if (edge.source < source.type) { continue; }
             ++result.edges;
-            start = e.lor(start, e.select(edge.guard, completed[edge.source], no));
+            start = e.lor(start, e.select(edge.guard, completed[edge.source - source.type], no));
         }
-        const bool nativeSource = site >= source.type && column == graph->columns[source.type];
+        const bool nativeSource = column == graph->columns[source.type];
         if (nativeSource && source.kind == PeriodicEventKind::Start) { start = yes; }
         auto completion = e.lor(start, completions[column]);
         if (nativeSource) { completion = yes; }
-        completed[site] = e.select(present, completion, no);
+        completed[site - source.type] = e.select(present, completion, no);
         if (site == target.type) {
-            answer = target.kind == PeriodicEventKind::Start ? e.select(present, start, no) : completed[site];
+            answer = target.kind == PeriodicEventKind::Start ?
+                e.select(present, start, no) : completed[site - source.type];
         }
         // Absence skips this potential occurrence in both native chains.
         starts[column] = e.select(present, start, starts[column]);

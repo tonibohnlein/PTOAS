@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent finite integer witnesses for projection and Boolean subtraction.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/IntegerRelations.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/IntegerRelationComposition.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
@@ -855,6 +856,36 @@ bool arrangementMembershipChecks(uint64_t& checked)
     auto retained = fs::subtractIntegerUnions(0, {*zero}, {*zeroEmpty});
     return succeeded(covered) && covered->empty() && succeeded(retained) && contains(*retained, {});
 }
+bool joinedCoordinateChecks(uint64_t& checked)
+{
+    // Independent membership uses the original coordinate assignments. Include
+    // aliases, permutations, fresh coordinates, signed rows and congruences.
+    for (int64_t bound = -2; bound <= 2; ++bound) {
+        auto a = System::create(2, {row({2, -1}, bound)}, {congruence({1, 2}, bound, 3)});
+        auto b = System::create(2, {row({-1, 3}, -bound)}, {congruence({2, -2}, 2 * bound, 4)});
+        if (failed(a) || failed(b)) { return false; }
+        for (unsigned mapping = 0; mapping < 81; ++mapping) {
+            const unsigned ax = mapping % 3, ay = (mapping / 3) % 3;
+            const unsigned bx = (mapping / 9) % 3, by = mapping / 27;
+            auto joined = fs::intersectRemappedIntegerSystems(*a, *b, 3, {ax, ay}, {bx, by});
+            if (failed(joined)) { return false; }
+            for (int64_t x = -3; x <= 3; ++x) {
+                for (int64_t y = -3; y <= 3; ++y) {
+                    for (int64_t z = -3; z <= 3; ++z) {
+                        const Point point{Integer(x), Integer(y), Integer(z)};
+                        const bool expected = contains(*a, {point[ax], point[ay]}) &&
+                            contains(*b, {point[bx], point[by]});
+                        ++checked;
+                        if (contains(*joined, point) != expected) { return false; }
+                    }
+                }
+            }
+        }
+        if (succeeded(fs::intersectRemappedIntegerSystems(*a, *b, 3, {0}, {0, 1})) ||
+            succeeded(fs::intersectRemappedIntegerSystems(*a, *b, 3, {0, 1}, {0, 3}))) { return false; }
+    }
+    return true;
+}
 bool remapAndDifferenceChecks(uint64_t& checked)
 {
     auto different = System::create(2, {row({1, -1}, -1)});
@@ -930,6 +961,7 @@ int runIntegerRelationChecks()
     if (!multiSeedDifferenceChecks(checked)) { llvm::errs() << "integer multi-seed difference failed\n"; return 1; }
     if (!irrelevantArrangementAxes(checked)) { llvm::errs() << "irrelevant arrangement axes failed\n"; return 1; }
     if (!arrangementMembershipChecks(checked)) { llvm::errs() << "arrangement membership failed\n"; return 1; }
+    if (!joinedCoordinateChecks(checked)) { llvm::errs() << "integer joined-coordinate check failed\n"; return 1; }
     if (!remapAndDifferenceChecks(checked)) { llvm::errs() << "integer remap/difference check failed\n"; return 1; }
     llvm::outs() << "integer relation exactness passed " << checked << " bounded points\n";
     return 0;

@@ -4573,5 +4573,1906 @@
         ]
       }
     }
+  },
+  "milestone5": {
+    "scope": "Qualified construction optimizations and retained boundary partition; incomplete composition closure; no device execution or independent reviewer acceptance",
+    "baseline_revision": "6c5838770",
+    "source_sha256": {
+      "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.cpp": "563538daf298ed749c5f8d0126c08699a8023cb46baa6f5a533b21292a830b0a",
+      "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegionalComposition.cpp": "311861455af480e47bb98759c7cf9145900dc66850354fd62b21810432750ce6",
+      "lib/PTO/Transforms/FrontierSynch/Arithmetic/IntegerRelations.cpp": "a5f71ff947592b3671cdb2f89f76143d7392a520178cf3444ec4a2e981a3a0ad",
+      "lib/PTO/Transforms/FrontierSynch/Shared/BoundarySlices.h": "a6b9b21c5939d54d7a194bbf87a51438799d55441f8f478d18b9af84e747f455",
+      "lib/PTO/Transforms/FrontierSynch/Shared/GuardedQueryProjection.h": "8b4f317c78d0e7ac9a4d2b7724085bbdd915a4151d86e5e8baed28ffeedbcc5a",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAdapters.cpp": "633885983c5107c9de7244012af0c9cfedb68a5446c0a640dc6c491550d072ff",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h": "67b187222eb84e07bb4959eb6331e97d2847a12f4083e31883b8645f34c872b2",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceBoundary.cpp": "ae181840f548c3df17dcef980d58c1d48c3369a56103efe91786b28b5ddb3add",
+      "test/lit/pto/sync_normalized_control_session.pto": "4c4902ae98fa0b061958b4e96a838e4ab9681cfd0a40dbc24f9b0c5f083e7add",
+      "tools/pto-test-opt/GuardedQueryProjectionChecks.h": "06cda9da5a146a91e2be6c231da8121ed3eff445263c0d36e214ecee918c7ef3",
+      "tools/pto-test-opt/IntegerRelationChecks.cpp": "4f2f0757b3adf21eac48b6348683beb10761db2728e2722004421db5cf2ab4c5",
+      "tools/pto-test-opt/NormalizedControlChecks.cpp": "2c45c761de4f2e2d2d7e188dba95e646d55a4e1427506c9ae1218f9921211e4a",
+      "lib/PTO/Transforms/FrontierSynch/Arithmetic/IntegerRelationComposition.h": "98b6aa5c5ce1bd942b7e9e4d6f8c3ae4e407743f4d2421bc8f9181c872271bf5"
+    },
+    "complete_gate": {
+      "timeout_per_test_seconds": 1200,
+      "workers": 1,
+      "memory_limit_bytes": 4294967296,
+      "scope": "263 synchronization lit tests; first tests overlap with a separate one-worker correctness/debugging probe; not a performance campaign",
+      "seconds": 1462.7528791427612,
+      "counts": {
+        "PASS": 260,
+        "FAIL": 3
+      },
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_composed_phases.pto",
+          "outcome": "PASS",
+          "seconds": 607.898291349411
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_region.pto",
+          "outcome": "FAIL",
+          "seconds": 92.32673239707947
+        },
+        {
+          "name": "PTOIR :: pto/sync_rotating_region.pto",
+          "outcome": "FAIL",
+          "seconds": 46.28575325012207
+        },
+        {
+          "name": "PTOIR :: pto/sync_boundary_rotation.pto",
+          "outcome": "FAIL",
+          "seconds": 19.53057074546814
+        },
+        {
+          "name": "PTOIR :: pto/sync_physical_refresh.pto",
+          "outcome": "PASS",
+          "seconds": 93.86597537994385
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_regional_interfaces.pto",
+          "outcome": "PASS",
+          "seconds": 88.3187460899353
+        },
+        {
+          "name": "PTOIR :: pto/sync_guarded_publication.pto",
+          "outcome": "PASS",
+          "seconds": 31.46028971672058
+        },
+        {
+          "name": "PTOIR :: pto/sync_loop_session_cache.pto",
+          "outcome": "PASS",
+          "seconds": 34.38500952720642
+        },
+        {
+          "name": "PTOIR :: pto/sync_periodic_demands.pto",
+          "outcome": "PASS",
+          "seconds": 29.959521293640137
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_crossing_recipe.pto",
+          "outcome": "PASS",
+          "seconds": 30.279006242752075
+        },
+        {
+          "name": "PTOIR :: pto/sync_identity_composition.pto",
+          "outcome": "PASS",
+          "seconds": 19.80556082725525
+        },
+        {
+          "name": "PTOIR :: pto/sync_prepared_insertion.pto",
+          "outcome": "PASS",
+          "seconds": 19.02826690673828
+        },
+        {
+          "name": "PTOIR :: pto/sync_local_access_contracts.pto",
+          "outcome": "PASS",
+          "seconds": 15.983127355575562
+        },
+        {
+          "name": "PTOIR :: pto/sync_coordinate_allocation.pto",
+          "outcome": "PASS",
+          "seconds": 16.892647981643677
+        },
+        {
+          "name": "PTOIR :: pto/sync_frontier_public_pipeline.pto",
+          "outcome": "PASS",
+          "seconds": 12.929728984832764
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_expansion.pto",
+          "outcome": "PASS",
+          "seconds": 11.829835653305054
+        },
+        {
+          "name": "PTOIR :: pto/sync_varying_rotating.pto",
+          "outcome": "PASS",
+          "seconds": 9.818504333496094
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_analysis.pto",
+          "outcome": "PASS",
+          "seconds": 7.369584321975708
+        },
+        {
+          "name": "PTOIR :: pto/sync_guarded_rotating_analysis.pto",
+          "outcome": "PASS",
+          "seconds": 6.541222333908081
+        },
+        {
+          "name": "PTOIR :: pto/sync_empty_invocation_allocation.pto",
+          "outcome": "PASS",
+          "seconds": 7.496631145477295
+        },
+        {
+          "name": "PTOIR :: pto/sync_transfer_access_exports.pto",
+          "outcome": "PASS",
+          "seconds": 8.901442766189575
+        },
+        {
+          "name": "PTOIR :: pto/sync_singleton_boundary.pto",
+          "outcome": "PASS",
+          "seconds": 8.671040773391724
+        },
+        {
+          "name": "PTOIR :: pto/sync_mixed_regional.pto",
+          "outcome": "PASS",
+          "seconds": 8.587511777877808
+        },
+        {
+          "name": "PTOIR :: pto/sync_forced_overflow.pto",
+          "outcome": "PASS",
+          "seconds": 9.227604627609253
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_guards.pto",
+          "outcome": "PASS",
+          "seconds": 6.533514976501465
+        },
+        {
+          "name": "PTOIR :: pto/sync_oracle_self_validation.pto",
+          "outcome": "PASS",
+          "seconds": 6.303173065185547
+        },
+        {
+          "name": "PTOIR :: pto/sync_combined_family_output.pto",
+          "outcome": "PASS",
+          "seconds": 4.623981714248657
+        },
+        {
+          "name": "PTOIR :: pto/sync_logical_insertion.pto",
+          "outcome": "PASS",
+          "seconds": 7.230166435241699
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_storage.pto",
+          "outcome": "PASS",
+          "seconds": 6.272979974746704
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_piecewise_bounds.pto",
+          "outcome": "PASS",
+          "seconds": 5.031083822250366
+        },
+        {
+          "name": "PTOIR :: pto/sync_family_emission.pto",
+          "outcome": "PASS",
+          "seconds": 6.0557756423950195
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_program.pto",
+          "outcome": "PASS",
+          "seconds": 6.061079263687134
+        },
+        {
+          "name": "PTOIR :: pto/sync_modeled_access.pto",
+          "outcome": "PASS",
+          "seconds": 5.674899101257324
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_guarded_analysis.pto",
+          "outcome": "PASS",
+          "seconds": 5.565084218978882
+        },
+        {
+          "name": "PTOIR :: pto/sync_allocation_module_ownership.pto",
+          "outcome": "PASS",
+          "seconds": 6.005340576171875
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_allocation_profile.pto",
+          "outcome": "PASS",
+          "seconds": 5.853822946548462
+        },
+        {
+          "name": "PTOIR :: pto/sync_mixed_symbolic_regions.pto",
+          "outcome": "PASS",
+          "seconds": 5.270065546035767
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_family_recipe.pto",
+          "outcome": "PASS",
+          "seconds": 5.441953659057617
+        },
+        {
+          "name": "PTOIR :: pto/sync_family_allocation.pto",
+          "outcome": "PASS",
+          "seconds": 4.955209970474243
+        },
+        {
+          "name": "PTOIR :: pto/sync_contextual_deferred_output.pto",
+          "outcome": "PASS",
+          "seconds": 2.9052672386169434
+        },
+        {
+          "name": "PTOIR :: pto/sync_hardware_protection.pto",
+          "outcome": "PASS",
+          "seconds": 4.2504189014434814
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_allocation.pto",
+          "outcome": "PASS",
+          "seconds": 3.999234914779663
+        },
+        {
+          "name": "PTOIR :: pto/sync_overflow_id_gap.pto",
+          "outcome": "PASS",
+          "seconds": 3.7600820064544678
+        },
+        {
+          "name": "PTOIR :: pto/sync_region_expression.pto",
+          "outcome": "PASS",
+          "seconds": 3.827486991882324
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_protection.pto",
+          "outcome": "PASS",
+          "seconds": 3.3243343830108643
+        },
+        {
+          "name": "PTOIR :: pto/sync_endpoint_families.pto",
+          "outcome": "PASS",
+          "seconds": 3.3531999588012695
+        },
+        {
+          "name": "PTOIR :: pto/sync_mixed_deferred_output.pto",
+          "outcome": "PASS",
+          "seconds": 2.248570680618286
+        },
+        {
+          "name": "PTOIR :: pto/sync_physical_allocation.pto",
+          "outcome": "PASS",
+          "seconds": 3.1380271911621094
+        },
+        {
+          "name": "PTOIR :: pto/sync_late_local_barriers.pto",
+          "outcome": "PASS",
+          "seconds": 3.1027612686157227
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g4_count_floor.pto",
+          "outcome": "PASS",
+          "seconds": 2.1246213912963867
+        },
+        {
+          "name": "PTOIR :: pto/sync_mixed_crossing_families.pto",
+          "outcome": "PASS",
+          "seconds": 2.8151628971099854
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_self_coverage.pto",
+          "outcome": "PASS",
+          "seconds": 2.6573004722595215
+        },
+        {
+          "name": "PTOIR :: pto/sync_event_rotation.pto",
+          "outcome": "PASS",
+          "seconds": 2.8340625762939453
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g3_faults.pto",
+          "outcome": "PASS",
+          "seconds": 2.221107244491577
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_buf_token_pipe.pto",
+          "outcome": "PASS",
+          "seconds": 2.1174488067626953
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g2_event_pair_guards.pto",
+          "outcome": "PASS",
+          "seconds": 2.6621603965759277
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_coverage.pto",
+          "outcome": "PASS",
+          "seconds": 2.5993354320526123
+        },
+        {
+          "name": "PTOIR :: pto/sync_unified_compensation_g2.pto",
+          "outcome": "PASS",
+          "seconds": 2.072578191757202
+        },
+        {
+          "name": "PTOIR :: pto/sync_general_arithmetic_insertion.pto",
+          "outcome": "PASS",
+          "seconds": 1.8164644241333008
+        },
+        {
+          "name": "PTOIR :: pto/sync_recurring_global_numeric.pto",
+          "outcome": "PASS",
+          "seconds": 2.3600940704345703
+        },
+        {
+          "name": "PTOIR :: pto/sync_evolving_numeric_body.pto",
+          "outcome": "PASS",
+          "seconds": 2.2507662773132324
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_invariant_parameters.pto",
+          "outcome": "PASS",
+          "seconds": 1.6733829975128174
+        },
+        {
+          "name": "PTOIR :: pto/sync_native_scalar_corpus.pto",
+          "outcome": "PASS",
+          "seconds": 2.283726692199707
+        },
+        {
+          "name": "PTOIR :: pto/sync_private_global_numeric.pto",
+          "outcome": "PASS",
+          "seconds": 1.8201789855957031
+        },
+        {
+          "name": "PTOIR :: pto/sync_unified_macro_pinning.pto",
+          "outcome": "PASS",
+          "seconds": 2.0817768573760986
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_allocation.pto",
+          "outcome": "PASS",
+          "seconds": 2.1906933784484863
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_composition.pto",
+          "outcome": "PASS",
+          "seconds": 1.8559186458587646
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_symbolic_siblings.pto",
+          "outcome": "PASS",
+          "seconds": 2.169309139251709
+        },
+        {
+          "name": "PTOIR :: pto/sync_conditional_regions.pto",
+          "outcome": "PASS",
+          "seconds": 2.117880344390869
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_sync_reachability.pto",
+          "outcome": "PASS",
+          "seconds": 2.1010851860046387
+        },
+        {
+          "name": "PTOIR :: pto/sync_allocation_candidates.pto",
+          "outcome": "PASS",
+          "seconds": 2.0081398487091064
+        },
+        {
+          "name": "PTOIR :: pto/sync_routed_token_ids.pto",
+          "outcome": "PASS",
+          "seconds": 1.5871593952178955
+        },
+        {
+          "name": "PTOIR :: pto/sync_strided_streaming.pto",
+          "outcome": "PASS",
+          "seconds": 2.016252279281616
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_pipe_s_self_ordered.pto",
+          "outcome": "PASS",
+          "seconds": 1.571070909500122
+        },
+        {
+          "name": "PTOIR :: pto/sync_unified_model.pto",
+          "outcome": "PASS",
+          "seconds": 1.5910356044769287
+        },
+        {
+          "name": "PTOIR :: pto/sync_coverage_profile_version.pto",
+          "outcome": "PASS",
+          "seconds": 1.4601337909698486
+        },
+        {
+          "name": "PTOIR :: pto/sync_mechanism_field.pto",
+          "outcome": "PASS",
+          "seconds": 1.2987608909606934
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g2_faults.pto",
+          "outcome": "PASS",
+          "seconds": 1.2079477310180664
+        },
+        {
+          "name": "PTOIR :: pto/sync_mixed_stride.pto",
+          "outcome": "PASS",
+          "seconds": 1.132779598236084
+        },
+        {
+          "name": "PTOIR :: pto/sync_gemm_access_regions.pto",
+          "outcome": "PASS",
+          "seconds": 1.0737462043762207
+        },
+        {
+          "name": "PTOIR :: pto/sync_periodic_invariant_gm.pto",
+          "outcome": "PASS",
+          "seconds": 0.9570422172546387
+        },
+        {
+          "name": "PTOIR :: pto/sync_order_covered_periodic.pto",
+          "outcome": "PASS",
+          "seconds": 1.2950279712677002
+        },
+        {
+          "name": "PTOIR :: pto/sync_extract_oracle_views.pto",
+          "outcome": "PASS",
+          "seconds": 0.8260502815246582
+        },
+        {
+          "name": "PTOIR :: pto/sync_affine_disjoint_dynamic_base.pto",
+          "outcome": "PASS",
+          "seconds": 0.832003116607666
+        },
+        {
+          "name": "PTOIR :: pto/sync_frontier_scaling.pto",
+          "outcome": "PASS",
+          "seconds": 0.9316847324371338
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g2_legal.pto",
+          "outcome": "PASS",
+          "seconds": 0.899573564529419
+        },
+        {
+          "name": "PTOIR :: pto/sync_ordinary_access_routes.pto",
+          "outcome": "PASS",
+          "seconds": 1.0405998229980469
+        },
+        {
+          "name": "PTOIR :: pto/sync_explicit_namespaces.pto",
+          "outcome": "PASS",
+          "seconds": 0.9979243278503418
+        },
+        {
+          "name": "PTOIR :: pto/sync_addr_reuse_diag.pto",
+          "outcome": "PASS",
+          "seconds": 0.9976589679718018
+        },
+        {
+          "name": "PTOIR :: pto/sync_rotating_analysis.pto",
+          "outcome": "PASS",
+          "seconds": 0.9283390045166016
+        },
+        {
+          "name": "PTOIR :: pto/sync_stage_profile.pto",
+          "outcome": "PASS",
+          "seconds": 0.8961422443389893
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_demands.pto",
+          "outcome": "PASS",
+          "seconds": 0.8914794921875
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g3_legal.pto",
+          "outcome": "PASS",
+          "seconds": 0.8252911567687988
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_recurrences.pto",
+          "outcome": "PASS",
+          "seconds": 0.7794888019561768
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_regional_allocation.pto",
+          "outcome": "PASS",
+          "seconds": 0.7504255771636963
+        },
+        {
+          "name": "PTOIR :: pto/sync_invocation_prefix.pto",
+          "outcome": "PASS",
+          "seconds": 0.6889615058898926
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_insertion.pto",
+          "outcome": "PASS",
+          "seconds": 0.6623976230621338
+        },
+        {
+          "name": "PTOIR :: pto/sync_conditional_session.pto",
+          "outcome": "PASS",
+          "seconds": 0.6460654735565186
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_effects_gm_alias.pto",
+          "outcome": "PASS",
+          "seconds": 0.6341755390167236
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_periodic_conversion.pto",
+          "outcome": "PASS",
+          "seconds": 0.6292366981506348
+        },
+        {
+          "name": "PTOIR :: pto/sync_carried_relevance_corpus.pto",
+          "outcome": "PASS",
+          "seconds": 0.6148509979248047
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_membership.pto",
+          "outcome": "PASS",
+          "seconds": 0.4765760898590088
+        },
+        {
+          "name": "PTOIR :: pto/sync_manual_skip_mixed.pto",
+          "outcome": "PASS",
+          "seconds": 0.49950313568115234
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounding_repetition.pto",
+          "outcome": "PASS",
+          "seconds": 0.491776704788208
+        },
+        {
+          "name": "PTOIR :: pto/sync_manual_skip.pto",
+          "outcome": "PASS",
+          "seconds": 0.4793729782104492
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_first_tail_allocation.pto",
+          "outcome": "PASS",
+          "seconds": 0.46492815017700195
+        },
+        {
+          "name": "PTOIR :: pto/sync_descriptor_access_facts.pto",
+          "outcome": "PASS",
+          "seconds": 0.46360278129577637
+        },
+        {
+          "name": "PTOIR :: pto/sync_numerical_region_session.pto",
+          "outcome": "PASS",
+          "seconds": 0.4430830478668213
+        },
+        {
+          "name": "PTOIR :: pto/sync_rank_one_transfer_effects.pto",
+          "outcome": "PASS",
+          "seconds": 0.4418160915374756
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_extended.pto",
+          "outcome": "PASS",
+          "seconds": 0.42696428298950195
+        },
+        {
+          "name": "PTOIR :: pto/sync_allocation_session.pto",
+          "outcome": "PASS",
+          "seconds": 0.4408142566680908
+        },
+        {
+          "name": "PTOIR :: pto/sync_private_state_control_emitc.pto",
+          "outcome": "PASS",
+          "seconds": 0.41432762145996094
+        },
+        {
+          "name": "PTOIR :: pto/sync_numeric_template.pto",
+          "outcome": "PASS",
+          "seconds": 0.43792033195495605
+        },
+        {
+          "name": "PTOIR :: pto/sync_set_a5_emitc_physical_ids.pto",
+          "outcome": "PASS",
+          "seconds": 0.41750478744506836
+        },
+        {
+          "name": "PTOIR :: pto/sync_affine_disjoint_nested.pto",
+          "outcome": "PASS",
+          "seconds": 0.4148414134979248
+        },
+        {
+          "name": "PTOIR :: pto/sync_order_covered_static_cells.pto",
+          "outcome": "PASS",
+          "seconds": 0.43952131271362305
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_boundary_presence.pto",
+          "outcome": "PASS",
+          "seconds": 0.42749786376953125
+        },
+        {
+          "name": "PTOIR :: pto/sync_input_translation_failure.pto",
+          "outcome": "PASS",
+          "seconds": 0.39969730377197266
+        },
+        {
+          "name": "PTOIR :: pto/sync_based_gm_cells.pto",
+          "outcome": "PASS",
+          "seconds": 0.42595791816711426
+        },
+        {
+          "name": "PTOIR :: pto/sync_affine_disjoint_carried.pto",
+          "outcome": "PASS",
+          "seconds": 0.4192779064178467
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_endpoint_retry.pto",
+          "outcome": "PASS",
+          "seconds": 0.3918924331665039
+        },
+        {
+          "name": "PTOIR :: pto/sync_program_recognition.pto",
+          "outcome": "PASS",
+          "seconds": 0.3669168949127197
+        },
+        {
+          "name": "PTOIR :: pto/sync_explicit_analysis.pto",
+          "outcome": "PASS",
+          "seconds": 0.3624274730682373
+        },
+        {
+          "name": "PTOIR :: pto/sync_modular_scalar.pto",
+          "outcome": "PASS",
+          "seconds": 0.3563046455383301
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_macro_selectors.pto",
+          "outcome": "PASS",
+          "seconds": 0.3352816104888916
+        },
+        {
+          "name": "PTOIR :: pto/sync_manual_skip_cross_core.pto",
+          "outcome": "PASS",
+          "seconds": 0.3556652069091797
+        },
+        {
+          "name": "PTOIR :: pto/sync_order_covered_sequence.pto",
+          "outcome": "PASS",
+          "seconds": 0.3317890167236328
+        },
+        {
+          "name": "PTOIR :: pto/sync_general_arithmetic_demands.pto",
+          "outcome": "PASS",
+          "seconds": 0.3306901454925537
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_overlay_compact.pto",
+          "outcome": "PASS",
+          "seconds": 0.32456254959106445
+        },
+        {
+          "name": "PTOIR :: pto/sync_singleton_prefix.pto",
+          "outcome": "PASS",
+          "seconds": 0.3103909492492676
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_prefix.pto",
+          "outcome": "PASS",
+          "seconds": 0.30522632598876953
+        },
+        {
+          "name": "PTOIR :: pto/sync_normalized_control_session.pto",
+          "outcome": "PASS",
+          "seconds": 0.37847089767456055
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_prefix_realization.pto",
+          "outcome": "PASS",
+          "seconds": 0.29184961318969727
+        },
+        {
+          "name": "PTOIR :: pto/sync_completion_public.pto",
+          "outcome": "PASS",
+          "seconds": 0.25044727325439453
+        },
+        {
+          "name": "PTOIR :: pto/sync_physical_rotation.pto",
+          "outcome": "PASS",
+          "seconds": 0.26622724533081055
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_compaction.pto",
+          "outcome": "PASS",
+          "seconds": 0.2534372806549072
+        },
+        {
+          "name": "PTOIR :: pto/sync_manual_skip_scope.pto",
+          "outcome": "PASS",
+          "seconds": 0.24063849449157715
+        },
+        {
+          "name": "PTOIR :: pto/sync_rotating_extraction.pto",
+          "outcome": "PASS",
+          "seconds": 0.23946714401245117
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_bases.pto",
+          "outcome": "PASS",
+          "seconds": 0.22072148323059082
+        },
+        {
+          "name": "PTOIR :: pto/sync_result_guarantees.pto",
+          "outcome": "PASS",
+          "seconds": 0.2508370876312256
+        },
+        {
+          "name": "PTOIR :: pto/sync_cleanup_deferred_output.pto",
+          "outcome": "PASS",
+          "seconds": 0.2430100440979004
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_declared_profile.pto",
+          "outcome": "PASS",
+          "seconds": 0.2102978229522705
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_storage_selectors.pto",
+          "outcome": "PASS",
+          "seconds": 0.20552992820739746
+        },
+        {
+          "name": "PTOIR :: pto/sync_control_campaign.pto",
+          "outcome": "PASS",
+          "seconds": 0.24430608749389648
+        },
+        {
+          "name": "PTOIR :: pto/sync_guarded_periodic.pto",
+          "outcome": "PASS",
+          "seconds": 0.177687406539917
+        },
+        {
+          "name": "PTOIR :: pto/sync_region_digits.pto",
+          "outcome": "PASS",
+          "seconds": 0.18004655838012695
+        },
+        {
+          "name": "PTOIR :: pto/sync_explicit_reduction.pto",
+          "outcome": "PASS",
+          "seconds": 0.18120384216308594
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_visit_whole.pto",
+          "outcome": "PASS",
+          "seconds": 0.1723484992980957
+        },
+        {
+          "name": "PTOIR :: pto/sync_protocol_descriptors.pto",
+          "outcome": "PASS",
+          "seconds": 0.1666395664215088
+        },
+        {
+          "name": "PTOIR :: pto/sync_frontier_recognition_boundary.pto",
+          "outcome": "PASS",
+          "seconds": 0.15859460830688477
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_bounding_pipeline.pto",
+          "outcome": "PASS",
+          "seconds": 0.15116262435913086
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_contracts.pto",
+          "outcome": "PASS",
+          "seconds": 0.1557779312133789
+        },
+        {
+          "name": "PTOIR :: pto/sync_completion_transfer.pto",
+          "outcome": "PASS",
+          "seconds": 0.13855695724487305
+        },
+        {
+          "name": "PTOIR :: pto/sync_regional_arithmetic_context.pto",
+          "outcome": "PASS",
+          "seconds": 0.1500988006591797
+        },
+        {
+          "name": "PTOIR :: pto/sync_fixed_protocol_capacity.pto",
+          "outcome": "PASS",
+          "seconds": 0.1307816505432129
+        },
+        {
+          "name": "PTOIR :: pto/sync_strided_corpus_prefill_norm_pad.pto",
+          "outcome": "PASS",
+          "seconds": 0.1331348419189453
+        },
+        {
+          "name": "PTOIR :: pto/sync_completion_children.pto",
+          "outcome": "PASS",
+          "seconds": 0.1338973045349121
+        },
+        {
+          "name": "PTOIR :: pto/sync_nested_exports_corpus.pto",
+          "outcome": "PASS",
+          "seconds": 0.12986159324645996
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_overlay.pto",
+          "outcome": "PASS",
+          "seconds": 0.14130401611328125
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_piecewise_access.pto",
+          "outcome": "PASS",
+          "seconds": 0.1348726749420166
+        },
+        {
+          "name": "PTOIR :: pto/sync_frontier_descriptor_corpus.pto",
+          "outcome": "PASS",
+          "seconds": 0.1325383186340332
+        },
+        {
+          "name": "PTOIR :: pto/sync_balanced_compact.pto",
+          "outcome": "PASS",
+          "seconds": 0.13132238388061523
+        },
+        {
+          "name": "PTOIR :: pto/sync_strided_corpus_input_rmsnorm.pto",
+          "outcome": "PASS",
+          "seconds": 0.1357731819152832
+        },
+        {
+          "name": "PTOIR :: pto/sync_phase_minmax.pto",
+          "outcome": "PASS",
+          "seconds": 0.1297311782836914
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_writer_reader_input.pto",
+          "outcome": "PASS",
+          "seconds": 0.12583470344543457
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_rotation_extended.pto",
+          "outcome": "PASS",
+          "seconds": 0.13573503494262695
+        },
+        {
+          "name": "PTOIR :: pto/sync_crossing_cost_selection.pto",
+          "outcome": "PASS",
+          "seconds": 0.10967636108398438
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_gm_discharge.pto",
+          "outcome": "PASS",
+          "seconds": 0.10982584953308105
+        },
+        {
+          "name": "PTOIR :: pto/sync_natural_export_retry.pto",
+          "outcome": "PASS",
+          "seconds": 0.11227631568908691
+        },
+        {
+          "name": "PTOIR :: pto/sync_shared_ranges.pto",
+          "outcome": "PASS",
+          "seconds": 0.1145486831665039
+        },
+        {
+          "name": "PTOIR :: pto/sync_selected_regions.pto",
+          "outcome": "PASS",
+          "seconds": 0.11466789245605469
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_access_bridge.pto",
+          "outcome": "PASS",
+          "seconds": 0.10476374626159668
+        },
+        {
+          "name": "PTOIR :: pto/sync_alias_select_construction.pto",
+          "outcome": "PASS",
+          "seconds": 0.11385536193847656
+        },
+        {
+          "name": "PTOIR :: pto/sync_guarded_specialization_session.pto",
+          "outcome": "PASS",
+          "seconds": 0.10100436210632324
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_visit_session.pto",
+          "outcome": "PASS",
+          "seconds": 0.10034561157226562
+        },
+        {
+          "name": "PTOIR :: pto/sync_step1_audit.pto",
+          "outcome": "PASS",
+          "seconds": 0.10307574272155762
+        },
+        {
+          "name": "PTOIR :: pto/sync_input_macro_effects.pto",
+          "outcome": "PASS",
+          "seconds": 0.10076570510864258
+        },
+        {
+          "name": "PTOIR :: pto/sync_shared_handoff_allocation.pto",
+          "outcome": "PASS",
+          "seconds": 0.0989835262298584
+        },
+        {
+          "name": "PTOIR :: pto/sync_periodic_shared_allocation.pto",
+          "outcome": "PASS",
+          "seconds": 0.08662629127502441
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_lifetime_provenance.pto",
+          "outcome": "PASS",
+          "seconds": 0.09009552001953125
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_export_retention.pto",
+          "outcome": "PASS",
+          "seconds": 0.08722996711730957
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_bridge_work.pto",
+          "outcome": "PASS",
+          "seconds": 0.09210920333862305
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_prerequisite_provenance.pto",
+          "outcome": "PASS",
+          "seconds": 0.08985781669616699
+        },
+        {
+          "name": "PTOIR :: pto/sync_access_regions.pto",
+          "outcome": "PASS",
+          "seconds": 0.07471275329589844
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_shared_contracts.pto",
+          "outcome": "PASS",
+          "seconds": 0.07472467422485352
+        },
+        {
+          "name": "PTOIR :: pto/sync_extract_loop_alignment.pto",
+          "outcome": "PASS",
+          "seconds": 0.07623100280761719
+        },
+        {
+          "name": "PTOIR :: pto/sync_descriptor_gm_provenance.pto",
+          "outcome": "PASS",
+          "seconds": 0.07259297370910645
+        },
+        {
+          "name": "PTOIR :: pto/sync_contextual_local_access.pto",
+          "outcome": "PASS",
+          "seconds": 0.07434892654418945
+        },
+        {
+          "name": "PTOIR :: pto/sync_rotating_region_storage.pto",
+          "outcome": "PASS",
+          "seconds": 0.07783222198486328
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounding_sequence.pto",
+          "outcome": "PASS",
+          "seconds": 0.07744455337524414
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_memberships.pto",
+          "outcome": "PASS",
+          "seconds": 0.0789937973022461
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_effects_reuse.pto",
+          "outcome": "PASS",
+          "seconds": 0.07490801811218262
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_evolution.pto",
+          "outcome": "PASS",
+          "seconds": 0.08444523811340332
+        },
+        {
+          "name": "PTOIR :: pto/sync_conditional_endpoint_upgrade.pto",
+          "outcome": "PASS",
+          "seconds": 0.0743255615234375
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_class_repetition.pto",
+          "outcome": "PASS",
+          "seconds": 0.07375121116638184
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_independent_gm.pto",
+          "outcome": "PASS",
+          "seconds": 0.08295726776123047
+        },
+        {
+          "name": "PTOIR :: pto/sync_linear_access_effects.pto",
+          "outcome": "PASS",
+          "seconds": 0.07910966873168945
+        },
+        {
+          "name": "PTOIR :: pto/sync_insert_access_effects.pto",
+          "outcome": "PASS",
+          "seconds": 0.07863163948059082
+        },
+        {
+          "name": "PTOIR :: pto/sync_producer_failure_stages.pto",
+          "outcome": "PASS",
+          "seconds": 0.07937359809875488
+        },
+        {
+          "name": "PTOIR :: pto/sync_integer_relations.pto",
+          "outcome": "PASS",
+          "seconds": 0.08072876930236816
+        },
+        {
+          "name": "PTOIR :: pto/sync_shared_acc_read_read.pto",
+          "outcome": "PASS",
+          "seconds": 0.07683134078979492
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_rotating.pto",
+          "outcome": "PASS",
+          "seconds": 0.08352184295654297
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_effects_carried.pto",
+          "outcome": "PASS",
+          "seconds": 0.07601070404052734
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_scalar_ranges.pto",
+          "outcome": "PASS",
+          "seconds": 0.07309198379516602
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_predicate_history.pto",
+          "outcome": "PASS",
+          "seconds": 0.07397723197937012
+        },
+        {
+          "name": "PTOIR :: pto/sync_native_class_certification.pto",
+          "outcome": "PASS",
+          "seconds": 0.07043123245239258
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_constraints.pto",
+          "outcome": "PASS",
+          "seconds": 0.07922911643981934
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_finite_fill.pto",
+          "outcome": "PASS",
+          "seconds": 0.06546640396118164
+        },
+        {
+          "name": "PTOIR :: pto/sync_guarded_compact_matching.pto",
+          "outcome": "PASS",
+          "seconds": 0.06626558303833008
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_endpoint_audit.pto",
+          "outcome": "PASS",
+          "seconds": 0.05742239952087402
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_requirement_replacement.pto",
+          "outcome": "PASS",
+          "seconds": 0.05888700485229492
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_prerequisites.pto",
+          "outcome": "PASS",
+          "seconds": 0.059766292572021484
+        },
+        {
+          "name": "PTOIR :: pto/sync_closed_completion.pto",
+          "outcome": "PASS",
+          "seconds": 0.05021071434020996
+        },
+        {
+          "name": "PTOIR :: pto/sync_descriptor_state.pto",
+          "outcome": "PASS",
+          "seconds": 0.061319589614868164
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_visit_types.pto",
+          "outcome": "PASS",
+          "seconds": 0.05934858322143555
+        },
+        {
+          "name": "PTOIR :: pto/sync_failed_parity_rollback.pto",
+          "outcome": "PASS",
+          "seconds": 0.052292585372924805
+        },
+        {
+          "name": "PTOIR :: pto/sync_descriptor_dependencies.pto",
+          "outcome": "PASS",
+          "seconds": 0.05899405479431152
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_rejections.pto",
+          "outcome": "PASS",
+          "seconds": 0.05959510803222656
+        },
+        {
+          "name": "PTOIR :: pto/sync_explicit_residual_order.pto",
+          "outcome": "PASS",
+          "seconds": 0.05872201919555664
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_guarded.pto",
+          "outcome": "PASS",
+          "seconds": 0.05529475212097168
+        },
+        {
+          "name": "PTOIR :: pto/sync_program_structure_context.pto",
+          "outcome": "PASS",
+          "seconds": 0.05147838592529297
+        },
+        {
+          "name": "PTOIR :: pto/sync_counted_origin_corpus.pto",
+          "outcome": "PASS",
+          "seconds": 0.05614185333251953
+        },
+        {
+          "name": "PTOIR :: pto/sync_completion_region.pto",
+          "outcome": "PASS",
+          "seconds": 0.04427003860473633
+        },
+        {
+          "name": "PTOIR :: pto/sync_periodic_slice_allocation.pto",
+          "outcome": "PASS",
+          "seconds": 0.05270099639892578
+        },
+        {
+          "name": "PTOIR :: pto/sync_iteration_predicate_context.pto",
+          "outcome": "PASS",
+          "seconds": 0.0411229133605957
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_entry_prerequisite.pto",
+          "outcome": "PASS",
+          "seconds": 0.047914743423461914
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_dispatch.pto",
+          "outcome": "PASS",
+          "seconds": 0.04520297050476074
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_storage_boundary.pto",
+          "outcome": "PASS",
+          "seconds": 0.04668569564819336
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_allocation_session.pto",
+          "outcome": "PASS",
+          "seconds": 0.04668784141540527
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_corpus_normalization.pto",
+          "outcome": "PASS",
+          "seconds": 0.04957246780395508
+        },
+        {
+          "name": "PTOIR :: pto/sync_descriptor_state_index32.pto",
+          "outcome": "PASS",
+          "seconds": 0.04031872749328613
+        },
+        {
+          "name": "PTOIR :: pto/sync_structured_private_state.pto",
+          "outcome": "PASS",
+          "seconds": 0.03925037384033203
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic.pto",
+          "outcome": "PASS",
+          "seconds": 0.03895974159240723
+        },
+        {
+          "name": "PTOIR :: pto/sync_retained_demand_requests.pto",
+          "outcome": "PASS",
+          "seconds": 0.04264473915100098
+        },
+        {
+          "name": "PTOIR :: pto/sync_regional_session.pto",
+          "outcome": "PASS",
+          "seconds": 0.04225897789001465
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_inactive_emission.pto",
+          "outcome": "PASS",
+          "seconds": 0.03849673271179199
+        },
+        {
+          "name": "PTOIR :: pto/sync_private_state_plan.pto",
+          "outcome": "PASS",
+          "seconds": 0.042748212814331055
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_analysis_gm.pto",
+          "outcome": "PASS",
+          "seconds": 0.04118943214416504
+        },
+        {
+          "name": "PTOIR :: pto/sync_slice_scalar_prerequisite.pto",
+          "outcome": "PASS",
+          "seconds": 0.04016518592834473
+        },
+        {
+          "name": "PTOIR :: pto/sync_linear_access_insertion.pto",
+          "outcome": "PASS",
+          "seconds": 0.039090871810913086
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_retained_demands.pto",
+          "outcome": "PASS",
+          "seconds": 0.040334224700927734
+        },
+        {
+          "name": "PTOIR :: pto/sync_analysis_session.pto",
+          "outcome": "PASS",
+          "seconds": 0.03930020332336426
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_access_first.pto",
+          "outcome": "PASS",
+          "seconds": 0.04951071739196777
+        },
+        {
+          "name": "PTOIR :: pto/sync_conditional_compact_input.pto",
+          "outcome": "PASS",
+          "seconds": 0.03910374641418457
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_effects_slots.pto",
+          "outcome": "PASS",
+          "seconds": 0.03769636154174805
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_effects_blocked.pto",
+          "outcome": "PASS",
+          "seconds": 0.037781715393066406
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_bound_symbols.pto",
+          "outcome": "PASS",
+          "seconds": 0.04118537902832031
+        },
+        {
+          "name": "PTOIR :: pto/sync_input_atomic_effects.pto",
+          "outcome": "PASS",
+          "seconds": 0.0379185676574707
+        },
+        {
+          "name": "PTOIR :: pto/sync_vector_unaligned_stride.pto",
+          "outcome": "PASS",
+          "seconds": 0.03807878494262695
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_effects_views.pto",
+          "outcome": "PASS",
+          "seconds": 0.03819870948791504
+        },
+        {
+          "name": "PTOIR :: pto/sync_native_byte_stride_invalid.pto",
+          "outcome": "PASS",
+          "seconds": 0.03752708435058594
+        },
+        {
+          "name": "PTOIR :: pto/sync_explicit_access_contract.pto",
+          "outcome": "PASS",
+          "seconds": 0.03743934631347656
+        },
+        {
+          "name": "PTOIR :: pto/sync_phase_index.pto",
+          "outcome": "PASS",
+          "seconds": 0.03767704963684082
+        },
+        {
+          "name": "PTOIR :: pto/sync_selected_views.pto",
+          "outcome": "PASS",
+          "seconds": 0.0378875732421875
+        },
+        {
+          "name": "PTOIR :: pto/sync_runtime_lower_endpoints.pto",
+          "outcome": "PASS",
+          "seconds": 0.03750157356262207
+        },
+        {
+          "name": "PTOIR :: pto/sync_input_effects.pto",
+          "outcome": "PASS",
+          "seconds": 0.04088258743286133
+        },
+        {
+          "name": "PTOIR :: pto/sync_selected_regions_a5.pto",
+          "outcome": "PASS",
+          "seconds": 0.03726601600646973
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_visit_input.pto",
+          "outcome": "PASS",
+          "seconds": 0.03638172149658203
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_selectors.pto",
+          "outcome": "PASS",
+          "seconds": 0.03446459770202637
+        },
+        {
+          "name": "PTOIR :: pto/sync_invocation_source_bounds.pto",
+          "outcome": "PASS",
+          "seconds": 0.03535604476928711
+        },
+        {
+          "name": "PTOIR :: pto/sync_carried_scalar_proofs.pto",
+          "outcome": "PASS",
+          "seconds": 0.037568092346191406
+        },
+        {
+          "name": "PTOIR :: pto/sync_general_arithmetic_selectors.pto",
+          "outcome": "PASS",
+          "seconds": 0.03424859046936035
+        },
+        {
+          "name": "PTOIR :: pto/sync_capabilities.pto",
+          "outcome": "PASS",
+          "seconds": 0.037375688552856445
+        }
+      ]
+    },
+    "nonempty_phase_oracles": {
+      "scope": "correctness only; concurrent with one-worker gate; timings not performance evidence",
+      "cases": [
+        {
+          "command": [
+            ".local/draft-closure-20261016/m5-before/pto-sync-input-test",
+            "--structured-trace",
+            ".local/draft-closure-20261016/m5-nonempty/regular.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 23.327694312203676,
+          "timeout_seconds": 180,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "case": "regular",
+          "label": "baseline",
+          "input_sha256": "cf577489357f62d7e480f7b4ef101a93145964c8a0b23395d73d101d036142d3",
+          "tool_sha256": "66e019f3a8a09bf4706c581a4d14140c123186b530d6b6bf28057bd7dc447956",
+          "independent_closure_passed": true,
+          "events": 97,
+          "payloads": 42,
+          "trace_sha256": "5358a3af0ac2bfce086b437f4025fb8d52b80b9354526ed3d4b1919285423640"
+        },
+        {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--structured-trace",
+            ".local/draft-closure-20261016/m5-nonempty/regular.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 20.81005437998101,
+          "timeout_seconds": 180,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "case": "regular",
+          "label": "candidate",
+          "input_sha256": "cf577489357f62d7e480f7b4ef101a93145964c8a0b23395d73d101d036142d3",
+          "tool_sha256": "9fe1a9c585ae26d64dc9ace16588e27d2ae84d9458930d5dd20779d134629624",
+          "independent_closure_passed": true,
+          "events": 97,
+          "payloads": 42,
+          "trace_sha256": "5358a3af0ac2bfce086b437f4025fb8d52b80b9354526ed3d4b1919285423640"
+        },
+        {
+          "command": [
+            ".local/draft-closure-20261016/m5-before/pto-sync-input-test",
+            "--structured-trace",
+            ".local/draft-closure-20261016/m5-nonempty/sliced.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 103.64070861181244,
+          "timeout_seconds": 180,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "case": "sliced",
+          "label": "baseline",
+          "input_sha256": "52c9bcd7ed69b9c518e1a66971d826c9762d015d9d42cdfd2ca09921bd82cc06",
+          "tool_sha256": "66e019f3a8a09bf4706c581a4d14140c123186b530d6b6bf28057bd7dc447956",
+          "independent_closure_passed": true,
+          "events": 97,
+          "payloads": 42,
+          "trace_sha256": "cc881f16ad73df30efa4e69c8bf8663d470ea2cf529f11a038d0e6981f310aae"
+        },
+        {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--structured-trace",
+            ".local/draft-closure-20261016/m5-nonempty/sliced.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 80.0014443420805,
+          "timeout_seconds": 180,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "case": "sliced",
+          "label": "candidate",
+          "input_sha256": "52c9bcd7ed69b9c518e1a66971d826c9762d015d9d42cdfd2ca09921bd82cc06",
+          "tool_sha256": "9fe1a9c585ae26d64dc9ace16588e27d2ae84d9458930d5dd20779d134629624",
+          "independent_closure_passed": true,
+          "events": 97,
+          "payloads": 42,
+          "trace_sha256": "cc881f16ad73df30efa4e69c8bf8663d470ea2cf529f11a038d0e6981f310aae"
+        }
+      ]
+    },
+    "paired_measurements": {
+      "scope": "serial one-CPU/4GiB pairs; no device run; watchdogs are unfinished constructions",
+      "input_sha256": {
+        "delta": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+        "phase_regular": "cf577489357f62d7e480f7b4ef101a93145964c8a0b23395d73d101d036142d3",
+        "phase_sliced": "7ed1082dba9f6c042324e0f3513cd51f3d9356f252d606b1f422c294792ba88e"
+      },
+      "tool_sha256": {
+        "baseline": {
+          "pto-test-opt": "7ae34a0d892cbeee4a7d779d00940753a24f05f15c1b75a9077239a853033b2a",
+          "pto-sync-input-test": "66e019f3a8a09bf4706c581a4d14140c123186b530d6b6bf28057bd7dc447956"
+        },
+        "candidate": {
+          "pto-test-opt": "ea29854f8d01285d5116d99f525db6071177816e923eec454f4f03b927423db9",
+          "pto-sync-input-test": "9fe1a9c585ae26d64dc9ace16588e27d2ae84d9458930d5dd20779d134629624"
+        }
+      },
+      "delta": [
+        {
+          "command": [
+            "/usr/bin/time",
+            "-f",
+            "%M",
+            "-o",
+            ".local/draft-closure-20261016/m5-final-measurements/delta-0-baseline/rss-kib.txt",
+            ".local/draft-closure-20261016/m5-before/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 10.492083112709224,
+          "timeout_seconds": 120,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "repeat": 0,
+          "label": "baseline",
+          "ir_sha256": "55d4ed2b2305f6fd9b413928574f5096cf25e8f085ff77f2c85a25b875568886",
+          "metrics": {
+            "bytes": 17710486,
+            "arithmetic": 313274,
+            "selects": 93182,
+            "ifs": 91,
+            "sets": 172,
+            "waits": 47,
+            "barriers": 85,
+            "textual_record_labels": 0
+          },
+          "rss_kib": 409524,
+          "prefix": {
+            "constructed_operations": 311732,
+            "retained_operations": 311732,
+            "threshold_substitution_visits": 3174508,
+            "proof_traversal_visits": 89472,
+            "projection": {
+              "projection_occurrences": 17530,
+              "projection_edges": 301332,
+              "candidate_constructed_nodes": 32429,
+              "retained_candidate_constructed_nodes": 32412
+            }
+          }
+        },
+        {
+          "command": [
+            "/usr/bin/time",
+            "-f",
+            "%M",
+            "-o",
+            ".local/draft-closure-20261016/m5-final-measurements/delta-0-candidate/rss-kib.txt",
+            ".local/draft-closure-20261016/m5-final-measurements/candidate/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 10.896658781915903,
+          "timeout_seconds": 120,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "repeat": 0,
+          "label": "candidate",
+          "ir_sha256": "55d4ed2b2305f6fd9b413928574f5096cf25e8f085ff77f2c85a25b875568886",
+          "metrics": {
+            "bytes": 17710486,
+            "arithmetic": 313274,
+            "selects": 93182,
+            "ifs": 91,
+            "sets": 172,
+            "waits": 47,
+            "barriers": 85,
+            "textual_record_labels": 0
+          },
+          "rss_kib": 408732,
+          "prefix": {
+            "constructed_operations": 311732,
+            "retained_operations": 311732,
+            "threshold_substitution_visits": 3174508,
+            "proof_traversal_visits": 89472,
+            "projection": {
+              "projection_occurrences": 15484,
+              "projection_edges": 245957,
+              "candidate_constructed_nodes": 32429,
+              "retained_candidate_constructed_nodes": 32412
+            }
+          }
+        },
+        {
+          "command": [
+            "/usr/bin/time",
+            "-f",
+            "%M",
+            "-o",
+            ".local/draft-closure-20261016/m5-final-measurements/delta-1-candidate/rss-kib.txt",
+            ".local/draft-closure-20261016/m5-final-measurements/candidate/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 11.598561860155314,
+          "timeout_seconds": 120,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "repeat": 1,
+          "label": "candidate",
+          "ir_sha256": "55d4ed2b2305f6fd9b413928574f5096cf25e8f085ff77f2c85a25b875568886",
+          "metrics": {
+            "bytes": 17710486,
+            "arithmetic": 313274,
+            "selects": 93182,
+            "ifs": 91,
+            "sets": 172,
+            "waits": 47,
+            "barriers": 85,
+            "textual_record_labels": 0
+          },
+          "rss_kib": 408776,
+          "prefix": {
+            "constructed_operations": 311732,
+            "retained_operations": 311732,
+            "threshold_substitution_visits": 3174508,
+            "proof_traversal_visits": 89472,
+            "projection": {
+              "projection_occurrences": 15484,
+              "projection_edges": 245957,
+              "candidate_constructed_nodes": 32429,
+              "retained_candidate_constructed_nodes": 32412
+            }
+          }
+        },
+        {
+          "command": [
+            "/usr/bin/time",
+            "-f",
+            "%M",
+            "-o",
+            ".local/draft-closure-20261016/m5-final-measurements/delta-1-baseline/rss-kib.txt",
+            ".local/draft-closure-20261016/m5-before/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 12.695744212251157,
+          "timeout_seconds": 120,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "repeat": 1,
+          "label": "baseline",
+          "ir_sha256": "55d4ed2b2305f6fd9b413928574f5096cf25e8f085ff77f2c85a25b875568886",
+          "metrics": {
+            "bytes": 17710486,
+            "arithmetic": 313274,
+            "selects": 93182,
+            "ifs": 91,
+            "sets": 172,
+            "waits": 47,
+            "barriers": 85,
+            "textual_record_labels": 0
+          },
+          "rss_kib": 408688,
+          "prefix": {
+            "constructed_operations": 311732,
+            "retained_operations": 311732,
+            "threshold_substitution_visits": 3174508,
+            "proof_traversal_visits": 89472,
+            "projection": {
+              "projection_occurrences": 17530,
+              "projection_edges": 301332,
+              "candidate_constructed_nodes": 32429,
+              "retained_candidate_constructed_nodes": 32412
+            }
+          }
+        },
+        {
+          "command": [
+            "/usr/bin/time",
+            "-f",
+            "%M",
+            "-o",
+            ".local/draft-closure-20261016/m5-final-measurements/delta-2-baseline/rss-kib.txt",
+            ".local/draft-closure-20261016/m5-before/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 12.897975359112024,
+          "timeout_seconds": 120,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "repeat": 2,
+          "label": "baseline",
+          "ir_sha256": "55d4ed2b2305f6fd9b413928574f5096cf25e8f085ff77f2c85a25b875568886",
+          "metrics": {
+            "bytes": 17710486,
+            "arithmetic": 313274,
+            "selects": 93182,
+            "ifs": 91,
+            "sets": 172,
+            "waits": 47,
+            "barriers": 85,
+            "textual_record_labels": 0
+          },
+          "rss_kib": 409240,
+          "prefix": {
+            "constructed_operations": 311732,
+            "retained_operations": 311732,
+            "threshold_substitution_visits": 3174508,
+            "proof_traversal_visits": 89472,
+            "projection": {
+              "projection_occurrences": 17530,
+              "projection_edges": 301332,
+              "candidate_constructed_nodes": 32429,
+              "retained_candidate_constructed_nodes": 32412
+            }
+          }
+        },
+        {
+          "command": [
+            "/usr/bin/time",
+            "-f",
+            "%M",
+            "-o",
+            ".local/draft-closure-20261016/m5-final-measurements/delta-2-candidate/rss-kib.txt",
+            ".local/draft-closure-20261016/m5-final-measurements/candidate/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=profile-stages=true gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 17.316581005696207,
+          "timeout_seconds": 120,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "repeat": 2,
+          "label": "candidate",
+          "ir_sha256": "55d4ed2b2305f6fd9b413928574f5096cf25e8f085ff77f2c85a25b875568886",
+          "metrics": {
+            "bytes": 17710486,
+            "arithmetic": 313274,
+            "selects": 93182,
+            "ifs": 91,
+            "sets": 172,
+            "waits": 47,
+            "barriers": 85,
+            "textual_record_labels": 0
+          },
+          "rss_kib": 404332,
+          "prefix": {
+            "constructed_operations": 311732,
+            "retained_operations": 311732,
+            "threshold_substitution_visits": 3174508,
+            "proof_traversal_visits": 89472,
+            "projection": {
+              "projection_occurrences": 15484,
+              "projection_edges": 245957,
+              "candidate_constructed_nodes": 32429,
+              "retained_candidate_constructed_nodes": 32412
+            }
+          }
+        }
+      ],
+      "phase": [
+        {
+          "command": [
+            ".local/draft-closure-20261016/m5-before/pto-sync-input-test",
+            "--structured-trace",
+            ".local/milestone-loop/final-composed-call-attribution/check_periodic_phase_lengths-calls/0005-input-2.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 13.147069443948567,
+          "timeout_seconds": 120,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "case": "phase_regular",
+          "label": "baseline",
+          "accepted": true,
+          "trace_error": "",
+          "events_sha256": "5358a3af0ac2bfce086b437f4025fb8d52b80b9354526ed3d4b1919285423640"
+        },
+        {
+          "command": [
+            ".local/draft-closure-20261016/m5-final-measurements/candidate/pto-sync-input-test",
+            "--structured-trace",
+            ".local/milestone-loop/final-composed-call-attribution/check_periodic_phase_lengths-calls/0005-input-2.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 17.019738893955946,
+          "timeout_seconds": 120,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "case": "phase_regular",
+          "label": "candidate",
+          "accepted": true,
+          "trace_error": "",
+          "events_sha256": "5358a3af0ac2bfce086b437f4025fb8d52b80b9354526ed3d4b1919285423640"
+        },
+        {
+          "command": [
+            ".local/draft-closure-20261016/m5-before/pto-sync-input-test",
+            "--structured-trace",
+            ".local/milestone-loop/final-composed-call-attribution/check_periodic_phase_lengths-calls/0019-input-2.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 49.397769943811,
+          "timeout_seconds": 120,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "case": "phase_sliced",
+          "label": "baseline",
+          "accepted": true,
+          "trace_error": "",
+          "events_sha256": "3dfe3760e04b3fac29060f9d903ecffa112e4000b33e7210cb65115f6ce4251d"
+        },
+        {
+          "command": [
+            ".local/draft-closure-20261016/m5-final-measurements/candidate/pto-sync-input-test",
+            "--structured-trace",
+            ".local/milestone-loop/final-composed-call-attribution/check_periodic_phase_lengths-calls/0019-input-2.pto"
+          ],
+          "status": "finished",
+          "returncode": 0,
+          "success": true,
+          "seconds": 35.49681969406083,
+          "timeout_seconds": 120,
+          "memory_limit_bytes": 4294967296,
+          "cpu_affinity": [
+            0
+          ],
+          "outcome_kind": "success",
+          "case": "phase_sliced",
+          "label": "candidate",
+          "accepted": true,
+          "trace_error": "",
+          "events_sha256": "3dfe3760e04b3fac29060f9d903ecffa112e4000b33e7210cb65115f6ce4251d"
+        }
+      ],
+      "delta_median_paired_elapsed_reduction": -0.03856009000887628,
+      "delta_complete_ir_equal": true,
+      "raw_receipt": {
+        "path": ".local/draft-closure-20261016/m5-final-measurements/results.json",
+        "sha256": "5cb038096a907d68258b7ca6f36e824f00dfba93be5d1b2bc1e09116c1fa87ff"
+      }
+    },
+    "boundary_closures": {
+      "ordinary": 56,
+      "multiple_cuts": 64,
+      "affine_and_wrapping": 64,
+      "arena_nodes": 123668,
+      "unchanged_ceiling": 104000,
+      "size_gate_passed": false
+    },
+    "integer_join_membership_comparisons": 138915,
+    "rotating_failure_attribution": {
+      "input": ".local/draft-closure-20261016/m5-rotating-allocation/input.pto",
+      "input_sha256": "d026747fe9cb57872c8d85360c1b6a010e8a2fde534a769c8e08035a93217a6a",
+      "stack": ".local/draft-closure-20261016/m5-rotating-allocation/sample.out",
+      "scope": "Debugger caught allocation exception under 4 GiB address-space ceiling; then deliberately terminated child. Debugger exit zero is not compiler success.",
+      "path": [
+        "identity-sequence continuation",
+        "general arithmetic completion",
+        "IntegerImplicationCache::subsumed",
+        "DenseMap pair cache growth"
+      ],
+      "observed_stage": "mathematical construction, not physical allocation"
+    },
+    "open_work": [
+      "Repeated-phase child compilation watchdog",
+      "Rotating production dispatcher enters large arithmetic closure",
+      "Affine boundary construction exceeds unchanged expression ceiling"
+    ],
+    "device_execution": false,
+    "independent_reviewer_acceptance": false,
+    "repeated_failure_attribution": {
+      "input": ".local/draft-closure-20261016/m5-repeated-sample/input.pto",
+      "stack": ".local/draft-closure-20261016/m5-repeated-sample/sample.out",
+      "scope": "30-second sample of an unfinished compiler child, deliberately interrupted; not an exclusive timing profile or compiler success",
+      "path": [
+        "symbolic regional sequence composition",
+        "RegionalRelationTranslation::translate",
+        "RegionExpressions::RelationBuilder::conjunction"
+      ]
+    }
   }
 }

@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "IntegerRelationComposition.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisProfile.h"
@@ -902,9 +903,15 @@ private:
         std::iota(bm.begin() + z + y, bm.end(), x + z + y);
         std::iota(keep.begin(), keep.begin() + x, 0);
         std::iota(keep.begin() + x, keep.end(), x + z);
-        auto a = left.remap(joinedDimensions, am), b = right.remap(joinedDimensions, bm);
-        if (failed(a) || failed(b)) { return failure(); }
-        auto joined = a->intersect(*b);
+        auto joined = [&]() -> FailureOr<System> {
+            if constexpr (std::is_same_v<System, IntegerSystem>) {
+                return intersectRemappedIntegerSystems(left, right, joinedDimensions, am, bm);
+            } else {
+                auto a = left.remap(joinedDimensions, am), b = right.remap(joinedDimensions, bm);
+                if (failed(a) || failed(b)) { return failure(); }
+                return a->intersect(*b);
+            }
+        }();
         ++result.cost.pieceJoins;
         if (failed(joined)) { return failure(); }
         auto projected = Policy::project(*joined, keep);
