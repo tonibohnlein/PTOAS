@@ -143,8 +143,9 @@ module attributes {pto.target_arch = "a3"} {
 // CHECK-LABEL: storage descriptor_updates: cells=1 all-materialized=1
 // CHECK: extents=s0, s1
 // CHECK: extents=1, 8
+// The conditional update writes the original SSA dimensions on both paths.
 // CHECK-LABEL: storage conditional_metadata: cells=1 all-materialized=1
-// CHECK-NOT: descriptor
+// CHECK: descriptor base=absolute bytes=4 {{.*}} extents=s0, s1
 // CHECK: conditional_metadata: phases=1
 // CHECK-LABEL: storage dynamic_slot: cells=0 all-materialized=0
 // CHECK: map=(d0, d1)[s0] -> ((d0 * 8 + d1) * 4 + s0 * 32) extents=1, 8

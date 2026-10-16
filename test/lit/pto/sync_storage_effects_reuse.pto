@@ -9,7 +9,7 @@
 // RUN: pto-sync-input-test --recognize %s | FileCheck %s --check-prefix=RECOGNIZE
 
 // RECOGNIZE-LABEL: recognition reused_ranges
-// RECOGNIZE: recognize explicit: missing-premise backend=not-run
+// RECOGNIZE: recognize explicit: applicable backend=not-run
 // RECOGNIZE-LABEL: recognition scalar_only
 // RECOGNIZE: recognize explicit: applicable backend=not-run
 

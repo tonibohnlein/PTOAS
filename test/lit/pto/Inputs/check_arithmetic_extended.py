@@ -21,13 +21,15 @@ def trace(name, n):
         return []
     if name == "normalized_view":
         return [(i,) for i in range(1, n + 1, 2)]
+    if name == "unsupported_period":
+        return [(i,) for i in range(1, n, 3)]
     if name == "affine_nested_bound":
         return [(i, j) for i in range(n) for j in range(i + 1)]
     return [(i,) for i in range(n)]
 
 
 def byte_origin(name, coords):
-    if name == "affine_nested_bound":
+    if name in {"affine_nested_bound", "unsupported_period", "wrapped_bound"}:
         return 0
     if name == "normalized_view":
         return 1024 * (coords[0] % 2) + 80
@@ -52,10 +54,10 @@ def main():
     checks = 0
     for document in documents:
         name = document["function"]
-        if name in {"unsupported_period", "wrapped_bound", "narrowed_dynamic_access"}:
+        if name == "narrowed_dynamic_access":
             assert not document["sites"] and not document["relations"], name
             continue
-        expected_parameters = [] if name == "empty_rotating" else [0]
+        expected_parameters = [] if name == "empty_rotating" else ([-1] if name == "wrapped_bound" else [0])
         assert len(document["sites"]) == 1 and document["parameters"] == expected_parameters, name
         contains = membership_index(document)
         candidates = list(itertools.product(range(-1, 5), repeat=document["sites"][0]["depth"]))
@@ -80,7 +82,7 @@ def main():
                                                                                   (source, target) == (1, 2))
                         assert contains((3, 0, 0, source, target), values) == expected, (name, "native", a, b, n)
                         checks += 1
-    print("extended arithmetic: 7 accepted, 3 rejected; semantic comparisons:", checks)
+    print("extended arithmetic: 9 accepted, 1 rejected; semantic comparisons:", checks)
 
 
 if __name__ == "__main__":

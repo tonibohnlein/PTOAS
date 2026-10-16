@@ -57,7 +57,7 @@
 // CHECK: missing-residue: missing-premise
 // CHECK: issue invalid-residue
 // CHECK: union-class: applicable class=octagons
-// CHECK: producer-limit: not-applicable exports=0
-// CHECK: producer-limit: not-applicable exports=0
+// CHECK: producer-limit: applicable exports=7
+// CHECK: producer-limit: applicable exports=7
 // CHECK: invalid-tags: missing-premise
 // CHECK: issue invalid-coordinate

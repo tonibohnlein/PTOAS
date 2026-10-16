@@ -176,6 +176,30 @@ int main()
     }
     for (auto limits : {fs::ArithmeticLimits{8, 8, INT64_MAX, 8}, fs::ArithmeticLimits{8, 100, 2, 8}}) {
         auto program = fs::recognizeArithmeticProgram(*function, index, shared, effects, limits);
+        if (program.extraction.state != fs::RecognitionState::Applicable ||
+            !program.sites.empty() || !program.parameters.empty() || program.primitives.relations.size() != 7) {
+            return 1;
+        }
+        // Empty programs export a true zero-dimensional context and false
+        // occurrence/order/access/native relations, not absent capabilities.
+        unsigned roles = 0;
+        for (const auto& relation : program.primitives.relations) {
+            const auto role = static_cast<unsigned>(relation.kind);
+            if (role >= 7 || (roles & (1U << role)) || relation.dimensions || !relation.coordinates.empty() ||
+                relation.sourceSite || relation.targetSite) { return 1; }
+            roles |= 1U << role;
+            if (relation.kind == fs::PrimitiveKind::Context) {
+                if (relation.pieces.size() != 1) { return 1; }
+                const auto& piece = relation.pieces.front();
+                if (!piece.residues.empty() || piece.machineSystem || !piece.system.getAsOpaquePointer() ||
+                    piece.system.getNumDims() || piece.system.getNumSymbols()) { return 1; }
+                for (unsigned i = 0; i < piece.system.getNumConstraints(); ++i) {
+                    auto value = dyn_cast<AffineConstantExpr>(piece.system.getConstraint(i));
+                    if (!value || (piece.system.isEq(i) ? value.getValue() != 0 : value.getValue() < 0)) { return 1; }
+                }
+            } else if (!relation.pieces.empty()) { return 1; }
+        }
+        if (roles != 127) { return 1; }
         llvm::outs() << "producer-limit: " << fs::recognitionName(program.extraction.state)
                      << " exports=" << program.primitives.relations.size() << "\n";
     }
