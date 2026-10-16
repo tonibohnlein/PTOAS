@@ -530,6 +530,43 @@ static LogicalResult retainedPrefixTrace(func::FuncOp function, pto::GMAliasPoli
     llvm::outs() << llvm::json::Value(llvm::json::Object{{"accepted", true}, {"trace", std::move(trace)}}) << "\n";
     return verify(*(*prepared)->module);
 }
+namespace {
+FailureOr<std::unique_ptr<fs::PreparedLogicalPlan>> prepareStructuredTrace(
+    func::FuncOp function, pto::GMAliasPolicy policy, bool allocationRequested,
+    std::string& selectedBackend, llvm::json::Object& evidence)
+{
+    // Match prepareFunctionSynchronization's logical request, but request its
+    // separate allocation export only when this test will consume physical IDs.
+    fs::FrontierAnalysis analysis(function);
+    if (failed(analysis.initialize(policy))) { return failure(); }
+    fs::AnalysisRequest request;
+    request.mode = fs::AnalysisMode::Fallback;
+    request.needs.synchronization = true;
+    const auto result = analysis.analyze(request);
+    evidence = llvm::json::Object{{"mode", "fallback"}, {"synchronization", true},
+        {"allocation_requested", allocationRequested}};
+    if (result.status != fs::AnalysisStatus::Ready) {
+        auto diagnostic = function.emitError("structured logical plan unavailable");
+        for (const auto& obligation : result.obligations) { diagnostic << "; " << obligation.diagnostic; }
+        return failure();
+    }
+    auto prepared = analysis.prepareLogical(result);
+    if (failed(prepared)) { return failure(); }
+    selectedBackend = result.completion ? "completion-transfer" : result.mathematical->backend;
+    // Preserve the old helper's default empty-pool export. The actual requested
+    // pool is checked by allocatePhysicalEventIds after logical insertion.
+    if (allocationRequested) { (void)analysis.attachAllocation(result, **prepared); }
+    const auto& counts = analysis.constructionCounts();
+    evidence["logical_preparations"] = counts.logicalPreparations;
+    evidence["allocation_exports"] = counts.allocationExports;
+    evidence["allocation_certificate"] = bool((*prepared)->allocationCertificate);
+    evidence["completion"] = bool(result.completion);
+    if (!allocationRequested && (counts.allocationExports || (*prepared)->allocationCertificate)) {
+        return function.emitError("logical-only trace constructed allocation evidence"), failure();
+    }
+    return prepared;
+}
+} // namespace
 LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPolicy policy)
 {
     if (function->hasAttr("test.singleton_prefix") || function->hasAttr("test.sequence_prefix")) {
@@ -603,6 +640,8 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
     }
     bool accepted = false;
     uint64_t phaseDescriptions = 0;
+    std::string selectedBackend;
+    llvm::json::Object preparationRequest;
     std::shared_ptr<fs::BoundedLifetimeDemandResult> boundedDemands;
     if (function->hasAttr("test.phased_insertion")) {
         auto program = fs::recognizeProgram(function, input);
@@ -666,7 +705,9 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
         auto prepared = fs::prepareSequenceInsertion(composed);
         accepted = succeeded(prepared) && succeeded(fs::insertLogicalSynchronization(function, **prepared));
     } else {
-        auto prepared = fs::prepareFunctionSynchronization(function, policy);
+        const bool allocationRequested = bool(function->getAttrOfType<DenseI64ArrayAttr>("test.eligible_ids"));
+        auto prepared = prepareStructuredTrace(function, policy, allocationRequested,
+            selectedBackend, preparationRequest);
         accepted = succeeded(prepared) && succeeded(fs::insertLogicalSynchronization(function, **prepared));
         if (accepted && failed(verify(function))) { return failure(); }
     }
@@ -704,11 +745,13 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
         {"accepted", accepted}, {"unchanged_on_failure", accepted || before == render()},
         {"bounded_demands_retained", bool(boundedDemands)},
         {"bounded_demand_count", boundedCount}, {"phase_descriptions", phaseDescriptions}};
+    if (!preparationRequest.empty()) { report["preparation_request"] = std::move(preparationRequest); }
     if (auto recognition = function->getAttrOfType<DictionaryAttr>("pto.frontier_recognition")) {
         if (auto backend = recognition.getAs<StringAttr>("selected_logical_backend")) {
             report["selected_logical_backend"] = backend.getValue();
         }
     }
+    if (!selectedBackend.empty()) { report["selected_logical_backend"] = selectedBackend; }
     auto ids = function->getAttrOfType<DenseI64ArrayAttr>("test.eligible_ids");
     if (accepted && ids) {
         auto logicalIR = render();
