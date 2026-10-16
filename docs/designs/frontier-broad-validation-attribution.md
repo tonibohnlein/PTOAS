@@ -1,6 +1,10 @@
 # Broad validation and phase-call attribution
 
-M6 remains open. The retained broad run completed 233 tests with 205 PASS,
+This is the historical M6 attribution. The
+[final construction-first receipt](frontier-final-construction-validation.md)
+records the later ordered production campaign, 234-test broad refresh,
+reviewed repairs and current phase-stage attribution. The retained broad run
+below completed 233 tests with 205 PASS,
 27 FAIL and one TIMEOUT. Subsequent focused repairs and baseline comparisons
 attribute parts of that result; they do not constitute a new all-green broad run.
 Implementation acceptance, successful compilation, fixed-protocol capacity and
