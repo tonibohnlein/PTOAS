@@ -864,12 +864,18 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
         return entry.second.mathematical == result.mathematical;
     });
     if (selected == attempts.end()) { return failure(); }
+    const bool emptyInvocation = program && structuralIndex && staticallyEmptyWholeInvocation(
+        *result.mathematical, function, *storage, *program, *structuralIndex);
+    if (emptyInvocation && (plan.completeInvocation || plan.familyRecipe || plan.familyProtocol ||
+        plan.completionOwner || plan.executedOutput || plan.physicalOutput || plan.allocationPreparation ||
+        plan.regionalAllocation || plan.compactBoundingOwner || !plan.families.empty() ||
+        !plan.endpoints.empty() || !plan.preparation.empty())) { return failure(); }
     if (failed(normalizeLogicalFamilies(plan))) {
         return failure();
     }
     AnalysisProfileScope profile(sessionState->ledger, "allocation-support", result.mathematical->region,
         result.mathematical->backend, false, result.requestId);
-    if (!eligibleIds.empty()) {
+    if (!emptyInvocation && !eligibleIds.empty()) {
         auto region = result.regionalExports ? result.regionalExports : allocationRegion(*result.mathematical);
         if (!region && result.mathematical->identityComposition) {
             auto source = identityAllocationSource(*result.mathematical, storage.get(), structuralIndex.get(),
@@ -908,10 +914,14 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
         if (construction.allocationExports != UINT64_MAX) { ++construction.allocationExports; }
         auto certificate = plan.allocationCertificate;
         if (!certificate) {
-            certificate = result.mathematical->identityComposition ?
-                allocateIdentity(*result.mathematical, plan, allocationProfile) :
-                allocateRetained(*result.mathematical, *program, attempt, plan, function.getContext(),
-                    sessionState->guardedImportWork, allocationProfile);
+            if (emptyInvocation) {
+                certificate = explicitAllocationCertificate(ExplicitAnalysis{}, plan.planId, function.getContext());
+            } else {
+                certificate = result.mathematical->identityComposition ?
+                    allocateIdentity(*result.mathematical, plan, allocationProfile) :
+                    allocateRetained(*result.mathematical, *program, attempt, plan, function.getContext(),
+                        sessionState->guardedImportWork, allocationProfile);
+            }
         }
         cached =
             attempt.allocation.emplace(cacheKey, BackendAttempt::CachedAllocation{plan.familyProtocol, certificate})

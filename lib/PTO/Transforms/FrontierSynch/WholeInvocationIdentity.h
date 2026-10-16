@@ -12,6 +12,10 @@
 namespace mlir::pto::frontiersynch {
 const StructureNode* wholeInvocationLoop(func::FuncOp function, const SyncInput& input,
     const ProgramRecognition& program, const PhaseIndex& index);
+// This is a proof about the complete original invocation, not an empty demand
+// set or a selected empty child surrounded by executing payloads.
+bool staticallyEmptyWholeInvocation(const MathematicalResult& demands, func::FuncOp function,
+    const SyncInput& input, const ProgramRecognition& program, const PhaseIndex& index);
 // Pure retained-owner lookup for the restricted same-node continuation.
 std::optional<std::pair<AnalysisOutcome, AnalysisBackend>> retainedIdentityAnswer(
     const AnalysisSessionState& session, const AnalysisRequest& request, ArrayRef<AnalysisBackend> eligible);
