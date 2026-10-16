@@ -89,6 +89,7 @@ def closure_with_commands(pipes, commands, include_commands=False):
 
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -160,6 +161,27 @@ def without_function_metadata(text):
     return lines
 
 
+def has_empty_rank_certificate(text):
+    # The whole-empty producer exports the existing finite rank-query schema.
+    # Its flat dictionary must have exactly these typed fields, each once.
+    if len(re.findall(r"\bpto\.finite_allocation\s*=", text)) != 1 or "pto.cyclic_allocation" in text:
+        return False
+    match = re.search(r"\bpto\.finite_allocation\s*=\s*\{([^{}]*)\}", text)
+    if not match:
+        return False
+    fields = {}
+    for field in match.group(1).split(","):
+        key, separator, value = field.partition("=")
+        key = key.strip()
+        if not separator or key in fields:
+            return False
+        value = value.strip()
+        fields[key] = value if value.startswith('"') else re.sub(r"\s+", "", value)
+    return fields == {"version": "2:i64", "kind": '"finite"', "plan": "0:i64",
+                      "mode": '"rank-query"', "handoffs": "[]",
+                      "pipe_labels": "array<i64>", "wait_order": "array<i64>"}
+
+
 def main():
     tool = shutil.which(sys.argv[1])
     assert tool
@@ -209,13 +231,18 @@ def main():
         assert empty_template["empty_invocation"] and not empty_template["payloads"]
         assert not empty_template["counted_visits"]
         empty_inserted = invoke(tool, "--insert-logical", path)
-        empty_certificate = ('pto.cyclic_allocation = {budget = 0 : i64, entries = [], '
-                             'order_exact = true, plan = 0 : i64, strategy = "directed-cycle-cover", '
-                             'version = 3 : i64}, ')
-        empty_regional_certificate = ('pto.finite_allocation = {groups = [], kind = "finite", '
-                                      'lane_evidence = {lanes = []}, macro_reservations, plan = 0 : i64, '
-                                      'strategy = "regional-palettes", version = 2 : i64}, ')
-        assert empty_certificate in empty_inserted or empty_regional_certificate in empty_inserted
+        assert has_empty_rank_certificate(empty_inserted), "empty invocation certificate changed"
+        certificate = re.search(r"pto\.finite_allocation\s*=\s*\{[^{}]*\}", empty_inserted).group(0)
+        for old, new in (("handoffs = []", "handoffs = [{}]"),
+                         ("pipe_labels = array<i64>", "pipe_labels = array<i64: 4>"),
+                         ("wait_order = array<i64>", "wait_order = array<i64: 0>"),
+                         ("plan = 0 : i64", "plan = 1 : i64"),
+                         ("version = 2 : i64", "version = 3 : i64"),
+                         ('mode = "rank-query"', 'mode = "other"'),
+                         ("handoffs = []", "handoffs = [], handoffs = []"),
+                         ("handoffs = []", "unknown_field = []")):
+            assert old in certificate, old
+            assert not has_empty_rank_certificate(certificate.replace(old, new, 1)), (old, new)
         assert without_function_metadata(empty_inserted) == without_function_metadata(
             invoke(tool, "--roundtrip", path))
         empty_trace = json.loads(invoke(tool, "--insertion-trace", path))
