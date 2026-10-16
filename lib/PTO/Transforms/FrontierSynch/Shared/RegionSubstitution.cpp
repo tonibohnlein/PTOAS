@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Bind nested occurrence coordinates without cloning source IR or DAG paths.
 #include "RegionSubstitutionTopology.h"
+#include "RegionExpressionAlternatives.h"
 #include "llvm/ADT/STLExtras.h"
 namespace mlir::pto::frontiersynch {
 RegionExpressions::Id RegionExpressions::substitute(Id expression, Substitution& context, uint64_t* nodeVisits)
@@ -102,6 +103,7 @@ RegionExpressions::Id RegionExpressions::substitute(Id expression, Substitution&
         if (result == invalid) { return invalid; }
         context.memo[id] = result;
     }
+    detail::RegionConstructionAccess::transportAlternatives(*this, context, order, nodeVisits);
     return context.memo.lookup(expression);
 }
 FailureOr<SmallVector<RegionExpressions::Id>> RegionExpressions::import(
@@ -180,6 +182,8 @@ FailureOr<SmallVector<RegionExpressions::Id>> RegionExpressions::import(
     // and the monotone payload replay prohibition for the target's lifetime.
     for (const auto& owner : source.inputOwners) { retainInputOwner(owner); }
     forbiddenRecomputation.insert(source.forbiddenRecomputation.begin(), source.forbiddenRecomputation.end());
+    detail::RegionConstructionAccess::inheritAlternativeConstruction(*this, source);
+    detail::RegionConstructionAccess::importAlternatives(*this, source, order, memo, work);
     transaction.commit();
     return imported;
 }

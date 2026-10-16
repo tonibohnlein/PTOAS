@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -20,6 +21,8 @@ namespace mlir {
 class Operation;
 namespace pto::frontiersynch {
 struct PrefixOccurrenceRestrictionWork;
+class RegionExpressions;
+namespace detail { struct RegionAlternativeWork; }
 class PrefixExpressionProfile {
 public:
     // Diagnostic snapshots own strings/counts only. Query outputs can alias or
@@ -70,6 +73,7 @@ public:
         uint64_t arena = 0, root = 0, requests = 0, emissions = 0, attempts = 0;
         uint64_t directFailures = 0, inactiveAttempts = 0, historyAttempts = 0;
         uint64_t constructed = 0, retained = 0, maximumRetained = 0;
+        uint64_t alternateAttempts = 0, alternateSuccesses = 0, alternateFallbacks = 0, alternatePreparation = 0;
         uint64_t inactiveSuccesses = 0, preparationNodes = 0, preparationInputs = 0, sharedReturns = 0,
                  bindingNodes = 0;
         uint64_t thresholdDiscovery = 0, thresholdSubstitution = 0, proofVisits = 0, historySubstitution = 0;
@@ -85,9 +89,12 @@ public:
     // at most four original-source samples per shared expression entry.
     void annotateSequence(const void* arena, uint32_t root, Operation* cut, SequenceLineage lineage);
     void recordOccurrenceRestriction(const PrefixOccurrenceRestrictionWork& work);
+    void recordAlternativeConstruction(const RegionExpressions& arena);
     void resetEmission();
     llvm::json::Object report() const;
 private:
+    std::map<const detail::RegionAlternativeWork*, std::shared_ptr<const detail::RegionAlternativeWork>>
+        alternativeOwners;
     uint64_t incomingRequests = 0, incomingChoices = 0, incomingPruned = 0, incomingResidual = 0;
     uint64_t incomingProofVisits = 0;
     using Key = std::tuple<const void*, uint32_t, Operation*, std::string, uint64_t>;

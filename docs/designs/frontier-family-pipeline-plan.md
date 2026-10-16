@@ -13,7 +13,7 @@ implementation from executed validation and unresolved protocol work.
 
 | Work | Implementation acceptance | Kernel compilation | Fixed-protocol capacity investigation |
 |---|---|---|---|
-| M1 normalization and outcome distinctions | Accepted and committed; further construction optimization under validation | Separate historical receipts; not re-established here | Does not close remaining protocols |
+| M1 normalization and outcome distinctions | Accepted checkpoints; [measured Delta construction reduction](frontier-guarded-query-alternatives.md#executed-delta-construction-checkpoint) and prefill extrema/export validation complete in their stated scopes | Separate historical receipts; not re-established here | Does not close remaining protocols |
 | M2 selection and capability ownership | Accepted implementation; [pinned acceptance matrix](frontier-selection-ownership.md#m2-implementation-acceptance) | Separate outcome | Does not certify protocol allocation |
 | M4 compact lowering and mapping selection | Accepted for supported owned-family callers; [implementation and production receipt](frontier-owned-recipe-checkpoint.md) | Eight prepared C++ sources generated; device compilation not established | Three prepared allocation refusals remain separate |
 | M5 qualified child interface | Accepted supported pending-effect subclass in `d8024255a`; [receipt](frontier-qualified-child-receipt.md) | Separate outcome | Explicit resource/reuse contracts remain required |

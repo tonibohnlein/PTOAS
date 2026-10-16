@@ -61,7 +61,8 @@ struct LifetimeWindowAnalysis {
 // and supplied prerequisite by input.span (including entry and exit). Merely
 // examining this window cannot establish that certificate. The returned local
 // query rows are NOT global profiles. sourceDemands originate in iteration 0.
-LifetimeWindowAnalysis analyzeLifetimeWindow(RegionExpressions& expressions, const LifetimeWindowInput& input);
+LifetimeWindowAnalysis analyzeLifetimeWindow(
+    RegionExpressions& expressions, const LifetimeWindowInput& input, bool retainQueryGraph = false);
 struct RefreshCertificate {
     std::string error;
     uint64_t span = 0;

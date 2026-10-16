@@ -15,6 +15,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/GuardedStorageScan.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/ModuloLaneSpan.h"
 #include "RestrictedIncomingChecks.h"
+#include "GuardedQueryProjectionChecks.h"
 #include <array>
 #include <set>
 namespace fs = mlir::pto::frontiersynch;
@@ -33,7 +34,8 @@ void close(Graph& graph)
         }
     }
 }
-bool ranks(mlir::MLIRContext& context, unsigned pattern, fs::GuardedRankLabels labels)
+bool ranks(mlir::MLIRContext& context, unsigned pattern, fs::GuardedRankLabels labels,
+    std::array<uint64_t, 4>& acceptedProjection)
 {
     constexpr unsigned n = 6;
     mlir::Block block;
@@ -57,12 +59,15 @@ bool ranks(mlir::MLIRContext& context, unsigned pattern, fs::GuardedRankLabels l
             }
         }
     }
-    auto result = fs::reduceGuardedRanks(dag, payloads, edges, native, labels);
+    if (!edges.empty()) { edges.push_back(edges.front()); }
+    if (!native.empty()) { native.push_back(native.front()); }
+    auto result = fs::reduceGuardedRanks(dag, payloads, edges, native, labels, true);
     if (!result.error.empty()) {
         llvm::errs() << result.error << "\n";
         return false;
     }
     std::vector<fs::RegionExpressions::Id> queries;
+    std::vector<fs::RegionExpressions::Id> projected;
     for (unsigned a = 0; a < 2 * n; ++a) {
         for (unsigned b = 0; b < 2 * n; ++b) {
             auto answer = result.query(
@@ -72,6 +77,14 @@ bool ranks(mlir::MLIRContext& context, unsigned pattern, fs::GuardedRankLabels l
                 return false;
             }
             queries.push_back(*answer);
+            const auto alternative = fs::detail::projectGuardedRankQuery(dag, result,
+                {a / 2, a % 2 ? fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start},
+                {b / 2, b % 2 ? fs::PeriodicEventKind::Completion : fs::PeriodicEventKind::Start});
+            if (!alternative.answer) { return false; }
+            if (alternative.status == fs::detail::GuardedQueryProjectionStatus::Projected) {
+                ++acceptedProjection[2 * (a % 2) + b % 2];
+            }
+            projected.push_back(*alternative.answer);
         }
     }
     for (unsigned mask = 0; mask < (1U << n); ++mask) {
@@ -117,7 +130,8 @@ bool ranks(mlir::MLIRContext& context, unsigned pattern, fs::GuardedRankLabels l
         }
         for (unsigned a = 0; a < 2 * n; ++a) {
             for (unsigned b = 0; b < 2 * n; ++b) {
-                if (active(queries[a * 2 * n + b]) != full[a][b]) {
+                if (active(queries[a * 2 * n + b]) != full[a][b] ||
+                    active(projected[a * 2 * n + b]) != full[a][b]) {
                     llvm::errs() << "guarded query mismatch\n";
                     return false;
                 }
@@ -450,15 +464,20 @@ int runGuardedRankChecks()
 {
     mlir::MLIRContext context;
     if (!moduloSpans() || !storageScans() || !referenceRankConstruction(context) || !activityOnlyRows(context) ||
-        !writerPairIndexChecks() || !restrictedIncomingScaling(context)) {
+        !writerPairIndexChecks() || !restrictedIncomingScaling(context) ||
+        !guardedQueryProjectionChecks::run(context)) {
         llvm::errs() << "guarded storage scan mismatch\n";
         return 1;
     }
+    std::array<uint64_t, 4> acceptedProjection{};
     for (unsigned pattern = 0; pattern < 32; ++pattern) {
-        if (!ranks(context, pattern, fs::GuardedRankLabels::Executed) ||
-            !ranks(context, pattern, fs::GuardedRankLabels::Reference)) {
+        if (!ranks(context, pattern, fs::GuardedRankLabels::Executed, acceptedProjection) ||
+            !ranks(context, pattern, fs::GuardedRankLabels::Reference, acceptedProjection)) {
             return 1;
         }
+    }
+    if (llvm::any_of(acceptedProjection, [](auto count) { return count == 0; })) {
+        llvm::errs() << "Boolean query projection did not exercise all event-kind pairs\n"; return 1;
     }
     for (unsigned mode = 0; mode < 5; ++mode) {
         if (!windows(mode)) {

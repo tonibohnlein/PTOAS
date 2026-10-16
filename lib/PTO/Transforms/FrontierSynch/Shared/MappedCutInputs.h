@@ -25,7 +25,12 @@ inline void bindMappedCutInputList(
             context.inputs[original] = value;
             // Integer inputs still need the expression service's conversion to
             // its index arithmetic type. A raw i32/i64 value is not that result.
-            if (value.getType().isIndex() || value.getType().isInteger(1)) {
+            // An identity-mapped original Boolean still admits facts from its
+            // enclosing original branch. Treating it as an opaque expression
+            // binding would suppress that cofactor and demand unreachable inputs.
+            // Nonidentity replacements (including historical values) remain opaque.
+            const bool originalBoolean = value == original && value.getType().isInteger(1);
+            if (!originalBoolean && (value.getType().isIndex() || value.getType().isInteger(1))) {
                 context.values[id] = value;
                 context.cofactors[id] = id;
             }

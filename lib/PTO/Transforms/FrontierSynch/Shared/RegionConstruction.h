@@ -25,6 +25,28 @@ struct RegionConstructionBindings {
 // This service consumes the already qualified CutExpressionRecipe; it neither
 // reruns dependence analysis nor creates a different availability contract.
 struct RegionConstructionAccess {
+    // Defined-input totality for Boolean relation projection. Integer recipes
+    // remain outside this optimization's explicitly qualified vocabulary.
+    static bool totalScalarDag(const RegionExpressions& arena, ArrayRef<RegionExpressions::Id> roots,
+        uint64_t& visited);
+    // Trusted internal equivalence producers only; these never change the
+    // authoritative query result or authorize different capture/proof inputs.
+    static RegionAlternativeWork& alternativeConstructionWork(RegionExpressions& arena);
+    static std::vector<std::shared_ptr<const RegionAlternativeWork>> alternativeConstructionOwners(
+        const RegionExpressions& arena);
+    static void inheritAlternativeConstruction(RegionExpressions& arena, const RegionExpressions& source);
+    static bool retainAlternative(RegionExpressions& arena, RegionExpressions::Id original,
+        RegionExpressions::Id alternate, uint64_t* work = nullptr);
+    static std::optional<RegionExpressions::Id> alternative(
+        RegionExpressions& arena, RegionExpressions::Id original, uint64_t* work = nullptr);
+    static void transportQualifiedAlternative(RegionExpressions& arena, RegionExpressions::Id original,
+        RegionExpressions::Id bound, const RegionExpressions::Substitution& substitution);
+    static void transportAlternatives(RegionExpressions& arena,
+        const RegionExpressions::Substitution& substitution, ArrayRef<RegionExpressions::Id> visited,
+        uint64_t* work);
+    static void importAlternatives(RegionExpressions& arena, const RegionExpressions& source,
+        ArrayRef<RegionExpressions::Id> visited,
+        const llvm::DenseMap<RegionExpressions::Id, RegionExpressions::Id>& imported, uint64_t* work);
     static FailureOr<ScalarToken> construct(RegionExpressions& arena, const CutExpressionRecipe& recipe,
         ScalarConstruction& construction, Operation* cut, RegionConstructionContext& context,
         const RegionConstructionBindings* shared = nullptr);

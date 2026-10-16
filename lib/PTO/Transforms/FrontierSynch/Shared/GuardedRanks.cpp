@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Shared, typed expression DAG for exact regional queries and endpoint recipes.
 #include "PTO/Transforms/FrontierSynch/Shared/GuardedRanks.h"
+#include "GuardedQueryProjection.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
 GuardedRankFrontier initGuardedRankFrontier(RegionExpressions& e, uint32_t columns)
@@ -191,7 +192,7 @@ GuardedRankStep advanceGuardedRank(
 }
 GuardedRanks reduceGuardedRanks(
     RegionExpressions& e, llvm::ArrayRef<GuardedRankPayload> payloads, llvm::ArrayRef<GuardedRankEdge> generators,
-    llvm::ArrayRef<GuardedRankEdge> native, GuardedRankLabels labels)
+    llvm::ArrayRef<GuardedRankEdge> native, GuardedRankLabels labels, bool retainQueryGraph)
 {
     GuardedRanks out;
     out.payloads.assign(payloads.begin(), payloads.end());
@@ -226,6 +227,28 @@ GuardedRanks reduceGuardedRanks(
     };
     if (!bucket(generators, incoming) || !bucket(native, fixed)) {
         return out;
+    }
+    if (retainQueryGraph && labels == GuardedRankLabels::Reference) {
+        auto graph = std::make_shared<detail::GuardedQueryGraph>();
+        graph->arena = &e; graph->payloads = out.payloads; graph->columns = out.columns;
+        graph->columnCount = pipes.size(); graph->incoming.resize(payloads.size());
+        SmallVector<RegionExpressions::Id> guards;
+        for (const auto& payload : payloads) { guards.push_back(payload.present); }
+        for (uint32_t target = 0; target < payloads.size(); ++target) {
+            for (const auto* directory : {&incoming, &fixed}) {
+                for (const auto& [source, guard] : (*directory)[target]) {
+                    graph->incoming[target].push_back({source, target, guard});
+                    guards.push_back(guard);
+                }
+            }
+        }
+        graph->totalGuards = detail::RegionConstructionAccess::totalScalarDag(e, guards, graph->qualificationNodes);
+        auto& work = detail::RegionConstructionAccess::alternativeConstructionWork(e);
+        detail::RegionAlternativeWork::add(work.graphs);
+        detail::RegionAlternativeWork::add(work.graphOccurrences, payloads.size());
+        detail::RegionAlternativeWork::add(work.graphEdges, guards.size() - payloads.size());
+        detail::RegionAlternativeWork::add(work.guardQualification, graph->qualificationNodes);
+        out.queryGraph = std::move(graph);
     }
     auto frontier = initGuardedRankFrontier(e, pipes.size());
     std::vector<uint64_t> referenceRanks(pipes.size());

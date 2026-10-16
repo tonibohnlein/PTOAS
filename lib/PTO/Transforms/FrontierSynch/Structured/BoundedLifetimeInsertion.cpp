@@ -206,7 +206,7 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRe
                  e.boolean(true)});
         }
     }
-    demands->analysis = analyzeLifetimeWindow(e, window);
+    demands->analysis = analyzeLifetimeWindow(e, window, exportSpan.has_value());
     auto& analysis = demands->analysis;
     if (!analysis.error.empty()) {
         error = analysis.error;
