@@ -10,8 +10,11 @@
 // CHECK: translation-failed; records-empty
 // CHECK: source-unchanged; dependency-analysis-not-run
 // RUN: not pto-test-opt --pto-insert-sync %s 2>&1 | FileCheck %s --check-prefix=PASS
+// RUN: not pto-test-opt --pto-unified-sync %s 2>&1 | FileCheck %s --check-prefix=PASS
+// RUN: not pto-test-opt --pto-check-sync-self-coverage %s 2>&1 | FileCheck %s --check-prefix=PASS
 // PASS: requires planner-assigned slot addresses or a constant level3 base
 // PASS-NOT: LLVM ERROR
+// PASS-NOT: [sync-gate:g1-self]
 module {
   func.func @nested_failure(%take: i1) {
     %c0 = arith.constant 0 : index

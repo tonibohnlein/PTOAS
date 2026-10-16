@@ -1904,7 +1904,7 @@ namespace {
 class SelfCoverageChecker {
 public:
   explicit SelfCoverageChecker(func::FuncOp func) : func(func) {}
-  SelfCoverageReport check() {
+  FailureOr<SelfCoverageReport> check() {
     // --- The CANDIDATE side: what the emitted sync actually orders -------------
     profile = computeCoverage(func, &anchorIndex);
     n = profile.anchorCount;
@@ -1940,7 +1940,9 @@ public:
     isA5 = pto::isTargetArchA5(func.getOperation());
 
     PTOIRTranslator translator(syncIR, buffer2MemInfoMap, opAccessMemInfos, func, SyncAnalysisMode::NORMALSYNC);
-    translator.Build();
+    if (failed(translator.Build())) {
+      return failure();
+    }
 
     for (auto &element : syncIR) {
       if (auto *c = dyn_cast<pto::CompoundInstanceElement>(element.get())) {
@@ -2263,7 +2265,7 @@ private:
 
 } // namespace
 
-SelfCoverageReport mlir::pto::oracle::computeSelfCoverage(func::FuncOp func) {
+FailureOr<SelfCoverageReport> mlir::pto::oracle::computeSelfCoverage(func::FuncOp func) {
   return SelfCoverageChecker(func).check();
 }
 
@@ -2533,7 +2535,12 @@ struct PTOCheckSyncSelfCoveragePass
     if (func.isDeclaration()) {
       return;
     }
-    auto report = oracle::computeSelfCoverage(func);
+    auto reportOr = oracle::computeSelfCoverage(func);
+    if (failed(reportOr)) {
+      signalPassFailure();
+      return;
+    }
+    const auto &report = *reportOr;
     oracle::emitReport(
         [&](llvm::raw_ostream &os) { oracle::printSelfCoverage(os, func.getSymName(), report, maxViolations); });
     if (!report.violations.empty()) {
