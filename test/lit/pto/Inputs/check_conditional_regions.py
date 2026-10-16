@@ -13,6 +13,7 @@ import sys
 import tempfile
 from check_repeated_region import check
 from check_logical_insertion import closure_with_commands
+from check_periodic_demands import closure, native
 
 
 def run(tool, mode, path):
@@ -20,6 +21,71 @@ def run(tool, mode, path):
     if result.returncode:
         raise RuntimeError(result.stderr + result.stdout)
     return json.loads(result.stdout)
+
+
+def loaded_closure(original, inserted, enabled, trips, prefix_reader):
+    """Enumerate original byte hazards; interpret only emitted command causality."""
+    assert original["accepted"] and inserted["accepted"], (original, inserted)
+    assert not original["trace"]["error"] and not inserted["trace"]["error"], (original, inserted)
+    raw = [event for event in original["trace"]["events"] if event["kind"] == "payload"]
+    payloads = [event for event in inserted["trace"]["events"] if event["kind"] == "payload"]
+    assert payloads == raw, "insertion changed or replayed an original payload/load"
+    expected = [("E", [])] + ([("R", [])] if prefix_reader else []) + [("Q", [])]
+    if enabled:
+        for visit in range(trips):
+            for inner in range(3):
+                expected.extend([("L", [visit, inner]), ("C", [visit, inner])])
+    expected.append(("E", []))
+    assert [(event.get("label"), event["coordinates"]) for event in raw] == expected, raw
+    effects = []
+    for label, coordinates in expected:
+        slot = coordinates[-1] % 2 if coordinates else 0
+        if label == "Q":
+            effects.append(({("flags", 0)}, set()))
+        elif label in ("R", "C"):
+            effects.append(({("left", slot), ("right", 0)}, {("acc", 0)}))
+        else:
+            effects.append(({("mat", 0)}, {("left", slot)}))
+    pipes = [event["pipe"] for event in raw]
+    edges = native(pipes)
+    for a, (reads, writes) in enumerate(effects):
+        for b in range(a + 1, len(effects)):
+            later_reads, later_writes = effects[b]
+            if writes & (later_reads | later_writes) or reads & later_writes:
+                edges.add((2 * a + 1, 2 * b))
+    required = closure(2 * len(effects), edges)[0]
+    commands, published, acquired = [], {}, {}
+    for event in inserted["trace"]["events"]:
+        if event["kind"] == "payload":
+            continue
+        if event["kind"] == "barrier" and event["pipe"] == 6:
+            assert event["gap"] == len(raw), "nonterminal invocation drain"
+            continue
+        command = dict(event)
+        if event["kind"] != "barrier":
+            identity = (event["plan"], event["record"], event["source_pipe"], event["target_pipe"],
+                        event["source_ordinal"], tuple(event.get("members", [])))
+            command["identity"] = identity
+            table = published if event["kind"] == "set" else acquired
+            assert identity not in table, "duplicate observed endpoint"
+            table[identity] = event["gap"]
+        commands.append(command)
+    assert published.keys() == acquired.keys(), "unmatched publication/cleanup"
+    assert closure_with_commands(pipes, commands) == [row & ~(1 << i) for i, row in enumerate(required)]
+    load_position = next(index for index, item in enumerate(expected) if item[0] == "Q")
+    return {identity: (gap, acquired[identity], len(raw)) for identity, gap in published.items()
+            if gap <= load_position}
+
+
+def observed_load_source(source):
+    source = source.replace("outs(%first : !left)", 'outs(%first : !left) {test.label = "E"}')
+    source = source.replace("outs(%left : !left)", 'outs(%left : !left) {test.label = "L"}')
+    source = source.replace("ins(%first, %right : !left, !right) outs(%acc : !acc)",
+                            'ins(%first, %right : !left, !right) outs(%acc : !acc) {test.label = "R"}')
+    source = source.replace("ins(%left, %right : !left, !right) outs(%acc : !acc)",
+                            'ins(%left, %right : !left, !right) outs(%acc : !acc) {test.label = "C"}')
+    return source.replace("pto.load %flags[%zero] :", 'pto.load %flags[%zero] '
+                          '{test.label = "Q", test.trace_boolean_argument = 1 : i64} :')
 
 
 def main():
@@ -96,6 +162,7 @@ def main():
                 # the latter reads the tile written by the former.
                 assert actual[3] & (1 << 4), "missing explicit prefix readiness"
         loaded = source.replace("%g: i1,", "%flags: !pto.ptr<i1, gm>, %g: i1,")
+        loaded = loaded.replace("test.check_region_scope", "test.materialize_sequence_recipe, test.check_region_scope")
         loaded = loaded.replace("    scf.if %g {",
             "    %predicate = pto.load %flags[%zero] : !pto.ptr<i1, gm> -> i1\n    scf.if %predicate {", 1)
         # Prefix and branch writers share a pipe: the incoming requirement is
@@ -103,18 +170,35 @@ def main():
         # predicate, so no endpoint needs to replay this load before its cut.
         path.write_text(loaded)
         report = run(tool, "--sequence-analysis", path)
-        assert report["prepared"] and report["unchanged"], report
-        # A prefix reader instead requires a cross-pipe SET before the load.
-        # Its branch-dependent predicate is unavailable there: reject without
-        # moving or replaying the original load.
+        assert report["prepared"] and report["prepared_scalar_free"] and report["unchanged"], report
+        assert report["materialized"] and not report["materialization_error"], report
+        # A prefix reader needs publication before the load. Exact early
+        # publication plus terminal cleanup now handles the unavailable selective
+        # predicate; retain the load and verify both observed values independently.
         unavailable = loaded.replace("    %predicate = pto.load",
             "    pto.tmatmul ins(%first, %right : !left, !right) outs(%acc : !acc)\n"
             "    %predicate = pto.load", 1)
         path.write_text(unavailable)
         report = run(tool, "--sequence-analysis", path)
-        assert not report["prepared"] and report["unchanged"], report
-        assert "sequence SET predicate or matching identity unavailable at its cut" in (
-            report["error"] + report.get("insertion_error", "")), report
+        assert report["prepared"] and report["prepared_scalar_free"] and report["unchanged"], report
+        assert report["materialized"] and not report["materialization_error"] and report["cleanup_families"], report
+        early = {}
+        for prefix_reader, program in ((False, loaded), (True, unavailable)):
+            for trips in (0, 2):
+                for enabled in (0, 1):
+                    observed = observed_load_source(program).replace(
+                        "array<i64: 1, 2, 3>", f"array<i64: {enabled}, {trips}, 3>")
+                    path.write_text(observed.replace("test.check_region_scope", "test.trace_existing"))
+                    original = run(tool, "--structured-trace", path)
+                    path.write_text(observed)
+                    inserted = run(tool, "--structured-trace", path)
+                    endpoints = loaded_closure(original, inserted, enabled, trips, prefix_reader)
+                    if prefix_reader and trips == 2:
+                        early[enabled] = endpoints
+                    tested += 1
+        assert any(identity in early[1] and inactive[1] == inactive[2] and
+                   early[1][identity][1] < early[1][identity][2]
+                   for identity, inactive in early[0].items()), "missing active/terminal WAIT partition"
     print(f"conditional compact regions: {tested} emitted closures passed")
 
 
