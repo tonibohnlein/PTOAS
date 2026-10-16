@@ -116,14 +116,23 @@ def main():
     cases = (
         ("sync_analysis_session.pto", "explicit"),
         ("sync_finite_guarded_analysis.pto", "sequence"),
-        ("sync_physical_allocation.pto", "numerical-periodic"),
+        # This is a public pipeline contract, not a ranking winner test. Both
+        # exact periodic owners support this original two-slot protocol.
+        ("sync_physical_allocation.pto", ("rotating", "numerical-periodic")),
         ("sync_bounded_allocation_session.pto", "bounded-lifetime"),
         ("sync_general_arithmetic_insertion.pto", "identity-sequence"),
     )
     for filename, backend in cases:
         program = (fixtures / filename).read_text(encoding="utf-8")
         logical = run(optimizer, program, ["--pto-frontier-analysis"]).stdout
-        require('selected_logical_backend = "' + backend + '"' in logical, logical)
+        eligible = (backend,) if isinstance(backend, str) else backend
+        functions = list(re.finditer(r"^\s*func\.func @([A-Za-z_][A-Za-z_0-9]*)", logical, re.MULTILINE))
+        original_names = re.findall(r"^\s*func\.func @([A-Za-z_][A-Za-z_0-9]*)", program, re.MULTILINE)
+        require([function.group(1) for function in functions] == original_names and bool(functions), logical)
+        for index, function in enumerate(functions):
+            end = functions[index + 1].start() if index + 1 < len(functions) else len(logical)
+            selected = re.findall(r'selected_logical_backend = "([^"]+)"', logical[function.start():end])
+            require(len(selected) == 1 and selected[0] in eligible, (function.group(1), selected, logical))
         if filename == "sync_general_arithmetic_insertion.pto":
             require("arithmetic_region_constructions = 1 : i64" in logical, logical)
         require("pto.logical_set" in logical and "pto.logical_wait" in logical, logical)

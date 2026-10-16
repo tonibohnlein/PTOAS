@@ -28,6 +28,7 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticInsertion.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Pass/PassManager.h"
 #include "PTO/Transforms/Passes.h"
@@ -198,6 +199,20 @@ bool Interpreter::payload(Operation& op, ArrayRef<uint32_t> candidates)
         ++payloads;
         for (auto result : op.getResults()) {
             values.erase(result);
+        }
+        // Observe an original Boolean load only when that payload executes.
+        // The annotation affects this interpreter after production insertion;
+        // it neither replaces the load nor supplies analysis-time availability.
+        if (auto observed = op.getAttrOfType<IntegerAttr>("test.trace_boolean_argument")) {
+            auto function = op.getParentOfType<func::FuncOp>();
+            if (!function || op.getName().getStringRef() != "pto.load" || op.getNumResults() != 1 ||
+                !op.getResult(0).getType().isInteger(1) || !observed.getValue().isSignedIntN(64) ||
+                observed.getInt() < 0 || static_cast<uint64_t>(observed.getInt()) >= function.getNumArguments()) {
+                return fail("invalid original Boolean load observation");
+            }
+            auto value = dyn_cast_or_null<IntegerAttr>(lookup(function.getArgument(observed.getInt())));
+            if (!value || !value.getType().isInteger(1)) { return fail("missing Boolean load observation"); }
+            values[op.getResult(0)] = value;
         }
         return true;
     }
@@ -1500,12 +1515,39 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
             emitted += stage.code->getOperations().size();
         }
     }
+    // Only the cut-availability fixture requests actual lowering. Keep the
+    // ordinary mathematical report lazy, and probe a fresh mutable plan.
+    const bool probeMaterialization = function->hasAttr("test.materialize_sequence_recipe");
+    bool scalarFree = false, materialized = false;
+    uint64_t cleanupFamilies = 0;
+    std::string materializationError;
+    if (probeMaterialization) {
+        auto probe = fs::prepareSequenceInsertion(analysis);
+        if (succeeded(probe)) {
+            scalarFree = (*probe)->familyRecipe && (*probe)->preparation.empty() && (*probe)->endpoints.empty();
+            for (const auto& family : (*probe)->families) { cleanupFamilies += bool(family.targetChoices); }
+            ScopedDiagnosticHandler capture(function.getContext(), [&](Diagnostic& diagnostic) {
+                llvm::raw_string_ostream stream(materializationError);
+                diagnostic.print(stream); stream << "\n";
+                return success();
+            });
+            materialized = succeeded(fs::materializeLogicalFamilies(**probe));
+            if (!materialized && expressions && !expressions->lastEmissionError().empty()) {
+                materializationError += expressions->lastEmissionError();
+            }
+        } else { materializationError = analysis.insertionError; }
+    }
     std::string after;
     llvm::raw_string_ostream current(after);
     function.print(current);
     llvm::outs() << llvm::json::Value(
                         llvm::json::Object{
                             {"function", function.getSymName()},
+                            {"materialization_requested", probeMaterialization},
+                            {"prepared_scalar_free", scalarFree},
+                            {"materialized", materialized},
+                            {"materialization_error", materializationError},
+                            {"cleanup_families", cleanupFamilies},
                             {"error", analysis.error},
                             {"bounded_cached_regions", boundedRegions},
                             {"bounded_cached_demands", boundedRecords},
