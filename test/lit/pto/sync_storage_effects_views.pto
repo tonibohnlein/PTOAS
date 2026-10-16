@@ -19,8 +19,12 @@
 // CHECK: overlap 3,2=0
 // CHECK: overlap 4,2=1
 // CHECK-LABEL: storage unknown: cells=0 all-materialized=0
-// CHECK: effect 0 pto.texpands write unresolved cells=
-// CHECK: effect 1 pto.tgetval read symbolic cells=
+// CHECK: effect 0 pto.texpands write symbolic cells=
+// CHECK-NEXT: descriptor base=absolute bytes=4 map=(d0, d1)[s0] -> ((d0 * 16 + d1) * 4 + s0) extents=2, 16 loops=0
+// CHECK-NEXT: access base=absolute bytes=1 map=(d0)[s0] -> (d0 + s0) extents=128 loops=0
+// CHECK-NEXT: effect 1 pto.tgetval read symbolic cells=
+// CHECK-NEXT: descriptor base=absolute bytes=4 map=(d0, d1) -> ((d0 * 16 + d1) * 4) extents=2, 16 loops=0
+// CHECK-NEXT: access base=absolute bytes=4 map=()[s0] -> ((s0 mod 4294967296) * 4) extents= loops=0
 // CHECK: overlap 0,1=1
 // CHECK: source-unchanged; dependency-analysis-not-run
 

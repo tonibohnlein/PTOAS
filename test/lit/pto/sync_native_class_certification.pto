@@ -5,10 +5,12 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
+// RUN: pto-sync-input-test --certify-regions %s | \
+// RUN:   %python %S/Inputs/check_broad_contracts.py certification | FileCheck %s
 // CHECK: native-certification: retained-demands unresolved-class
 // CHECK: certification-json {{.*}}"function":"native_counted"
-// CHECK-SAME: "class":"{{[a-z-]+}}","exact_demands":true,"node":0
+// CHECK-SAME: "class":"{{[a-z-]+}}","exact_demands":true
+// CHECK-SAME: "node":0
 // CHECK-SAME: "status":"recognized"
 // CHECK: source-unchanged; synchronization-insertion-not-run
 !tile = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
