@@ -33,6 +33,7 @@
 #include "PTO/IR/PTO.h"
 #include "SyncPhaseCopyChecks.h"
 #include "SequenceExplicitRetryChecks.h"
+#include "RetainedPeriodicRequestChecks.h"
 #include "SyncLogicalInsertionChecks.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -1345,8 +1346,15 @@ LogicalResult checkRetainedDemands(func::FuncOp function, pto::GMAliasPolicy pol
   }
   logical.mode = AnalysisMode::Fallback;
   auto fallback = session.analyze(logical);
-  if (fallback.status != AnalysisStatus::UnmetObligation || fallback.completion ||
-      fallback.mathematical != first.mathematical) {
+  // Mode is part of the full request key. A new fallback walk can select
+  // different retained exact mathematics after the earlier walk built it.
+  // Same-mode owner stability above remains mandatory; changed ownership here
+  // needs exact original-occurrence query equivalence, not just a backend label.
+  const bool exactFallback = fallback.mathematical && !fallback.mathematical->compactDemands &&
+      (fallback.mathematical == first.mathematical ||
+       pto::test::retainedPeriodicRequestChecks::equivalent(*first.mathematical, *fallback.mathematical));
+  if (fallback.status != AnalysisStatus::UnmetObligation || fallback.completion || !exactFallback ||
+      fallback.available.synchronization) {
     auto diagnostic = function.emitError("fallback replaced the retained exact result");
     diagnostic << " (first=" << first.mathematical->backend << ", fallback="
                << (fallback.mathematical ? fallback.mathematical->backend : "none")
@@ -1361,6 +1369,23 @@ LogicalResult checkRetainedDemands(func::FuncOp function, pto::GMAliasPolicy pol
       diagnostic << "; stage " << static_cast<unsigned>(obligation.stage) << ": " << obligation.diagnostic;
     }
     return failure();
+  }
+  const auto fallbackWork = session.constructionCounts();
+  const auto fallbackEstimates = session.costRecords().size();
+  auto fallbackRetry = session.analyze(logical);
+  if (fallbackRetry.status != fallback.status || fallbackRetry.mathematical != fallback.mathematical ||
+      fallbackRetry.completion ||
+      session.constructionCounts().mathematicalAttempts != fallbackWork.mathematicalAttempts ||
+      session.constructionCounts().requestWalks != fallbackWork.requestWalks ||
+      session.costRecords().size() != fallbackEstimates) {
+    return function.emitError("fallback retry lost its own retained answer or repeated construction");
+  }
+  logical.mode = AnalysisMode::MinimumExact;
+  auto originalRetry = session.analyze(logical);
+  if (originalRetry.status != unsupported.status || originalRetry.mathematical != first.mathematical ||
+      session.minimumDemands().mathematical != first.mathematical ||
+      session.constructionCounts().mathematicalAttempts != fallbackWork.mathematicalAttempts) {
+    return function.emitError("fallback request replaced the original exact-mode owner");
   }
   return success();
 }
