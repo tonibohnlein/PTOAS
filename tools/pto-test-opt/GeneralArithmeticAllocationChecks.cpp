@@ -13,6 +13,7 @@
 #include "mlir/IR/MLIRContext.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
+#include "UnaryHandoffExtremaChecks.h"
 namespace fs = mlir::pto::frontiersynch;
 namespace {
 fs::IntegerConstraint row(std::initializer_list<int64_t> values, int64_t bound)
@@ -558,6 +559,7 @@ int runGeneralArithmeticAllocationChecks()
         return valid;
     };
     if (!checked("check(context)", check(context)) ||
+        !checked("unaryHandoffExtremaChecks", unaryHandoffExtremaChecks::run()) ||
         !checked("parameterContexts(context)", parameterContexts(context)) ||
         !checked("singleton(context)", singleton(context)) ||
         !checked("nestedCoordinates(context)", nestedCoordinates(context)) ||

@@ -16,5 +16,10 @@ FailureOr<GeneralArithmeticRelation> materializeHandoffComposition(const General
 FailureOr<bool> handoffCompositionCovered(const GeneralArithmeticRelation& left,
     const GeneralArithmeticRelation& right, const GeneralArithmeticRelation& required,
     unsigned parameters, ArithmeticAnalysisCost& cost, AllocationProfile* profile = nullptr);
+// Independent regression seam: unary=false preserves the original complete
+// order/project/difference extrema construction as an exact reference.
+FailureOr<GeneralArithmeticEndpointSelector> materializeHandoffExtremum(
+    const GeneralArithmeticRelation& support, uint64_t period, unsigned parameters, bool first,
+    ArithmeticAnalysisCost& cost, bool unary);
 } // namespace mlir::pto::frontiersynch::detail
 #endif

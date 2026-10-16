@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticHandoffAllocation.h"
 #include "ArithmeticHandoffProof.h"
+#include "ArithmeticUnaryExtrema.h"
 #include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "llvm/ADT/STLExtras.h"
 #include <limits>
@@ -51,12 +52,13 @@ public:
     FailureOr<Relation> compose(const Relation& a, const Relation& b);
     FailureOr<bool> compositionCovered(const Relation& a, const Relation& b, const Relation& required);
     uint64_t containmentQueries = 0;
+    detail::unaryExtrema::Work extremaWork;
     FailureOr<Relation> subtract(const Relation& a, const Relation& b);
     FailureOr<Relation> endpoints(const Relation& a, bool target);
     FailureOr<Relation> order(const Relation& support, bool sourceAlreadyPresent = false);
     FailureOr<bool> nonnegativeCoordinate(const Relation& support);
     FailureOr<Relation> coordinateDistance(const Relation& order, unsigned distance);
-    FailureOr<GeneralArithmeticEndpointSelector> extremum(const Relation& support, bool first);
+    FailureOr<GeneralArithmeticEndpointSelector> extremum(const Relation& support, bool first, bool unary = true);
     FailureOr<Relation> inverse(const Relation& demands);
     FailureOr<bool> orderedConsumers(const Relation& demands, const Relation& inverse,
                                      const Relation& successor, const Relation& targets);
@@ -231,9 +233,13 @@ FailureOr<Relation> Proof::order(const Relation& support, bool sourceAlreadyPres
     }
     return result;
 }
-FailureOr<GeneralArithmeticEndpointSelector> Proof::extremum(const Relation& support, bool first)
+FailureOr<GeneralArithmeticEndpointSelector> Proof::extremum(const Relation& support, bool first, bool unary)
 {
     AllocationProfile::Scope timing(profile, AllocationProfile::ArithmeticExtrema);
+    if (unary) {
+        auto selected = detail::unaryHandoffExtremum(support, period, parameters, first, cost, profile, &extremaWork);
+        if (selected) { return std::move(*selected); }
+    }
     auto ordered = order(support);
     if (failed(ordered)) { return failure(); }
     auto dominated = endpoints(*ordered, first);
@@ -461,7 +467,20 @@ ArithmeticHandoffAllocation buildAllocation(
             {"families", families.size()}, {"proved-families", result.families.size()},
             {"piece-joins", result.cost.pieceJoins}, {"projections", result.cost.projections},
             {"compositions", result.cost.relationCompositions}, {"differences", result.cost.differences},
-            {"containment-queries", proof.containmentQueries}};
+            {"containment-queries", proof.containmentQueries},
+            {"unary-extrema-requests", proof.extremaWork.requests},
+            {"unary-extrema-qualified", proof.extremaWork.qualified},
+            {"unary-extrema-selected", proof.extremaWork.selected},
+            {"unary-extrema-inspected-pieces", proof.extremaWork.inspected},
+            {"unary-extrema-bound-row-visits", proof.extremaWork.boundRows},
+            {"unary-extrema-witness-requests", proof.extremaWork.witnesses},
+            {"unary-extrema-candidates", proof.extremaWork.candidates},
+            {"unary-extrema-comparisons", proof.extremaWork.comparisons},
+            {"unary-extrema-dominating-pieces", proof.extremaWork.coveredPieces},
+            {"unary-extrema-selected-pieces", proof.extremaWork.outputs},
+            {"unary-extrema-parameter-differences", proof.extremaWork.parameterDifferences},
+            {"unary-extrema-parameter-slices", proof.extremaWork.parameterSlices},
+            {"unary-extrema-parameter-feasibility-calls", proof.extremaWork.parameterFeasibility}};
         if (failedFamily) {
             work.emplace_back("failed-source", failedFamily->first);
             work.emplace_back("failed-target", failedFamily->second);
@@ -502,6 +521,12 @@ FailureOr<bool> detail::handoffCompositionCovered(const GeneralArithmeticRelatio
     unsigned parameters, ArithmeticAnalysisCost& cost, AllocationProfile* profile)
 {
     return Proof(1, parameters, cost, profile).compositionCovered(left, right, required);
+}
+FailureOr<GeneralArithmeticEndpointSelector> detail::materializeHandoffExtremum(
+    const GeneralArithmeticRelation& support, uint64_t period, unsigned parameters, bool first,
+    ArithmeticAnalysisCost& cost, bool unary)
+{
+    return Proof(period, parameters, cost, nullptr).extremum(support, first, unary);
 }
 ArithmeticHandoffAllocation buildArithmeticHandoffAllocation(
     const GeneralArithmeticDemandAnalysis& analysis, ArrayRef<uint32_t> pipes, unsigned maxWidth,
