@@ -16,9 +16,25 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/AllocationInputCache.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/SaveAndRestore.h"
+#include <algorithm>
 namespace {
 namespace fs = mlir::pto::frontiersynch;
 using Summary = std::shared_ptr<fs::RegionalAllocationSummary>;
+using Completed = fs::AllocationPreparation::CompletedCertificate;
+bool sameCertificates(llvm::ArrayRef<Completed> left, llvm::ArrayRef<Completed> right)
+{
+    return left.size() == right.size() &&
+        std::is_permutation(left.begin(), left.end(), right.begin(), [&](const auto& entry, const auto& other) {
+            return entry.owner == other.owner && entry.evidence == other.evidence;
+        });
+}
+bool preservesCertificates(llvm::ArrayRef<Completed> before, llvm::ArrayRef<Completed> after)
+{
+    return llvm::all_of(before, [&](const auto& entry) {
+        auto same = [&](const auto& other) { return entry.owner == other.owner && entry.evidence == other.evidence; };
+        return std::count_if(before.begin(), before.end(), same) == std::count_if(after.begin(), after.end(), same);
+    });
+}
 Summary palette(uint64_t budget)
 {
     auto result = std::make_shared<fs::RegionalAllocationSummary>();
@@ -179,6 +195,11 @@ bool runRegionalAllocationCandidateChecks(mlir::func::FuncOp function,
     // It establishes that the default split-pipeline request still works.
     auto incumbent = analysis.prepareLogical(outcome);
     if (mlir::failed(incumbent) || mlir::failed(analysis.attachAllocation(outcome, **incumbent))) { return false; }
+    const auto priorUnrestricted = plan.allocationPreparation.retainedCertificates(plan);
+    const auto priorScoped = plan.allocationPreparation.retainedCertificates(plan, {0, 1});
+    const auto priorReversed = plan.allocationPreparation.retainedCertificates(plan, {1, 0});
+    const llvm::SmallVector<int64_t> ids{0, 1, 2, 3, 4, 5};
+    const auto priorSelected = plan.allocationPreparation.retainedCertificates(plan, ids);
     const auto originalSummary = plan.regionalAllocation;
     const auto originalCertificate = plan.allocationCertificate;
     if (mlir::succeeded(analysis.attachAllocation(outcome, plan, {6})) ||
@@ -188,7 +209,45 @@ bool runRegionalAllocationCandidateChecks(mlir::func::FuncOp function,
         plan.regionalAllocation != originalSummary || plan.allocationCertificate != originalCertificate) {
         return false;
     }
-    const llvm::SmallVector<int64_t> ids{0, 1, 2, 3, 4, 5};
+    // Both the unrestricted export and failed empty-pool placement can finish
+    // valid lane proofs. Failure preserves the selected answer, but completed
+    // evidence remains available. Snapshot only after these required attempts.
+    const auto beforeSelection = plan.allocationPreparation.retainedCertificates(plan);
+    bool retainedOriginal = false;
+    for (const auto& entry : beforeSelection) {
+        if (entry.owner != cheap || !entry.evidence ||
+            mlir::failed(fs::decodeRegionalAllocation(function, entry.evidence, ids))) {
+            llvm::errs() << "candidate archive: invalid completed owner or certificate\n";
+            return false;
+        }
+        if (entry.evidence == completed) { retainedOriginal = true; continue; }
+        mlir::NamedAttrList base(entry.evidence);
+        if (!base.erase("lane_evidence") || base.getDictionary(function.getContext()) != completed) {
+            llvm::errs() << "candidate archive: completed proof changed original base\n";
+            return false;
+        }
+    }
+    if (!retainedOriginal) {
+        llvm::errs() << "candidate archive: original completed base lost\n";
+        return false;
+    }
+    auto scopedExpected = beforeSelection;
+    scopedExpected.push_back({cheap, scoped});
+    const auto beforeScoped = plan.allocationPreparation.retainedCertificates(plan, {0, 1});
+    const auto beforeReversed = plan.allocationPreparation.retainedCertificates(plan, {1, 0});
+    const auto beforeSelected = plan.allocationPreparation.retainedCertificates(plan, ids);
+    if (!sameCertificates(beforeScoped, scopedExpected) || !sameCertificates(beforeReversed, beforeSelection) ||
+        !sameCertificates(beforeSelected, beforeSelection)) {
+        llvm::errs() << "candidate archive: ordered pool isolation changed\n";
+        return false;
+    }
+    if (!preservesCertificates(priorUnrestricted, beforeSelection) ||
+        !preservesCertificates(priorScoped, beforeScoped) ||
+        !preservesCertificates(priorReversed, beforeReversed) ||
+        !preservesCertificates(priorSelected, beforeSelected)) {
+        llvm::errs() << "candidate archive: failed selection discarded completed evidence\n";
+        return false;
+    }
     if (mlir::failed(analysis.attachAllocation(outcome, plan, ids))) {
         llvm::errs() << "regional allocation candidate did not fit fixture\n";
         return false;
@@ -199,9 +258,13 @@ bool runRegionalAllocationCandidateChecks(mlir::func::FuncOp function,
     // The callback is gone, but its proof-only archive survives. Capacity
     // partitions and original source owners remain exact after this transfer.
     const auto archived = plan.allocationPreparation.retainedCertificates(plan);
-    if (archived.size() != 1 || archived.front().owner != cheap || archived.front().evidence != completed ||
-        plan.allocationPreparation.retainedCertificates(plan, {0, 1}).size() != 2 ||
-        plan.allocationPreparation.retainedCertificates(plan, {1, 0}).size() != 1) { return false; }
+    if (!sameCertificates(archived, beforeSelection) ||
+        !sameCertificates(plan.allocationPreparation.retainedCertificates(plan, {0, 1}), beforeScoped) ||
+        !sameCertificates(plan.allocationPreparation.retainedCertificates(plan, {1, 0}), beforeReversed) ||
+        !sameCertificates(plan.allocationPreparation.retainedCertificates(plan, ids), beforeSelected)) {
+        llvm::errs() << "candidate archive: callback consumption changed completed inventory\n";
+        return false;
+    }
     auto unrestricted = analysis.prepareLogical(outcome);
     if (mlir::failed(unrestricted) || mlir::failed(analysis.attachAllocation(outcome, **unrestricted)) ||
         (*unrestricted)->allocationCertificate != (*incumbent)->allocationCertificate ||
