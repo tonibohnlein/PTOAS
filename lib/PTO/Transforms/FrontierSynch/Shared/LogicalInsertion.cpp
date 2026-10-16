@@ -697,7 +697,9 @@ LogicalResult insertLogicalSynchronization(func::FuncOp function, PreparedLogica
     if (!function) {
         return failure();
     }
-    if (plan.deferredOutput) { return insertDeferredFamilyOutput(function, plan); }
+    if (plan.deferredOutput && !isCertifiedEmptyFamilyPlan(function, plan)) {
+        return insertDeferredFamilyOutput(function, plan);
+    }
     // The complete count service owns this same recipe-only input boundary.
     // Concrete preparation and opaque allocation captures retain their current
     // positions rather than acquire uncounted result-bearing control.

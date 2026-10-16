@@ -1984,18 +1984,24 @@ ArrayRef<uint64_t> normalizedFamilyProtocolKey(const FamilyEndpointRecipe& recip
 namespace {
 bool emptyPhysicalPlan(const PreparedLogicalPlan& plan)
 {
-    return !plan.completeInvocation && !plan.deferredOutput && !plan.familyRecipe && !plan.familyProtocol &&
+    return !plan.completeInvocation && !plan.familyRecipe && !plan.familyProtocol &&
         !plan.privateState && !plan.completionOwner && !plan.executedOutput && !plan.allocationPreparation &&
         !plan.allocationProofs && !plan.regionalAllocation && !plan.compactBoundingOwner &&
         plan.preparation.empty() && plan.endpoints.empty() && plan.families.empty();
 }
 } // namespace
+bool isCertifiedEmptyFamilyPlan(func::FuncOp function, const PreparedLogicalPlan& plan)
+{
+    return function && !plan.physicalOutput && emptyPhysicalPlan(plan) &&
+        plan.allocationCertificate == explicitAllocationCertificate(ExplicitAnalysis{}, plan.planId,
+            function.getContext());
+}
 bool validFamilyEndpointProtocol(const PreparedLogicalPlan& plan)
 {
     if (!plan.familyProtocol) {
         return !plan.executedOutput && (!plan.physicalOutput ||
             (plan.physicalOutput->emptyInvocation && plan.physicalOutput->emptyPlanId == plan.planId &&
-             emptyPhysicalPlan(plan)));
+             !plan.deferredOutput && emptyPhysicalPlan(plan)));
     }
     if (!plan.familyProtocol->normalized) {
         return false;
@@ -2041,9 +2047,7 @@ LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPla
     // The producer may certify a whole invocation that executes no events.
     // Accept only the existing exact empty finite encoding and an empty plan;
     // a missing family recipe alone is never evidence of zero resource demand.
-    if (function && !plan.physicalOutput && emptyPhysicalPlan(plan) &&
-        plan.allocationCertificate == explicitAllocationCertificate(ExplicitAnalysis{}, plan.planId,
-            function.getContext())) {
+    if (!plan.deferredOutput && isCertifiedEmptyFamilyPlan(function, plan)) {
         if (failed(preflightPhysicalOutput(function, plan.allocationCertificate))) { return failure(); }
         auto decoded = decodePhysicalAllocationCertificate(function, plan.allocationCertificate, eligibleIds);
         if (failed(decoded) || decoded->planId != plan.planId || !decoded->records.empty()) { return failure(); }

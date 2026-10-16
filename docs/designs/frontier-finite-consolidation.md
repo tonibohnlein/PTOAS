@@ -1,6 +1,6 @@
 # Finite analysis consolidation
 
-Baseline: `1953d248c`. Implementation status: M1–M3 accepted; M4–M5 remain open.
+Baseline: `1953d248c`. Implementation status: M1–M4 accepted; M5 remains open.
 
 ## Contracts
 
@@ -167,3 +167,31 @@ passed without new warnings; the focused gate passed 24/24 in 120.86 seconds
 combined physical output. The nine changed-code G.FMT.11-CPP matches are
 multiline braced conditions, reviewed as false positives. This consolidation
 claims neither reduced demand count nor a planning/device speedup.
+
+### M4 allocation/emission qualification
+
+The finite pipeline regression runs concrete chains, local barriers, guarded
+complementary publications, terminal cleanup, empty plans and repeated finite
+bodies through ordinary split, saved/reparsed and combined output. It evaluates
+original guard/trip bindings and compares payload closure, logical publication
+matching and physical consumption-before-republication across the routes.
+Terminal-publication fixtures distinguish a fixed protocol's live capacity from
+possible alternative protocols. Device execution is not part of this host gate.
+
+The empty-plan fixture exposed a saved-output refusal. The shared exact-empty
+qualification now allows deferred requests with an empty finite certificate and
+no recipe, commands, preparation, pending state or completion obligation to use
+the ordinary empty insertion path. It creates no new archive schema or allocator.
+Negative unit checks reject absent/mismatched certificates and nonempty state.
+Physical empty-output qualification still excludes deferred physical state.
+
+Both source reviewers accepted M4. The incremental compiler/tool build and
+empty-plan negative checks passed. The focused gate passed 6/6 in 81.25 seconds
+(`m4-focused.json`/`.out`). The new test checks 144 guard/trip valuations across
+three physical routes, six C++ outputs and terminal-capacity cases of 2, 4 and 7
+publications against six eligible IDs. C++ output is not device qualification.
+The optimizer runs serially; the local test harness limits CPU affinity to one,
+which also bounds the LLVM thread pool used by the compiler launcher. The two
+build warnings are unchanged covered-switch defaults in SessionProducers.cpp
+and SequenceBoundary.cpp. The one changed-code G.FMT.11-CPP match is a multiline
+braced condition in PreparedInsertionChecks.cpp, inspected as a false positive.
