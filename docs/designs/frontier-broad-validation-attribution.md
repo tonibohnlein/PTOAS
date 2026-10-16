@@ -112,3 +112,35 @@ source/tool snapshot. The separate
 [archived guard-definedness receipt](frontier-guard-arithmetic-definedness.md)
 closes only its three exact artifact pairs. No device results, full M6 completion
 or successful run of all 233 tests are claimed here.
+
+## Internal phase-stage samples
+
+The four unfinished phase calls were rerun individually under a debugger-owned
+child using the retained 223-input tracer. Each was sampled after 30 seconds and
+then deliberately terminated. The debugger completed successfully; **none of
+these four original calls is recorded as completed**. One sample establishes
+the stage executing at that moment, not its exclusive cost or every later stage.
+Serial one-CPU/4-GiB runs and exact input/tool/command pins are retained under
+`.local/milestone-loop/phase-native-stage-samples/`.
+
+| Saved checker call | Observed internal stage |
+|---|---|
+| `check_periodic_phase_lengths` | Arithmetic single-ID allocation: handoff `Proof::compose`, integer-system intersection and normalization, reached through `attachAllocation`. |
+| `check_phase_owned_storage` | Regional lane-certificate strengthening: Boolean evaluation in `constantUnder` via `regionalLaneEvidence`, reached through `attachAllocation`. |
+| `check_repeated_phases` | Sequence mathematical composition: integer-relation translation and `RelationBuilder::conjunction` while normalizing guarded/modular predicates. |
+| `check_nested_allocation` | Sequence mathematical composition: the same integer-relation translation/conjunction path. |
+
+This narrows the earlier CLI-only attribution. In the first two cases, the
+structured-trace caller currently requests allocation preparation even though
+the saved input has no `test.eligible_ids` request. A request-based caller repair
+is under review; these samples do not claim it is implemented or effective.
+The latter two samples remain exact relational-construction work, not evidence
+of an impossible protocol or permission for a conservative replacement.
+
+| Sample receipt | SHA256 |
+|---|---|
+| `.local/milestone-loop/phase-native-stage-samples/results.json` | `4bde4ac9637340f97c04ab4824f3e3ebe8876568ded109096a7cd541e76d8e3f` |
+| `.local/milestone-loop/phase-native-stage-samples/check_periodic_phase_lengths/sample.out` | `1bd3b5f3ad1d0067a7a8263cf01985cd37a9fd4ba8aacdc143125ebe1237b317` |
+| `.local/milestone-loop/phase-native-stage-samples/check_phase_owned_storage/sample.out` | `e48caeed528a6767caa70186e36ce2b407c01c76dbd399b92ab740543f9c7483` |
+| `.local/milestone-loop/phase-native-stage-samples/check_repeated_phases/sample.out` | `d5f9df80ab109dc7ffaff0b9162aa2ac69223feac4417bb7d4f2868d15973182` |
+| `.local/milestone-loop/phase-native-stage-samples/check_nested_allocation/sample.out` | `d07fa97ce909ad916de86c14bf338cbb5d9604201855031db87a11264c58eeb7` |
