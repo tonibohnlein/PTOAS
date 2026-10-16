@@ -7,8 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --gm-alias=may-not-alias --storage-effects %s | FileCheck %s --check-prefix=NO
 // RUN: pto-sync-input-test --gm-alias=may-alias --storage-effects %s | FileCheck %s --check-prefix=MAY
-// A selected load extent is unavailable, but the descriptor still establishes
-// its canonical GM base. Aliased/selected origins must remain conservative.
+// Constant extents and a symbolic offset retain an exact symbolic access map
+// and canonical GM base. Aliased/selected origins must remain conservative.
 !tile = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=16, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
 module {
   func.func @descriptor_origins(%a: !pto.ptr<f32, gm>, %b: !pto.ptr<f32, gm>, %offset: index) attributes {test.overlap = array<i64: 1, 2, 1, 4>} {
@@ -44,13 +44,15 @@ module {
   }
 }
 // NO-LABEL: storage descriptor_origins
-// NO: effect 2 pto.tload read unresolved
-// NO-NEXT: descriptor base=pointer
+// NO: effect 2 pto.tload read symbolic cells=
+// NO-NEXT: descriptor base=pointer bytes=4 map=(d0, d1)[s0] -> ((d0 + s0) * 4 + d1 * 4) extents=16, 1 loops=0
+// NO-NEXT: access base=pointer bytes=4 map=(d0, d1)[s0] -> ((d0 + s0) * 4 + d1 * 4) extents=16, 1 loops=0
 // NO: overlap 1,2=0
 // NO: overlap 1,4=1
 // MAY-LABEL: storage descriptor_origins
-// MAY: effect 2 pto.tload read unresolved
-// MAY-NEXT: descriptor base=pointer
+// MAY: effect 2 pto.tload read symbolic cells=
+// MAY-NEXT: descriptor base=pointer bytes=4 map=(d0, d1)[s0] -> ((d0 + s0) * 4 + d1 * 4) extents=16, 1 loops=0
+// MAY-NEXT: access base=pointer bytes=4 map=(d0, d1)[s0] -> ((d0 + s0) * 4 + d1 * 4) extents=16, 1 loops=0
 // MAY: overlap 1,2=1
 // MAY: overlap 1,4=1
 

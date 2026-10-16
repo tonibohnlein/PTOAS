@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: not pto-test-opt --pto-frontier-allocate="eligible-ids=0,1,2,3,4,5" %s 2>&1 | FileCheck %s
+// RUN: %python %S/Inputs/check_broad_contracts.py manual-refusal pto-test-opt %s | FileCheck %s --check-prefix=ATOMIC
 // A partial logical plan mixed with physical flags must not silently skip allocation.
 module {
   func.func @mixed(%ordinal: index) {
@@ -15,4 +16,5 @@ module {
     return
   }
 }
-// CHECK: error: physical allocation requires a supported finite or uniform allocation export
+// CHECK: error: physical allocation cannot share its supplied IDs with existing synchronization
+// ATOMIC: manual-ID refusal: source unchanged
