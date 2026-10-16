@@ -462,7 +462,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> readDeferredFamilyOutput(func::F
     if (failed(normalizeLogicalFamilies(*plan))) { return failure(); }
     return plan;
 }
-LogicalResult allocateDeferredFamilyOutput(func::FuncOp function, ArrayRef<int64_t> eligibleIds)
+LogicalResult allocateDeferredFamilyOutput(func::FuncOp function, ArrayRef<int64_t> eligibleIds, bool profileControl)
 {
     if (!function) { return failure(); }
     // Decode and lower in an isolated clone. A malformed artifact, unavailable
@@ -472,6 +472,8 @@ LogicalResult allocateDeferredFamilyOutput(func::FuncOp function, ArrayRef<int64
     auto clone = staging.function;
     auto plan = readDeferredFamilyOutput(clone);
     if (failed(plan)) { return failure(); }
+    (*plan)->profileControl = profileControl;
+    profileLogicalControl(clone, **plan, "decoded");
     // The decoded plan names the original payload anchors, so marker removal
     // precedes ordinary insertion and cannot leave logical artifacts behind.
     SmallVector<Operation*> markers;

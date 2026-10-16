@@ -8,6 +8,7 @@
 // Inspect shared inputs; the separate existing-check mode runs InsertSync.
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/FrontierSynch/Shared/DeferredFamily.h"
 #include "mlir/Pass/PassManager.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRegional.h"
@@ -1866,6 +1867,7 @@ bool runRegionalAllocationCandidateChecks(mlir::func::FuncOp function,
     const mlir::pto::frontiersynch::AnalysisOutcome& outcome,
     mlir::pto::frontiersynch::PreparedLogicalPlan& plan);
 
+LogicalResult emitFiniteComposed(func::FuncOp function, pto::GMAliasPolicy policy);
 int main(int argc, char **argv) {
   const bool boundedPrefix = argc == 2 && StringRef(argv[1]) == "--bounded-prefix-realization-checks";
   if (boundedPrefix) {
@@ -2091,6 +2093,8 @@ int main(int argc, char **argv) {
   const bool guardedCompactChecks = argc == 3 && StringRef(argv[1]) == "--guarded-compact-checks";
   const bool compactBoundsChecks = argc == 3 && StringRef(argv[1]) == "--compact-order-bounds-checks";
   const bool finiteOverlayInsertion = argc == 3 && StringRef(argv[1]) == "--finite-overlay-insertion";
+  const bool finiteComposed = argc == 3 && StringRef(argv[1]) == "--finite-composed-output";
+  const bool profileDeferred = argc == 3 && StringRef(argv[1]) == "--profile-deferred-families";
   const bool finiteGuardedAnalysis = argc == 3 && StringRef(argv[1]) == "--finite-guarded-analysis";
   const bool sequenceAnalysis = argc == 3 && StringRef(argv[1]) == "--sequence-analysis";
   const bool structuredTrace = argc == 3 && StringRef(argv[1]) == "--structured-trace";
@@ -2101,6 +2105,7 @@ int main(int argc, char **argv) {
       !sessionChecks && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !finiteExpansion && !recognition &&
       !numericAnalysis && !insertLogical && !insertLogicalLibrary && !insertModuleLibrary && !recognitionBoundary &&
       !insertionTrace && !physicalTrace && !structuredTrace && !sequenceAnalysis && !finiteGuardedAnalysis &&
+      !profileDeferred && !finiteComposed &&
       !mixedSymbolicChecks && !rotatingRegionChecks && !finiteVisitInput && !arithmeticPeriodicInput &&
       !expressionChecks && !completionRegionChecks && !completionChecks && !hierarchyChecks &&
       !boundingChecks && !compactInputChecks && !compactBoundsChecks &&
@@ -2118,7 +2123,9 @@ int main(int argc, char **argv) {
              "--retained-demand-checks|--analysis-session-checks|"
              "--recognize|--recognition-boundary|--numeric-analysis|--insert-logical|--insert-logical-library|"
              "--insert-module-library|--prepared-insertion-checks|--insertion-trace|"
-             "--finite-guarded-analysis|--finite-overlay-insertion|--region-expression-checks|--sequence-analysis|"
+             "--finite-guarded-analysis|--finite-overlay-insertion|"
+             "--finite-composed-output|--profile-deferred-families|"
+             "--region-expression-checks|--sequence-analysis|"
              "--structured-trace|--physical-trace|--numerical-hierarchy-checks|--bounding-contract-checks|"
              "--compact-input-checks|--completion-transfer-checks|--completion-region-checks|"
              "--compact-order-bounds-checks|--balanced-compact-checks|--guarded-compact-checks|"
@@ -2181,7 +2188,8 @@ int main(int argc, char **argv) {
       mixedSymbolicChecks || rotatingAnalysis || explicitAnalysis || expectFailure || capabilities || phaseIndex ||
       storageEffects || recognition || numericAnalysis || insertLogical || insertLogicalLibrary ||
       insertModuleLibrary || recognitionBoundary || insertionTrace || physicalTrace || structuredTrace ||
-      sequenceAnalysis || finiteGuardedAnalysis || finiteOverlayInsertion || expressionChecks ||
+      sequenceAnalysis || finiteGuardedAnalysis || profileDeferred || finiteComposed ||
+      finiteOverlayInsertion || expressionChecks ||
       completionChecks || completionRegionChecks || hierarchyChecks ||
       boundingChecks || compactInputChecks || compactBoundsChecks || balancedCompactChecks || guardedCompactChecks ||
       conditionalCompactChecks || finiteReplacementChecks || boundingSequenceChecks || compactStorageBoundaryChecks ||
@@ -2341,6 +2349,21 @@ int main(int argc, char **argv) {
     for (auto function : module->getOps<func::FuncOp>()) {
       if (failed(runFiniteOverlayInsertionChecks(function, policy))) { return 1; }
     }
+    return 0;
+  }
+  if (finiteComposed) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (failed(emitFiniteComposed(function, policy))) { return 1; }
+    }
+    module->print(llvm::outs());
+    return 0;
+  }
+  if (profileDeferred) {
+    const int64_t ids[] = {0, 1, 2, 3, 4, 5};
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (failed(mlir::pto::frontiersynch::allocateDeferredFamilyOutput(function, ids, true))) { return 1; }
+    }
+    module->print(llvm::outs());
     return 0;
   }
   if (finiteGuardedAnalysis) {

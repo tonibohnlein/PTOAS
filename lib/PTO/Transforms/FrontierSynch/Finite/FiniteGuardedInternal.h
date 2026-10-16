@@ -52,6 +52,11 @@ struct FiniteGuardedState {
     RegionalCost cost;
     detail::GuardedStorageScanWork qualificationWork, constructionWork;
     uint64_t residualPhaseVisits = 0, residualEffectVisits = 0;
+    // Inspected preparation work; never used for protocol or admission decisions.
+    struct PreparationWork {
+        uint64_t requests = 0, inventories = 0, demandVisits = 0, filterQueries = 0;
+        uint64_t publicationRequests = 0, recipeBuilds = 0;
+    } preparationWork;
     const SyncStorageEffects* accessModel = nullptr;
     GMAliasPolicy gmAliasPolicy = GMAliasPolicy::MayAlias;
     std::string insertionError;

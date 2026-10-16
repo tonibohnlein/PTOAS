@@ -38,6 +38,8 @@ FailureOr<std::shared_ptr<const FamilyEndpointRecipe>> restoreDeferredFamilyReci
     ArrayRef<DeferredFamilyNode> nodes);
 LogicalResult insertDeferredFamilyOutput(func::FuncOp function, PreparedLogicalPlan& plan);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> readDeferredFamilyOutput(func::FuncOp function);
-LogicalResult allocateDeferredFamilyOutput(func::FuncOp function, ArrayRef<int64_t> eligibleIds);
+// Diagnostic profiling observes the same staged lowering; it does not alter the archive or allocation policy.
+LogicalResult allocateDeferredFamilyOutput(func::FuncOp function, ArrayRef<int64_t> eligibleIds,
+                                          bool profileControl = false);
 } // namespace mlir::pto::frontiersynch
 #endif
