@@ -24,7 +24,12 @@
 #include <unordered_map>
 #include <vector>
 namespace mlir::pto::frontiersynch {
-namespace detail { class ScalarConstruction; struct ScalarToken; struct RegionConstructionAccess; }
+namespace detail {
+class ScalarConstruction;
+struct ScalarToken;
+struct RegionConstructionAccess;
+struct RegionAlternativeWork;
+}
 class CutExpressionRecipe;
 // Structural cache identity only; never reconstruct an executable value from it.
 void appendCutExpressionKey(const CutExpressionRecipe& recipe, SmallVectorImpl<uint64_t>& key);
@@ -48,7 +53,7 @@ public:
         void commit() { committed = true; }
     private:
         RegionExpressions& arena;
-        std::size_t count, evaluationCount;
+        std::size_t count, evaluationCount, alternativeCount;
         std::string constructionMessage, emissionMessage;
         bool committed = false;
     };
@@ -111,6 +116,7 @@ public:
             : bindings(bindings.begin(), bindings.end()) {}
     private:
         friend class RegionExpressions;
+        friend struct detail::RegionConstructionAccess;
         std::vector<std::pair<Id, Id>> bindings;
         llvm::DenseMap<Id, Id> memo;
         const RegionExpressions* owner = nullptr;
@@ -335,6 +341,14 @@ private:
     llvm::DenseSet<Operation*> forbiddenRecomputation;
     llvm::DenseMap<Id, Evaluation> evaluations;
     std::vector<Id> evaluationInsertions;
+    // Optional certified scalar spellings. Original roots stay authoritative.
+    // Journal registrations even when both IDs predate a transaction.
+    std::map<Id, Id> equivalentAlternatives;
+    std::vector<Id> alternativeInsertions;
+    bool transportingAlternatives = false;
+    std::shared_ptr<detail::RegionAlternativeWork> ownAlternativeWork;
+    std::map<const detail::RegionAlternativeWork*, std::shared_ptr<detail::RegionAlternativeWork>>
+        alternativeWorkOwners;
     // Generic substitution indexes each immutable structural edge once for
     // the arena. Affected sets and rebuilt values remain request-local.
     struct SubstitutionTopology;

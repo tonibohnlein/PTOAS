@@ -8,6 +8,7 @@
 // A finite mandatory graph proves transport; local rows answer near queries.
 // Neither a demand span nor sampled branch executions prove global queries.
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeRegional.h"
+#include "../Shared/GuardedQueryProjection.h"
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
@@ -177,15 +178,18 @@ struct Queries {
     Id bind(Id root, Id base)
     {
         auto& e = window->expressions;
-        if (auto found = substitutions.find(base); found != substitutions.end()) {
-            return e.substitute(root, found->second);
-        }
+        auto apply = [&](RegionExpressions::Substitution& substitution) {
+            const auto bound = e.substitute(root, substitution);
+            detail::RegionConstructionAccess::transportQualifiedAlternative(e, root, bound, substitution);
+            return bound;
+        };
+        if (auto found = substitutions.find(base); found != substitutions.end()) { return apply(found->second); }
         std::vector<std::pair<Id, Id>> bindings{{window->base, base}};
         for (auto [id, recipe] : window->predicateBindings) {
             bindings.push_back({id, window->predicates->at(recipe.first, e.add(base, e.constant(recipe.second)))});
         }
         auto inserted = substitutions.try_emplace(base, bindings);
-        return e.substitute(root, inserted.first->second);
+        return apply(inserted.first->second);
     }
     std::optional<Id> presence(RegionalEvent event, IterationPredicates& predicates)
     {
@@ -242,8 +246,8 @@ struct Queries {
                 answer = e.lor(answer, e.eq(distance, e.constant(d)));
                 continue;
             }
-            auto local = window->analysis.window.query(e, {source.type, source.kind},
-                {static_cast<uint32_t>(d * m + target.type), target.kind});
+            auto local = detail::retainGuardedRankAlternative(e, window->analysis.window,
+                {source.type, source.kind}, {static_cast<uint32_t>(d * m + target.type), target.kind});
             if (!local) { return std::nullopt; }
             answer = e.lor(answer, e.land(e.eq(distance, e.constant(d)), bind(*local, source.ordinal)));
         }

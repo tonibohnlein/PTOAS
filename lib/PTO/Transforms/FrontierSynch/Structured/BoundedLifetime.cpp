@@ -81,7 +81,8 @@ void retainWitnesses(RegionExpressions& e, const LifetimeWindowInput& input,
     }
 }
 } // namespace
-LifetimeWindowAnalysis analyzeLifetimeWindow(RegionExpressions& e, const LifetimeWindowInput& input)
+LifetimeWindowAnalysis analyzeLifetimeWindow(
+    RegionExpressions& e, const LifetimeWindowInput& input, bool retainQueryGraph)
 {
     LifetimeWindowAnalysis out;
     if (!input.sites || input.span >= UINT32_MAX || input.sites > UINT32_MAX / (input.span + 1) ||
@@ -167,7 +168,8 @@ LifetimeWindowAnalysis analyzeLifetimeWindow(RegionExpressions& e, const Lifetim
                 interval.readers.advance(input.payloads[access.first].pipe, access.second);
             });
     }
-    out.window = reduceGuardedRanks(e, input.payloads, generators, input.nativePrerequisites, input.rankLabels);
+    out.window = reduceGuardedRanks(
+        e, input.payloads, generators, input.nativePrerequisites, input.rankLabels, retainQueryGraph);
     out.error = out.window.error;
     if (!out.error.empty()) {
         return out;

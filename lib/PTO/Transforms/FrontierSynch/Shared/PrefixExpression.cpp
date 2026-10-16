@@ -10,6 +10,7 @@
 #include "MappedCutInputs.h"
 #include "PrefixExpressionProfile.h"
 #include "PrefixExpressionSession.h"
+#include "RegionExpressionAlternatives.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "../../InsertSync/SyncScalarReplay.h"
 #include "mlir/IR/Matchers.h"
@@ -147,8 +148,46 @@ struct ExpressionRecipe {
     FailureOr<Value> emit(OpBuilder& builder, const IRMapping& mapping,
                           ArrayRef<Value> state, std::string& error)
     {
-        auto& e = *arena;
         accumulateCost(work->emissions, 1);
+        {
+            // Optional spelling construction and failed scalar emission cannot
+            // poison the authoritative original expression or its diagnostics.
+            RegionExpressions::Transaction transaction(*arena);
+            std::shared_ptr<ExpressionRecipe> candidate;
+            auto alternate = detail::RegionConstructionAccess::alternative(*arena, root, &work->alternatePreparation);
+            if (alternate) {
+                candidate = std::make_shared<ExpressionRecipe>(*this);
+                candidate->root = *alternate;
+                candidate->inactiveProved.reset(); candidate->historyProved.reset();
+            }
+            if (candidate) {
+                auto* shared = session->bindings(arena.get(), cut, builder.getInsertionBlock(), mapping, {});
+                if (shared) {
+                    if (auto value = shared->values.lookup(root)) {
+                        accumulateCost(work->sharedReturns, 1);
+                        return value;
+                    }
+                }
+                accumulateCost(work->alternateAttempts, 1);
+                std::string candidateError;
+                // emitOne publishes generated memo values only after successful
+                // detached emission. Failed attempts retain at most read-only
+                // original bindings, never candidate SSA or proof conclusions.
+                auto value = candidate->emitOne(builder, mapping, state, candidateError, root);
+                if (succeeded(value)) {
+                    transaction.commit();
+                    accumulateCost(work->alternateSuccesses, 1);
+                    return value;
+                }
+                accumulateCost(work->alternateFallbacks, 1);
+            }
+        }
+        return emitOne(builder, mapping, state, error, root);
+    }
+    FailureOr<Value> emitOne(OpBuilder& builder, const IRMapping& mapping,
+        ArrayRef<Value> state, std::string& error, Expr authoritativeRoot)
+    {
+        auto& e = *arena;
         Block scratch;
         OpBuilder detached(builder.getContext()); detached.setInsertionPointToEnd(&scratch);
         auto attempt = [&]() {
@@ -245,6 +284,7 @@ struct ExpressionRecipe {
         work->maximumRetained = std::max(work->maximumRetained, static_cast<uint64_t>(kept));
         builder.getInsertionBlock()->getOperations().splice(builder.getInsertionPoint(), scratch.getOperations());
         if (accepted) {
+            accepted->values.try_emplace(authoritativeRoot, *value);
             for (auto item : context.values) { accepted->values.try_emplace(item.first, item.second); }
             for (auto item : context.inputs) { accepted->inputs.try_emplace(item.first, item.second); }
         }
@@ -312,10 +352,17 @@ void PrefixExpressionProfile::recordOccurrenceRestriction(const PrefixOccurrence
     accumulateCost(incomingResidual, work.residual);
     accumulateCost(incomingProofVisits, work.proofVisits);
 }
+void PrefixExpressionProfile::recordAlternativeConstruction(const RegionExpressions& arena)
+{
+    for (auto owner : detail::RegionConstructionAccess::alternativeConstructionOwners(arena)) {
+        alternativeOwners.try_emplace(owner.get(), std::move(owner));
+    }
+}
 void PrefixExpressionProfile::resetEmission()
 {
     for (auto& [key, entry] : entries) {
         entry.emissions = entry.attempts = entry.directFailures = entry.inactiveAttempts = entry.historyAttempts = 0;
+        entry.alternateAttempts = entry.alternateSuccesses = entry.alternateFallbacks = entry.alternatePreparation = 0;
         entry.constructed = entry.retained = entry.maximumRetained = entry.inactiveSuccesses = entry.sharedReturns =
             entry.bindingNodes = 0;
         entry.thresholdDiscovery = entry.thresholdSubstitution = entry.proofVisits = entry.historySubstitution = 0;
@@ -339,6 +386,10 @@ llvm::json::Object PrefixExpressionProfile::report() const
         accumulateCost(totals.directFailures, entry.directFailures);
         accumulateCost(totals.inactiveAttempts, entry.inactiveAttempts);
         accumulateCost(totals.historyAttempts, entry.historyAttempts);
+        accumulateCost(totals.alternateAttempts, entry.alternateAttempts);
+        accumulateCost(totals.alternateSuccesses, entry.alternateSuccesses);
+        accumulateCost(totals.alternateFallbacks, entry.alternateFallbacks);
+        accumulateCost(totals.alternatePreparation, entry.alternatePreparation);
         accumulateCost(totals.inactiveSuccesses, entry.inactiveSuccesses);
         accumulateCost(totals.preparationNodes, entry.preparationNodes);
         accumulateCost(totals.preparationInputs, entry.preparationInputs);
@@ -369,6 +420,10 @@ llvm::json::Object PrefixExpressionProfile::report() const
             {"inactive_attempts", entry.inactiveAttempts},
             {"inactive_successes", entry.inactiveSuccesses},
             {"history_attempts", entry.historyAttempts},
+            {"alternate_attempts", entry.alternateAttempts},
+            {"alternate_successes", entry.alternateSuccesses},
+            {"alternate_fallbacks", entry.alternateFallbacks},
+            {"alternate_preparation_visits", entry.alternatePreparation},
             {"preparation_nodes", entry.preparationNodes},
             {"preparation_inputs", entry.preparationInputs},
             {"shared_returns", entry.sharedReturns},
@@ -388,6 +443,24 @@ llvm::json::Object PrefixExpressionProfile::report() const
     result["incoming_capture_restriction"] = llvm::json::Object{
         {"requests", incomingRequests}, {"choice_nodes", incomingChoices}, {"pruned_choices", incomingPruned},
         {"residual_choices", incomingResidual}, {"proof_visits", incomingProofVisits}};
+    detail::RegionAlternativeWork producer;
+    for (const auto& item : alternativeOwners) { producer.merge(*item.second); }
+    llvm::json::Object outcomes;
+    for (const auto& [reason, count] : producer.outcomes) { outcomes[reason] = count; }
+    result["alternate_producer_construction"] = llvm::json::Object{
+        {"scope", "cumulative-imported-arena-owners"}, {"owners", alternativeOwners.size()},
+        {"graphs", producer.graphs}, {"graph_occurrences", producer.graphOccurrences},
+        {"graph_edges", producer.graphEdges}, {"guard_qualification_visits", producer.guardQualification},
+        {"queries", producer.queries}, {"numeric_constructed_nodes", producer.numericConstructed},
+        {"projection_occurrences", producer.occurrences}, {"projection_edges", producer.edges},
+        {"projection_dependency_visits", producer.dependencies}, {"outcomes", std::move(outcomes)},
+        {"candidate_constructed_nodes", producer.candidateConstructed},
+        {"retained_candidate_constructed_nodes", producer.retainedCandidateConstructed},
+        {"registration_attempts", producer.registrationAttempts}, {"registration_visits", producer.registrationVisits},
+        {"registrations", producer.registrations},
+        {"binding_visits", producer.bindingVisits}, {"binding_constructed_nodes", producer.bindingConstructed},
+        {"final_root_lookups", producer.finalLookups}, {"final_root_lookup_visits", producer.finalLookupVisits},
+        {"final_root_reached_registrations", producer.finalReached}, {"final_root_rebuilt", producer.finalRebuilt}};
     result["unique_recipes"] = entries.size();
     result["scope"] = "latest-materialization-attempt";
     llvm::json::Array top;
@@ -447,6 +520,7 @@ std::vector<PrefixIncomingSelector> preparePrefixExpressions(
     auto inputBatch = std::make_shared<InputBatch>(std::move(inputs), collection.function());
     auto& profile = collection.recipe().expressionProfile;
     if (!profile) { profile = std::make_shared<PrefixExpressionProfile>(); }
+    profile->recordAlternativeConstruction(*arena);
     auto& session = collection.recipe().expressionSession;
     if (!session) { session = std::make_shared<PrefixExpressionSession>(); }
     std::vector<PrefixIncomingSelector> result;

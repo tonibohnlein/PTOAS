@@ -25,10 +25,15 @@ namespace mlir::pto::frontiersynch {
 #include "RegionExpressionArchive.h"
 RegionExpressions::Transaction::Transaction(RegionExpressions& arena)
     : arena(arena), count(arena.nodes.size()), evaluationCount(arena.evaluationInsertions.size()),
+      alternativeCount(arena.alternativeInsertions.size()),
       constructionMessage(arena.constructionMessage), emissionMessage(arena.emissionMessage) {}
 RegionExpressions::Transaction::~Transaction()
 {
     if (committed) { return; }
+    while (arena.alternativeInsertions.size() > alternativeCount) {
+        arena.equivalentAlternatives.erase(arena.alternativeInsertions.back());
+        arena.alternativeInsertions.pop_back();
+    }
     while (arena.evaluationInsertions.size() > evaluationCount) {
         arena.evaluations.erase(arena.evaluationInsertions.back());
         arena.evaluationInsertions.pop_back();

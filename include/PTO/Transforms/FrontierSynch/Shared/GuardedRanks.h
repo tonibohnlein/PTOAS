@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicAnalysis.h"
 namespace mlir::pto::frontiersynch {
+namespace detail { struct GuardedQueryGraph; }
 struct GuardedRankPayload {
     uint32_t pipe;
     RegionExpressions::Id present;
@@ -31,6 +32,9 @@ struct GuardedRanks {
     std::vector<RegionExpressions::Id> ranks;
     std::vector<std::vector<RegionExpressions::Id>> starts, completions;
     std::vector<GuardedRankEdge> retained;
+    // Original validated generators, retained only for reference-label query
+    // projection. This owner contains no projected answers or mutable caches.
+    std::shared_ptr<const detail::GuardedQueryGraph> queryGraph;
     std::optional<RegionExpressions::Id> query(
         RegionExpressions& expressions, PeriodicEvent source, PeriodicEvent target) const;
 };
@@ -63,6 +67,6 @@ GuardedRankStep advanceGuardedRank(RegionExpressions& expressions, GuardedRankFr
 GuardedRanks reduceGuardedRanks(
     RegionExpressions& expressions, llvm::ArrayRef<GuardedRankPayload> payloads,
     llvm::ArrayRef<GuardedRankEdge> generators, llvm::ArrayRef<GuardedRankEdge> nativePrerequisites = {},
-    GuardedRankLabels labels = GuardedRankLabels::Executed);
+    GuardedRankLabels labels = GuardedRankLabels::Executed, bool retainQueryGraph = false);
 } // namespace mlir::pto::frontiersynch
 #endif
