@@ -16,6 +16,7 @@
 // LOGICAL: pto.finite_allocation
 // LOGICAL-SAME: strategy = "regional-palettes"
 // LOGICAL: pto.logical_
+// This fixture contains a nonempty explicit child, so retry ownership must be checked nonvacuously.
 // SESSION: explicit sequence retry: immutable recipe, fresh plans, isolated materialization
 // SESSION: bounded regional allocation: session recipe consumed, cached export
 // SESSION: allocation-session: sequence available=1 retained-demands cached-export
@@ -24,7 +25,10 @@
 // PHYSICAL: pto.wait_flag
 // PHYSICAL-NOT: pto.logical_
 module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a3"} {
-  func.func @rms_norm_rows(%arg0: !pto.ptr<f32, gm>, %arg1: !pto.ptr<f32, gm>, %arg2: !pto.ptr<f32, gm>, %arg3: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>, test.require_bounded_regional_allocation} {
+  func.func @rms_norm_rows(%arg0: !pto.ptr<f32, gm>, %arg1: !pto.ptr<f32, gm>,
+                          %arg2: !pto.ptr<f32, gm>, %arg3: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>, test.require_bounded_regional_allocation,
+                  test.require_explicit_sequence_retry} {
     %c0_i64 = arith.constant 0 : i64
     %c16640_i64 = arith.constant 16640 : i64
     %c256_i64 = arith.constant 256 : i64
