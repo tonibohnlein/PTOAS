@@ -11,6 +11,7 @@
 // CHECK: dynamic-uniform-crossings: non-unit-coordinates zero-trips extrema exact-required-closure
 // CHECK: deferred-nonuniform-crossing: exact-adapter-required
 // CHECK: deferred-writer-slices: disjoint-visits accepted overlapping-visits refused
+// CHECK: deferred-writer-slices: retained partition endpoints revalidated
 // CHECK: uniform-relation-crossings: shared-alias-policy exact-crossing complete-reduction
 // CHECK: fixed-coordinate-relations: distinct-visits scalar-mapping retained-identities no-reanalysis
 // CHECK: exact-form-fast-path: explicit no-normalization no-arithmetic

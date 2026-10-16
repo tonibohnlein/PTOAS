@@ -19,6 +19,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/FiniteExpansionPlan.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionalRelationsInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/BoundarySlices.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/WholeInvocationIdentity.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/DenseSet.h"
@@ -1647,7 +1648,29 @@ mlir::LogicalResult checkDeferredSlices(mlir::func::FuncOp function,
     auto overlap = composeRegionalSequence(function, arena, {*first, *first}, true, false);
     const bool refused = overlap.error.find("deferred sibling access") != std::string::npos;
     if (!refused) { return function.emitError("overlapping discharged writer visits were accepted"); }
+    // A retained partition must not authorize a child whose endpoints changed.
+    auto certificate = std::make_shared<BoundaryPartition>();
+    certificate->loop = loop;
+    certificate->expressions = arena;
+    certificate->intervals = {{arena->constant(0), arena->constant(2)},
+                              {arena->constant(2), arena->constant(4)}};
+    for (bool stale : {false, true}) {
+        auto state = std::make_shared<SequenceAnalysisState>(function, arena);
+        if (failed(state->index.build(function, *session.input()))) { return failure(); }
+        state->children.resize(2);
+        for (std::size_t i = 0; i < 2; ++i) {
+            auto& child = state->children[i];
+            child.regional = i == 0 || stale ? *first : *last;
+            child.anchors = child.regional.anchors;
+            child.boundaryPartition = certificate;
+            child.boundarySlice = i;
+        }
+        if (state->importSummaries(false) == stale) {
+            return function.emitError("partition evidence was ignored or survived changed slice endpoints");
+        }
+    }
     llvm::outs() << "deferred-writer-slices: disjoint-visits accepted overlapping-visits refused\n";
+    llvm::outs() << "deferred-writer-slices: retained partition endpoints revalidated\n";
     return success();
 }
 mlir::LogicalResult checkUniformCircuit(mlir::func::FuncOp function,

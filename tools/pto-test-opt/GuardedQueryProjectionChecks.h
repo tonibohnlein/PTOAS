@@ -152,6 +152,13 @@ inline bool scalingAndRollback(mlir::MLIRContext& context)
         const auto retried = fs::detail::projectGuardedRankQuery(e, ranks,
             {0, Kind::Completion}, {count - 1, Kind::Start});
         if (retried.status != Status::Projected || !retried.answer || *retried.answer == e.invalid) { return false; }
+        // A fixed-width query at the end of an increasingly long graph must
+        // not rescan the unrelated prefix or its incoming edges. The complete
+        // event-closure oracle separately checks every source/target pair.
+        const auto suffix = fs::detail::projectGuardedRankQuery(e, ranks,
+            {count - 4, Kind::Completion}, {count - 1, Kind::Start});
+        if (!suffix.answer || suffix.occurrences != 4 || suffix.edges != 3 ||
+            (suffix.status != Status::Projected && suffix.status != Status::NoReduction)) { return false; }
         llvm::outs() << "Boolean guarded query " << count << ": " << retried.originalNodes << " -> "
                      << retried.projectedNodes << " nodes\n";
     }

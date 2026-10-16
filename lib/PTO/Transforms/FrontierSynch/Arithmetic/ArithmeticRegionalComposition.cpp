@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "IntegerRelationComposition.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegionalComposition.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalRelations.h"
@@ -63,9 +64,7 @@ private:
                            const IntegerSystem& b, ArrayRef<unsigned> bm,
                            unsigned dimensions, ArrayRef<unsigned> keep)
     {
-        auto x = a.remap(dimensions, am), y = b.remap(dimensions, bm);
-        if (failed(x) || failed(y)) { return failure(); }
-        auto both = x->intersect(*y);
+        auto both = intersectRemappedIntegerSystems(a, b, dimensions, am, bm);
         ++out.analysis.cost.pieceJoins;
         if (failed(both)) { return failure(); }
         ++out.analysis.cost.projections;

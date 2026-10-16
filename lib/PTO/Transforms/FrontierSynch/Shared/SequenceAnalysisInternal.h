@@ -42,6 +42,7 @@ struct Pattern {
 struct RegionalAllocationGroup;
 struct OrderCoveredPeriodicResult;
 class InvocationPrefixCollection;
+struct BoundaryPartition;
 struct Child {
     std::shared_ptr<const MathematicalResult> prefixMathematics;
     // Owned proof for this original root sequence only; never a disjoint-effect certificate.
@@ -60,6 +61,9 @@ struct Child {
     std::shared_ptr<const NumericTemplateEndpoints> numericRecipe;
     std::optional<std::size_t> originalNode;
     std::optional<Expr> originalArmGuard;
+    // Producer-owned disjoint visit slices; valid only at the retained endpoints.
+    std::shared_ptr<const BoundaryPartition> boundaryPartition;
+    std::size_t boundarySlice = 0;
 };
 struct Port {
     uint32_t child = 0;

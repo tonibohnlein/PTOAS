@@ -559,6 +559,10 @@ bool SequenceAnalysisState::boundaryLoop(scf::ForOp loop)
     auto partition = collectBoundarySlices(loop, index, expressions, trips, DenseMap<Value, Expr>{}, partitionError);
     if (!partition || partition->empty() ||
         (partition->size() == 1 && partition->front().bindings.empty())) { return false; }
+    auto certificate = std::make_shared<BoundaryPartition>();
+    certificate->loop = loop;
+    certificate->expressions = arena;
+    for (const auto& slice : *partition) { certificate->intervals.push_back(slice.interval); }
     std::vector<Child> slices;
     for (const auto& slice : *partition) {
         DenseMap<Value, bool> choices;
@@ -596,6 +600,8 @@ bool SequenceAnalysisState::boundaryLoop(scf::ForOp loop)
         child.loop = loop;
         child.regional = std::move(*regional);
         child.anchors = child.regional.anchors;
+        child.boundaryPartition = certificate;
+        child.boundarySlice = slices.size();
         slices.push_back(std::move(child));
     }
     for (auto& slice : slices) { children.push_back(std::move(slice)); }

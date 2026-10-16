@@ -10,6 +10,7 @@
 // contract. Congruence periods are class constants, never distances or trips.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/IntegerRelations.h"
 #include "IntegerCongruenceConsistency.h"
+#include "IntegerRelationComposition.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <algorithm>
@@ -155,22 +156,36 @@ FailureOr<IntegerSystem> IntegerSystem::intersect(const IntegerSystem& other) co
 }
 FailureOr<IntegerSystem> IntegerSystem::remap(unsigned newDimensions, llvm::ArrayRef<unsigned> oldToNew) const
 {
-    if (oldToNew.size() != dimensionCount || newDimensions > Coefficients().max_size() ||
-        std::any_of(oldToNew.begin(), oldToNew.end(), [&](unsigned i) { return i >= newDimensions; })) {
+    return intersectRemappedIntegerSystems(*this, IntegerSystem{}, newDimensions, oldToNew, {});
+}
+FailureOr<IntegerSystem> intersectRemappedIntegerSystems(
+    const IntegerSystem& left, const IntegerSystem& right, unsigned newDimensions,
+    llvm::ArrayRef<unsigned> leftToNew, llvm::ArrayRef<unsigned> rightToNew)
+{
+    auto valid = [&](const IntegerSystem& system, llvm::ArrayRef<unsigned> mapping) {
+        return mapping.size() == system.dimensions() &&
+            std::all_of(mapping.begin(), mapping.end(),
+                [&](unsigned coordinate) { return coordinate < newDimensions; });
+    };
+    if (newDimensions > Coefficients().max_size() || !valid(left, leftToNew) || !valid(right, rightToNew)) {
         return failure();
     }
-    auto map = [&](llvm::ArrayRef<BoundInteger> old) {
-        Coefficients result(newDimensions);
-        for (unsigned i = 0; i < dimensionCount; ++i) { result[oldToNew[i]] += old[i]; }
-        return result;
-    };
     std::vector<IntegerConstraint> rows;
     std::vector<IntegerCongruence> congruences;
-    for (const auto& atom : this->constraints()) { rows.push_back({map(atom.coefficients), atom.bound}); }
-    for (const auto& atom : this->congruences()) {
-        congruences.push_back({map(atom.coefficients), atom.residue, atom.modulus});
-    }
-    return create(newDimensions, rows, congruences);
+    auto append = [&](const IntegerSystem& system, llvm::ArrayRef<unsigned> mapping) {
+        auto lift = [&](llvm::ArrayRef<BoundInteger> coefficients) {
+            Coefficients result(newDimensions);
+            for (unsigned i = 0; i < coefficients.size(); ++i) { result[mapping[i]] += coefficients[i]; }
+            return result;
+        };
+        for (const auto& atom : system.constraints()) { rows.push_back({lift(atom.coefficients), atom.bound}); }
+        for (const auto& atom : system.congruences()) {
+            congruences.push_back({lift(atom.coefficients), atom.residue, atom.modulus});
+        }
+    };
+    append(left, leftToNew);
+    append(right, rightToNew);
+    return IntegerSystem::create(newDimensions, rows, congruences);
 }
 bool IntegerSystem::isOctagonal() const
 {
