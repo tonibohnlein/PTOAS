@@ -25,6 +25,11 @@ struct RegionConstructionBindings {
 // This service consumes the already qualified CutExpressionRecipe; it neither
 // reruns dependence analysis nor creates a different availability contract.
 struct RegionConstructionAccess {
+    // One existing select arm under a supplied condition value; otherwise the
+    // original expression. Constant work, no new nodes. The caller must retain
+    // the condition around every use of the returned activity-scoped value.
+    static RegionExpressions::Id selectArm(const RegionExpressions& arena,
+        RegionExpressions::Id value, RegionExpressions::Id condition, bool whenTrue);
     // Defined-input totality for Boolean relation projection. Integer recipes
     // remain outside this optimization's explicitly qualified vocabulary.
     static bool totalScalarDag(const RegionExpressions& arena, ArrayRef<RegionExpressions::Id> roots,

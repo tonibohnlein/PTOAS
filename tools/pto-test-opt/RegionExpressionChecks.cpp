@@ -857,7 +857,9 @@ bool checkCrossChildNative(func::FuncOp function)
     state.incoming[1].push_back({2 * a + 1, 2 * b, e.boolean(true)});
     state.reachabilityCache.clear();
     auto completionRequirement = state.eventReachability(2 * a + 1, 2 * b);
-    if (!completionRequirement || !queried) { return false; }
+    // Crossing propagation needs only each endpoint's native reflexive path.
+    // The shared occurrence shortcut must avoid reconstructing child rows.
+    if (!completionRequirement || queried) { return false; }
     answers.push_back(*completionRequirement);
     for (unsigned valuation = 0; valuation < 4; ++valuation) {
         const bool pv = valuation & 1, qv = valuation & 2;

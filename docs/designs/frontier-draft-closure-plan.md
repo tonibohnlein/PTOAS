@@ -8,10 +8,10 @@ and a checked fixed-protocol capacity bound remain distinct outcomes.
 | Milestone | Deliverable | Acceptance | State |
 |---|---|---|---|
 | 1. Ownership | Module-owned allocation; common symbol-aware staging for saved recipes, contexts and executed counters | Threaded/serial multi-function agreement, globals/helpers, failure atomicity, existing traces | Implemented; focused validation passed |
-| 2. Semantic gates | Independent wrapping and full arithmetic-membership oracles; resolve remaining broad failures | Complete fresh gate, with unfinished construction retained explicitly | Oracle repairs validated; fresh 263-test gate has three construction failures |
+| 2. Semantic gates | Independent wrapping and full arithmetic-membership oracles; resolve remaining broad failures | Complete fresh gate, with unfinished construction retained explicitly | Oracle repairs validated; final continuation gate passes 262/263, with one existing repeated-phase watchdog |
 | 3. Guarantees | Explicit order precision, reduction and realization contracts; qualified completion/child/loss evidence | Assertions and regressions at producer, composition and emission boundaries | Implemented for supported contracts; focused gate passed |
 | 4. Allocation scope | Separate fixed-protocol certification from alternate-protocol research | Per-protocol evidence and outcome classifications; no implicit ordering changes | Implemented; three scoped witnesses rechecked |
-| 5. Composition cost | Reduce attributed Delta incoming and phase relation construction | Same semantics, structural scaling checks, paired total-construction measurements | Qualified changes validated; remaining composition-size and watchdog failures stay open |
+| 5. Composition cost | Reduce attributed Delta incoming and phase relation construction | Same semantics, structural scaling checks, paired total-construction measurements | Qualified changes validated; rotating and boundary gates pass, repeated-phase relational expansion remains open |
 
 Use the configured incremental build, never a clean rebuild for a milestone.
 Local intensive work is limited to two aggregate workers. Historical results
@@ -192,3 +192,134 @@ The configured native targets were built incrementally with at most two workers.
 matches on explicitly braced compound conditions; source review found no missing
 braces and no new compiler warning. Raw receipts and tool/source fingerprints
 are retained in `frontier-draft-closure-results.json` and the local receipt tree.
+
+## Milestone 5 continuation: request ownership and residual compaction
+
+The whole-invocation identity adapter now reuses an adequate retained child but
+never starts a nested same-region backend search. A cold miss resumes compact
+Sequence construction, leaving further candidate selection to the outer request.
+When that loop needs general arithmetic, the outer request also owns its export
+requirements: a demand-only request no longer builds storage selectors merely to
+create an identity wrapper. Genuine regional children retain their complete
+composition interface. The existing ownership, query-upgrade and fresh-plan
+checks remain enabled.
+
+The compact route exposed two exclusive readiness alternatives that previously
+reached a different producer. Shared endpoint normalization now proves exclusion
+from a bounded slice of unsigned equality/strict-inequality guards, in addition
+to producer-owned residue domains. It compares identical scalar identities,
+keeps exact guards and matching tuples, and never merges simultaneous commands.
+The new guard optimization requires a frozen family protocol; legacy concrete
+exporters that append private lanes after preparation retain their existing
+grouping across allocation requests. Review found that index literals retain
+64-bit attributes on narrower targets; the new proof therefore also requires
+a non-scalable index64 layout at the original cut. A real index32/index64
+recipe-insertion regression checks that coincident truncated literals preserve
+two active commands. The 64-node discovery bound limits optional compaction
+work only; incomplete proofs retain the original commands. Finite coordinate-map
+normalization runs first so a pairwise merge cannot prevent an already-supported whole-family map.
+The asymmetric fixture retains one producer SET and two consumer WAIT sites.
+
+The interval helper is checked against all 256 byte values for 576 comparison
+pairs (147,456 evaluations), including zero and maximum bounds. Existing tests
+also retain coactive commands, distinct matching tuples and intervening command
+order. Sequence queries for the same selected occurrence now use exact presence
+and the native start-to-completion edge, without requesting a child rank circuit;
+all four event-kind pairs are checked with present and absent occurrences.
+This shortcut alone does not reduce the boundary fixture's size.
+
+The initial ten-test focused gate passed, including prepared protocols, family
+emission, combined and deferred output, candidate selection, identity ownership,
+sequence queries and rotating traces. A second complete run exposed legacy
+allocation-lane grouping and outdated callback/static-site expectations. The
+legacy path now retains its grouping; the native-event oracle still checks all
+truth values, with no child callbacks needed. Profiling checks reported sites
+against actual IR rather than requiring equal static SET/WAIT counts; the
+separate repeated-crossing oracle still checks unfolded matching and order.
+The follow-up eleven-test gate passes these repaired checks. The rotating driver
+adds zero-trip and nonempty 13/11-bank closure cases. The initial dispatch-only complete run still had three failures:
+it repaired rotating construction but exposed the family-site regression fixed
+above. That initial result is retained separately from the final gate.
+
+Before the final incoming-path change, Delta's executable function body is
+byte-identical to the preceding commit;
+313,274 arithmetic operations and all command-site counts remain unchanged.
+Full-file equality does not hold: recognition-diagnostic ordering, location
+aliases and request estimates differ. Request walks decrease from 17 to 15.
+This was a concurrent output diagnostic, not a paired timing experiment, and
+establishes no device or total compiler speedup.
+
+### Shared incoming-path output
+
+The boundary probe attributes most growth to alternative-path queries in crossing
+reduction: 8,453 arena nodes at symbolic-reducer entry, 10,903 after endpoint
+folding/consolidation, and 123,668 after closure and boundary export. The probe
+counts 10,482 prefix requests and 10,189 suffix requests; all 20,671 incoming
+requests use the residual query route. These are construction counters, not
+exclusive timings.
+
+Incoming path queries now retain private activity-scoped answers and apply one
+activity mask to their combined output. The exact activity already includes the
+candidate, entry and distinct-identity predicates; the caller no longer masks
+those predicates again. Public single-query answers remain activity-masked and
+cached by activity and original occurrence pair. No restricted answer is exposed
+as an unrestricted query.
+
+Prefix qualification still precedes suffix qualification. Review found that both
+outputs must retain the existing per-output select simplifications: a prefix
+that is false under activity must skip an unavailable suffix, and an opposite
+branch that cannot execute must not remain as an availability obligation. The
+final implementation shares the expression service's existing one-level select
+arm fold, including negated conditions. It changes only local IDs; raw query
+caches remain unchanged. The combined output retains its activity mask. This
+creates no temporary expression or proof transaction.
+
+Tests cover both activity polarities, unavailable queries, conditional-zero
+prefixes and suffixes, removal of unavailable opposite-arm inputs, inactive/
+unbound outputs and a false suffix with an unbound prefix. The first full-gate
+attempt after the focused path tests was stopped for this review repair; it is
+not counted as completed validation.
+
+Removing caller masks alone reduced the boundary arena to 113,745 nodes. Shared
+path output reduces it to **103,881**, below the unchanged **104,000** limit.
+The complete boundary driver passes 56 ordinary, 64 multiple-cut and 64 affine/
+wrapping closure comparisons. The final seven-test focused gate passes, including
+the new path-query checks, public pipeline and family materialization tests.
+Both independent source reviewers accepted the corrected implementation within
+this scope. Full-gate and Delta replay receipts follow below.
+
+
+### Final continuation measurements
+
+Three serial interleaved Delta logical-compilation pairs are **11.749/12.396**,
+**12.345/12.346**, and **12.698/12.146** seconds (baseline/candidate). The median
+paired change is approximately **+0.005%**; total compilation time is effectively
+unchanged in this measurement. The baseline is the preserved index-width-fixed
+build immediately before the incoming-path changes, not the previous commit.
+The final output has **313,258** arithmetic operations versus **313,274** and
+93,166 selects versus 93,182. Static command counts remain 172 SETs, 47 WAITs
+and 85 barriers. This is a small Delta output reduction, not a new major Delta
+speedup or a device result.
+
+The final fixed-execution replay preserves all **72 payloads and 358 commands**,
+including matching and command causality. The same scoped 46-ID witness remains;
+this change does not make that fixed protocol fit six IDs. Review acceptance is
+for the source transformations and their stated contracts, not universal draft
+coverage or device qualification.
+
+
+The final frozen-source synchronization gate passed **262/263** tests in
+**727.34 seconds**, with one worker and the unchanged resource limits. Its sole
+failure is `sync_repeated_region.pto` at the existing 90-second phased-repeat
+subprocess watchdog. The earlier rotating memory failure and boundary size
+failure pass. No test expectation or timeout was relaxed for this continuation.
+All 16 changed production/test files match the pinned build source fingerprints.
+
+The incremental build and seven-test focused gate passed. `git diff --check`
+passes. The changed-code prefilter reports 22 G.FMT.11-CPP matches; source
+inspection confirms every cited control body is explicitly braced (zero reported
+warnings). These are classified prefilter false positives, not a claim that an
+unavailable external static analyzer passed. Both independent reviewers gave
+scoped source acceptance after the index-width and inactive-arm repairs.
+The machine-readable receipt retains intermediate results and the interrupted
+pre-repair gate without counting that interruption as a completed run.

@@ -7,6 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """Compare opt-in diagnostics with identical public compilation requests."""
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -39,7 +40,7 @@ def split_report(stderr):
     return profiles, control, "".join(diagnostics)
 
 
-def check_control(reports):
+def check_control(reports, output):
     require([report["stage"] for report in reports] == ["prepared", "materialized", "normalized", "inserted"],
             "missing control construction boundary")
     prepared, materialized, normalized, inserted = reports
@@ -56,8 +57,12 @@ def check_control(reports):
                 "invalid preparation reachability inventory")
     require(inserted["preparation"]["arithmetic"] == 0, "insertion retained detached arithmetic")
     commands = inserted["function_control"]
-    require(commands["sets"] == commands["waits"] and commands["sets"] > 0,
-            "fixture command inventory missing")
+    # Source and consumer families can group differently. Match the measured
+    # static inventory to the actual IR; unfolded matching is checked by the
+    # repeated-crossing oracle, not by equality of static site counts.
+    for field, operation in (("sets", "logical_set"), ("waits", "logical_wait")):
+        sites = len(re.findall(r"\bpto\." + operation + r"\[", output))
+        require(commands[field] == sites and sites > 0, "fixture command inventory mismatch")
 
 
 def check_stages(report):
@@ -103,7 +108,7 @@ def main():
         if checkpoint:
             require(not control, "analysis-only mode prepared control")
         else:
-            check_control(control)
+            check_control(control, measured.stdout)
         require(plain.stdout == measured.stdout and plain_diagnostics == measured_diagnostics,
                 "profiling changed emitted commands or failure diagnostics")
         require(reports[0]["workload"] == ("exhaustive-certification" if checkpoint else "production-root"),

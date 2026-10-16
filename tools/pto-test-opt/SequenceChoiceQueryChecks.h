@@ -156,6 +156,38 @@ inline bool checkCorrelatedSequenceQueries(func::FuncOp function, const Compound
         // input may survive merely because ordinal coordinates were folded.
         if (!e->referencedInputs(*answer).empty()) { return correlatedQueryFailure(__LINE__); }
     }
+    {
+        auto e = std::make_shared<fs::RegionExpressions>();
+        const auto present = e->input(inputs.addArgument(
+            IntegerType::get(function.getContext(), 1), function.getLoc()));
+        fs::SequenceAnalysisState state(function, e);
+        state.children.resize(1);
+        auto& child = state.children.front(); child.anchors = {{&phase}};
+        auto& region = child.regional;
+        region.expressions = e; region.anchors = child.anchors; region.occurrenceLoops.resize(1);
+        region.presence = [present](fs::RegionalEvent) { return present; };
+        unsigned queries = 0;
+        region.reachability = [&](fs::RegionalEvent, fs::RegionalEvent) -> std::optional<fs::Expr> {
+            ++queries; return std::nullopt;
+        };
+        const auto port = state.port(0, 0, e->constant(0));
+        for (Kind from : {Kind::Start, Kind::Completion}) {
+            for (Kind to : {Kind::Start, Kind::Completion}) {
+                auto source = state.event(2 * port), target = source;
+                source.kind = from; target.kind = to;
+                auto answer = state.eventReachability(source, target);
+                if (!answer || queries) { return correlatedQueryFailure(__LINE__); }
+                // Independent two-event graph: only I->C and reflexive paths.
+                for (bool active : {false, true}) {
+                    fs::RegionExpressions::Substitution binding({{present, e->boolean(active)}});
+                    const bool expected = active && !(from == Kind::Completion && to == Kind::Start);
+                    if (e->constantValue(e->substitute(*answer, binding)) != unsigned(expected)) {
+                        return correlatedQueryFailure(__LINE__);
+                    }
+                }
+            }
+        }
+    }
     llvm::outs() << "correlated-query checks: exact diagonal queries; linear 16/64/256-choice work\n";
     return true;
 }

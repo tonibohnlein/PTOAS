@@ -79,8 +79,6 @@ std::pair<AnalysisOutcome, AnalysisBackend> FrontierAnalysis::continueIdentityCh
 {
     AnalysisProfileScope profile(sessionState->ledger, "request", request.region, "identity-continuation", true);
     const auto identity = std::make_tuple(request.region, analysisRequestKey(request), sessionState->certifying);
-    const auto exhaustedKey = sessionState->exhaustedKey(request, true);
-    bool exhaustedWalk = false;
     auto finish = [&](std::pair<AnalysisOutcome, AnalysisBackend> answer) {
         answer.first.ledger = sessionState->ledger;
         answer.first.requestId = profile.requestId();
@@ -88,22 +86,18 @@ std::pair<AnalysisOutcome, AnalysisBackend> FrontierAnalysis::continueIdentityCh
             !answer.first.completion && !answer.first.mathematical->compactDemands &&
             !answer.first.mathematical->identityComposition) {
             sessionState->identityAnswers.emplace(identity, answer);
-        } else if (exhaustedWalk) {
-            sessionState->retainExhausted(exhaustedKey, answer.first, answer.second);
         }
         return answer;
     };
     if (auto found = sessionState->identityAnswers.find(identity); found != sessionState->identityAnswers.end()) {
         profile.cacheHit(); return finish(found->second);
     }
-    if (const auto* cached = sessionState->exhausted(exhaustedKey)) {
-        profile.cacheHit();
-        if (construction.exhaustedWalkHits != UINT64_MAX) { ++construction.exhaustedWalkHits; }
-        return finish({cached->outcome, cached->backend});
-    }
-    if (construction.requestWalks != UINT64_MAX) { ++construction.requestWalks; }
-    // Consume the unary Sequence adapter once. Ranking may reorder only the
-    // original eligible suffix; it cannot revisit this adapter or earlier forms.
+    // An identity adapter may reuse an already complete child, but must not
+    // start a second backend walk while the same region's Sequence producer is
+    // active. A cold continuation returns to that producer, allowing compact
+    // sequence construction before the outer dispatcher tries other algorithms.
+    // Keep the existing eligible-owner restriction; active adapters cannot own
+    // their own child, and missing exports do not authorize a weaker result.
     const auto canonical = exactAttemptFamilies(request, AnalysisForm::Original, exactForms(request).size() > 1);
     const auto sequence = llvm::find(canonical, AnalysisBackend::Sequence);
     std::vector<AnalysisBackend> candidates;
@@ -120,23 +114,6 @@ std::pair<AnalysisOutcome, AnalysisBackend> FrontierAnalysis::continueIdentityCh
     if (auto retained = retainedIdentityAnswer(*sessionState, request, candidates)) {
         profile.cacheHit(); return finish(*retained);
     }
-    while (!candidates.empty()) {
-        const auto backend = rankExactCandidates(request, candidates).front();
-        sessionState->formAttempts[{request.region, AnalysisForm::Original}] = 1;
-        auto answer = requestBackend(backend, request, true);
-        if (sessionState->ledger->profiling) {
-            for (auto& record : sessionState->ledger->selections) {
-                if (record.request == profile.requestId() && record.region == request.region &&
-                    record.method == analysisBackendName(backend)) {
-                    record.attempted = true;
-                    record.failureStage = answer.status == AnalysisStatus::Ready ? 0 : unsigned(answer.stage);
-                }
-            }
-        }
-        if (answer.status == AnalysisStatus::Ready) { return finish({std::move(answer), backend}); }
-        candidates.erase(llvm::find(candidates, backend));
-    }
-    exhaustedWalk = true;
     return finish({AnalysisOutcome{}, AnalysisBackend::Explicit});
 }
 std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceIdentitySequence(

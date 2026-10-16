@@ -116,14 +116,15 @@ bool continuationSelectionProfile(const fs::AnalysisLedger& ledger)
     for (const auto& stage : ledger.stages) {
         if (stage.method != "identity-continuation") { continue; }
         observed = true;
-        bool attempted = false;
+        // A same-region identity lookup must not launch another candidate
+        // walk. A miss resumes ordinary Sequence construction; the existing
+        // outer dispatcher remains responsible for later alternatives.
         for (const auto& selection : ledger.selections) {
-            if (selection.request != stage.request || selection.region != stage.region) { continue; }
-            if (selection.method == "sequence" || selection.method == "sequence-endpoints" ||
-                selection.method == "bounded-lifetime" || selection.method == "explicit") { return false; }
-            attempted |= selection.attempted;
+            if (selection.request == stage.request) { return false; }
         }
-        if (!attempted && !stage.cacheHits) { return false; }
+        for (const auto& nested : ledger.stages) {
+            if (nested.request == stage.request && nested.stage == "producer-attempt") { return false; }
+        }
     }
     return observed;
 }

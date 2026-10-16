@@ -12,6 +12,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include <map>
@@ -30,7 +31,7 @@ auto combineBarrierGuards(ArrayRef<const Endpoint*> endpoints, Combine combine)
     return guards;
 }
 template<class Scalar> struct ScalarGuardPattern {
-    enum Kind { Opaque, Constant, And, Select, Equal } kind = Opaque;
+    enum Kind { Opaque, Constant, And, Select, Equal, UnsignedLess } kind = Opaque;
     SmallVector<Scalar> operands;
     std::optional<APInt> constant;
 };
@@ -49,6 +50,8 @@ ScalarGuardPattern<Scalar> scalarGuardPattern(StringRef name, Attribute properti
         auto predicate = attributes.getAs<arith::CmpIPredicateAttr>("predicate");
         if (predicate && predicate.getValue() == arith::CmpIPredicate::eq) {
             result.kind = ScalarGuardPattern<Scalar>::Equal;
+        } else if (predicate && predicate.getValue() == arith::CmpIPredicate::ult) {
+            result.kind = ScalarGuardPattern<Scalar>::UnsignedLess;
         }
     }
     result.operands.assign(operands.begin(), operands.end());
@@ -94,6 +97,75 @@ std::optional<SmallVector<typename Consumer::Scalar>> residualGuard(typename Con
     llvm::sort(residual, [&](Scalar a, Scalar b) { return consumer.less(a, b); });
     return residual;
 }
+// Extract necessary unsigned intervals from a bounded guard slice. Opaque
+// arithmetic stays opaque: equality of the SSA/recipe scalar is required.
+// Stopping discovery loses only a compaction opportunity, never a command.
+template<class Scalar> struct GuardIntervals {
+    llvm::DenseMap<Scalar, std::pair<APInt, APInt>> bounds;
+    bool impossible = false;
+};
+template<class Consumer>
+GuardIntervals<typename Consumer::Scalar> guardIntervals(typename Consumer::Scalar guard, Consumer& consumer)
+{
+    using Scalar = typename Consumer::Scalar;
+    using Pattern = ScalarGuardPattern<Scalar>;
+    GuardIntervals<Scalar> result;
+    SmallVector<Scalar> pending{guard};
+    llvm::DenseSet<Scalar> seen;
+    constexpr std::size_t maxGuardVisits = 64;
+    while (!pending.empty() && seen.size() < maxGuardVisits) {
+        auto value = pending.pop_back_val();
+        if (!seen.insert(value).second) { continue; }
+        auto pattern = consumer.pattern(value);
+        if (pattern.constant && pattern.constant->isZero()) { result.impossible = true; break; }
+        if (pattern.kind == Pattern::And) {
+            pending.append(pattern.operands.begin(), pattern.operands.end()); continue;
+        }
+        if (pattern.kind == Pattern::Select) {
+            auto fallback = consumer.pattern(pattern.operands[2]);
+            if (fallback.constant && fallback.constant->isZero()) {
+                pending.push_back(pattern.operands[0]); pending.push_back(pattern.operands[1]);
+            }
+            continue;
+        }
+        if (pattern.kind != Pattern::UnsignedLess && pattern.kind != Pattern::Equal) { continue; }
+        auto left = consumer.pattern(pattern.operands[0]).constant;
+        auto right = consumer.pattern(pattern.operands[1]).constant;
+        if (bool(left) == bool(right)) { continue; }
+        const auto& literal = left ? *left : *right;
+        auto low = APInt::getZero(literal.getBitWidth()), high = APInt::getAllOnes(literal.getBitWidth());
+        if (pattern.kind == Pattern::Equal) { low = high = literal; }
+        else if (left) {
+            if (literal.isAllOnes()) { result.impossible = true; break; }
+            low = literal + 1;
+        } else {
+            if (literal.isZero()) { result.impossible = true; break; }
+            high = literal - 1;
+        }
+        auto variable = pattern.operands[left ? 1 : 0];
+        auto [entry, fresh] = result.bounds.try_emplace(variable, low, high);
+        if (!fresh) {
+            if (entry->second.first.getBitWidth() != low.getBitWidth()) { continue; }
+            if (entry->second.first.ult(low)) { entry->second.first = low; }
+            if (high.ult(entry->second.second)) { entry->second.second = high; }
+            if (entry->second.second.ult(entry->second.first)) { result.impossible = true; break; }
+        }
+    }
+    return result;
+}
+template<class Consumer>
+bool disjointGuards(typename Consumer::Scalar a, typename Consumer::Scalar b, Consumer& consumer)
+{
+    const auto left = guardIntervals(a, consumer), right = guardIntervals(b, consumer);
+    if (left.impossible || right.impossible) { return true; }
+    for (const auto& [scalar, bounds] : left.bounds) {
+        auto found = right.bounds.find(scalar);
+        if (found == right.bounds.end() ||
+            bounds.first.getBitWidth() != found->second.first.getBitWidth()) { continue; }
+        if (bounds.second.ult(found->second.first) || found->second.second.ult(bounds.first)) { return true; }
+    }
+    return false;
+}
 template<class Endpoint>
 bool disjointDomains(const Endpoint& a, const Endpoint& b, bool residueOnly = false)
 {
@@ -113,8 +185,8 @@ bool disjointDomains(const Endpoint& a, const Endpoint& b, bool residueOnly = fa
     return true;
 }
 // These producer-owned necessary domains need not describe the complete guard.
-// Distinct residues of one shared scalar prove exclusion even for opaque exact
-// arithmetic predicates. Preserve all predicate work and select only provenance.
+// Distinct residues or disjoint unsigned guard intervals prove exclusion.
+// Preserve all exact predicate work and select only provenance.
 template<class Endpoint>
 bool sameAlternativeMapping(const Endpoint& a, const Endpoint& b)
 {
@@ -126,18 +198,32 @@ bool sameAlternativeMapping(const Endpoint& a, const Endpoint& b)
         ((!a.physicalMapping && !b.physicalMapping) || (a.physicalMapping && b.physicalMapping &&
             equivalentPhysicalMaps(*a.physicalMapping, *b.physicalMapping)));
 }
+// Legacy concrete exporters may still append private lane coordinates after
+// preparation. Keep their grouping stable across capability requests; the new
+// guard-based optimization requires the frozen family protocol boundary.
 template<class Plan, class Consumer>
-LogicalResult coalesceResidueAlternatives(Plan& plan, Consumer& consumer)
+LogicalResult coalesceDomainAlternatives(Plan& plan, Consumer& consumer, bool frozenProtocol)
 {
     if (!plan.independentPieces) { return success(); }
     using Key = std::pair<Operation*, LogicalCommandKind>;
     std::map<Key, std::size_t> previous;
     decltype(plan.endpoints) retained;
+    auto guardExclusion = [&](const auto& a, const auto& b) {
+        if (!frozenProtocol) { return false; }
+        // Index attributes store 64 bits even on narrower targets. Until the
+        // interval extractor carries effective scalar widths, do not interpret
+        // those literals as runtime bounds outside the index64 contract.
+        const auto width = DataLayout::closest(b.before).getTypeSizeInBits(
+            IndexType::get(b.before->getContext()));
+        return !width.isScalable() && width.getFixedValue() == 64 &&
+            disjointGuards(a.guard, b.guard, consumer);
+    };
     for (auto& endpoint : plan.endpoints) {
         if (endpoint.kind == LogicalCommandKind::Barrier) { retained.push_back(std::move(endpoint)); continue; }
         auto [position, fresh] = previous.emplace(Key{endpoint.before, endpoint.kind}, retained.size());
         if (fresh || !sameAlternativeMapping(retained[position->second], endpoint) ||
-            !disjointDomains(retained[position->second], endpoint, true)) {
+            (!disjointDomains(retained[position->second], endpoint, true) &&
+             !guardExclusion(retained[position->second], endpoint))) {
             position->second = retained.size(); retained.push_back(std::move(endpoint)); continue;
         }
         auto& preceding = retained[position->second];
@@ -148,7 +234,8 @@ LogicalResult coalesceResidueAlternatives(Plan& plan, Consumer& consumer)
             return success();
         }))) { return failure(); }
         preceding.records.append(endpoint.records.begin(), endpoint.records.end());
-        preceding.domain.append(endpoint.domain.begin(), endpoint.domain.end());
+        if (preceding.domain.empty() || endpoint.domain.empty()) { preceding.domain.clear(); }
+        else { preceding.domain.append(endpoint.domain.begin(), endpoint.domain.end()); }
     }
     plan.endpoints = std::move(retained);
     return success();

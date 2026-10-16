@@ -76,7 +76,8 @@ def main():
         for banks, stride, offset, counts in (
                 ((3, 5), 1, 0, ((0, 0), (0, 3), (1, 0), (2, 1), (4, 0), (6, 1), (16, 3))),
                 ((6, 5), 2, 1, ((1, 0), (4, 1), (7, 3))),
-                ((3, 5), 0, 2, ((0, 3), (2, 0), (6, 1)))):
+                ((3, 5), 0, 2, ((0, 3), (2, 0), (6, 1))),
+                ((13, 11), 1, 0, ((0, 0), (2, 3), (16, 3)))):
             program = variant(source, *banks, stride, offset)
             for trips, inner in counts:
                 evaluated = program.replace("array<i64: 2, 3>", f"array<i64: {trips}, {inner}>")

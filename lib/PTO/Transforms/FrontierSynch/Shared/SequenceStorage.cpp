@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
 #include "SequenceStorageIndex.h"
+#include "../WholeInvocationIdentity.h"
 #include "CountedLoop.h"
 #include "../Structured/OrderCoveredPeriodic.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingRegion.h"
@@ -409,6 +410,16 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         }
         auto numeric = std::move(*cachedNumeric);
         if (numeric.result.state != RecognitionState::Applicable) {
+            // A transparent whole-invocation loop can request Arithmetic
+            // directly after this compact Sequence attempt. Do not force its
+            // storage selectors merely to make an identity adapter: a demand-
+            // only caller does not need them. Ordinary regional composition
+            // still requires and constructs the complete child interface.
+            if (resolveOriginal && originalRegionId &&
+                *originalRegionId == static_cast<std::size_t>(&node - program->nodes.data()) &&
+                wholeInvocationLoop(function, *input, *program, index) == &node) {
+                return fail("whole-invocation arithmetic capability belongs to the outer request");
+            }
             std::string arithmeticError;
             FailureOr<RegionalAnalysis> regional = failure();
             if (resolveOriginal.exports) {

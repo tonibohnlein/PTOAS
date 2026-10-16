@@ -241,8 +241,9 @@ LogicalResult normalizePreparedEndpoints(PreparedLogicalPlan& plan)
 {
     if (plan.endpoints.empty()) { return success(); }
     FamilyNormalizationEmitter consumer(plan);
-    if (failed(detail::coalesceResidueAlternatives(plan, consumer))) { return failure(); }
-    auto result = detail::coalesceEndpointAlternatives(plan, consumer);
+    // Preserve a supplied finite map before merging residual guard intervals.
+    if (failed(detail::coalesceEndpointAlternatives(plan, consumer))) { return failure(); }
+    auto result = detail::coalesceDomainAlternatives(plan, consumer, bool(plan.familyProtocol));
     if (auto constructed = consumer.operations()) { plan.familyWork.compactionScalars = *constructed; }
     return result;
 }
