@@ -39,6 +39,7 @@ print("bounded scalar address maps preserve uint32 wrap and empty domains")
 # expansion, a fixed divisor seven adds one local and keeps original period two.
 doc = documents["quotient"]
 assert len(doc["sites"]) == 1 and not doc["parameters"]
+quotient_contains = membership_index(doc)
 accesses = [relation for relation in doc["relations"] if relation["kind"] == 5]
 assert accesses
 for i in range(-1, 23):
@@ -57,5 +58,5 @@ for i in range(-1, 23):
                                   for value in [row["constant"] + sum(a * b for a, b in
                                       zip(row["coefficients"], coordinates))])
         expected = 0 <= i < 21 and (i // 7) * 4 <= byte < (i // 7) * 4 + 4
-        assert actual == expected, ("quotient", i, byte)
+        assert actual == quotient_contains((5, 0, -1, 0, 0), values) == expected, ("quotient", i, byte)
 print("constant division uses exact quotient locals without period expansion")

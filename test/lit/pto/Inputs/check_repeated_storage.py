@@ -80,15 +80,22 @@ def main():
         path.write_text(source)
         emitted = run(tool, "--insert-logical", path)
         assert "version = 4" in emitted and "pto.store" in emitted
-        path.write_text(source.replace(" overflow<nsw>", ""))
-        rejected = json.loads(run(tool, "--sequence-analysis", path))
-        assert rejected["error"] and not rejected["queries_available"], rejected
+        wrapping = source.replace(" overflow<nsw>", "")
+        path.write_text(wrapping)
+        alternate = json.loads(run(tool, "--sequence-analysis", path))
+        # The nonwrapping owner certificate remains unavailable. A separately
+        # qualified arithmetic export may still answer the complete request.
+        assert not alternate["error"] and alternate["queries_available"], alternate
+        assert alternate["arithmetic_regions"] == 1 and alternate["repeated_regions"] == 0, alternate
+        for outer, inner in cases:
+            path.write_text(wrapping.replace("array<i64: 2, 3>", f"array<i64: {outer}, {inner}>"))
+            check(json.loads(run(tool, "--structured-trace", path)), outer, inner)
         finite_consumer = source.replace("    return",
             "    %external = pto.load %p[%zero] : !pto.ptr<f32, gm> -> f32\n    return")
         path.write_text(finite_consumer)
         composed = json.loads(run(tool, "--sequence-analysis", path))
         assert not composed["error"] and composed["prepared"] and composed["queries_available"], composed
-        assert composed["symbolic_storage_effects"] > 0 and composed["boundary_bytes"] >= 4, composed
+        assert composed["symbolic_storage_effects"] > 0 and composed["storage_selector_interface"], composed
         for outer, inner in ((0, 0), (1, 0), (2, 3)):
             path.write_text(finite_consumer.replace("array<i64: 2, 3>", f"array<i64: {outer}, {inner}>"))
             check(json.loads(run(tool, "--structured-trace", path)), outer, inner, consumer=True)

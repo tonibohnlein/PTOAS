@@ -24,7 +24,7 @@ documents = [json.loads(line.removeprefix("arithmetic-json ")) for line in resul
 if len(documents) != 7:
     raise RuntimeError("expected all seven arithmetic fixtures")
 accepted = {"nested_reset": (3, 2), "triangular": (2, 1), "siblings": (4, 2), "empty_minimum": (1, 0),
-            "ssa_prerequisite": (2, 0), "opaque_bound": (1, 2), "existing_sync": (0, 0)}
+            "ssa_prerequisite": (2, 0), "opaque_bound": (1, 1), "existing_sync": (0, 0)}
 for document in documents:
     name = document["function"]
     if name in accepted:
@@ -50,7 +50,7 @@ def explicit_trace(name, bounds):
     if name == "opaque_bound":
         # The once-evaluated machine expression is an entry parameter; its
         # value is not assumed to equal mathematical n+1 after overflow.
-        return [(0, (i,)) for i in range(bounds[1])]
+        return [(0, (i,)) for i in range(bounds[0])]
     if name == "ssa_prerequisite":
         return [(0, ()), (1, ())]
     return []  # empty_minimum has a negative upper bound.
@@ -98,3 +98,13 @@ for document in documents:
                     assert actual == expected, (name, "native", a, b, bounds, source, target)
                     checks += 1
 print("arithmetic exports: 7 accepted; finite semantic checks:", checks)
+
+# The captured bound is the evaluated signed machine result, including wrap.
+opaque = next(d for d in documents if d["function"] == "opaque_bound")
+assert opaque["parameters"] == [-1]
+contains = membership_index(opaque)
+for n in (-(1 << 63), -2, -1, 0, (1 << 63) - 2, (1 << 63) - 1):
+    upper = ((n + 1 + (1 << 63)) % (1 << 64)) - (1 << 63)
+    for i in (-1, 0, 1, max(0, upper - 1), upper):
+        assert contains((1, 0, -1, 0, 0), (i, upper)) == (0 <= i < upper), (n, upper, i)
+print("captured loop bound agrees with signed64 wrapping addition")

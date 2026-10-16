@@ -119,8 +119,12 @@ int runMixedSymbolicRegionChecks(func::FuncOp function)
         original - program.nodes.begin(), arena, index, false);
     if (!nested.error.empty()) { llvm::errs() << nested.error << "\n"; return 1; }
     auto first = fs::sequenceRegionalResult(nested);
-    if (!first.cost.repeatedRegions || first.arithmeticRelations || first.symbolicStorageEffects.empty()) {
-        llvm::errs() << "mixed oracle did not select the repeated owned producer\n"; return 1;
+    // Selection may refine a repeated child to an equivalent numerical or
+    // arithmetic representation. Validate its interface and then the complete
+    // event relation below; a producer label is not a semantic oracle.
+    if (first.anchors.size() != 3 || !first.capabilities.exactQueries || !first.reachability ||
+        first.symbolicStorageEffects.empty()) {
+        llvm::errs() << "mixed oracle lacks the child query/storage interface\n"; return 1;
     }
     std::string error;
     auto second = fs::analyzeArithmeticRegion({function, loops[1]}, *index, *analysis.input(), arena, error);
