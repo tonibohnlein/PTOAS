@@ -1,0 +1,159 @@
+{
+  "source_commit": "4c95a3c3458752aec21684bd77fd6a7d538e9cd6",
+  "scope": "Six supported implementation milestones and stage-separated validation; remaining failures are explicit limits, not passed tests. No device results.",
+  "production": {
+    "primary49": {
+      "cases": 49,
+      "stages": {
+        "logical": {
+          "success": 49
+        },
+        "allocation": {
+          "success": 49
+        }
+      }
+    },
+    "secondary22": {
+      "cases": 22,
+      "stages": {
+        "logical": {
+          "success": 22
+        },
+        "allocation": {
+          "success": 22
+        }
+      }
+    },
+    "prepared11": {
+      "cases": 11,
+      "stages": {
+        "logical": {
+          "success": 11
+        },
+        "allocation": {
+          "success": 8,
+          "nonzero_exit": 3
+        },
+        "cpp": {
+          "success": 8
+        }
+      }
+    }
+  },
+  "broad": {
+    "counts": {
+      "TIMEOUT": 1,
+      "PASS": 217,
+      "FAIL": 16
+    },
+    "tests": 234,
+    "repaired_full_test_reruns": {
+      "sync_sequence_analysis.pto": "regional-certificate-oracle-gate/focused-lit.json",
+      "sync_late_local_barriers.pto": "late-local-barrier-oracle-gate/focused-lit.json",
+      "sync_native_scalar_corpus.pto": "existing-barrier-metadata-oracle-gate/focused-lit.json",
+      "sync_ordinary_access_routes.pto": "existing-barrier-metadata-oracle-gate/focused-lit.json",
+      "sync_bounded_boundary_presence.pto": "allocation-archive-final-gate/focused-lit.json",
+      "sync_allocation_candidates.pto": "allocation-archive-final-gate/focused-lit.json"
+    },
+    "remaining": [
+      {
+        "test": "sync_composed_phases.pto",
+        "outcome": "TIMEOUT",
+        "category": "phase-construction-watchdog",
+        "disposition": "Independent periodic checker:18 completed calls, call19 unfinished at120s. Exact call19 sampled at30s in IntegerSystem create/remap inside general-arithmetic Analysis<IntegerPolicy>::compose/complete via produceArithmeticRegion; no allocation requested. Phase-owned checker separately passes32/32 calls."
+      },
+      {
+        "test": "sync_rotating_region.pto",
+        "outcome": "FAIL",
+        "category": "construction-memory-limit",
+        "disposition": "check_rotating_region logical insertion exits with std::bad_alloc under4GiB address space. Reproduced retained native baseline; no mathematical impossibility or capacity inference."
+      },
+      {
+        "test": "sync_repeated_region.pto",
+        "outcome": "FAIL",
+        "category": "phase-construction-watchdog",
+        "disposition": "check_repeated_phases first structured trace hits90s child watchdog. Current exact saved call sampled at30s in integerRelation/RelationBuilder::conjunction during regional sequence composition. Nested-allocation RUN is unreached in broad; independently sampled separately with same stage."
+      },
+      {
+        "test": "sync_repeated_storage.pto",
+        "outcome": "FAIL",
+        "category": "semantic-oracle-gap",
+        "disposition": "Helper85 globally rejects removal of nsw, but an exact arithmetic alternative prepares with queries. Specialized repeated nonwrapping premise remains. Independent wrapping/fallback equivalence is unvalidated; later checks unreached."
+      },
+      {
+        "test": "sync_recognition_arithmetic_program.pto",
+        "outcome": "FAIL",
+        "category": "semantic-oracle-gap",
+        "disposition": "FileCheck29 expects2 parameters; once-evaluated opaque machine bound exports1. Helper also uses bounds[1]. Signed64 wrap-bound independent oracle remains required before acceptance."
+      },
+      {
+        "test": "sync_recognition_arithmetic_extended.pto",
+        "outcome": "FAIL",
+        "category": "semantic-oracle-gap",
+        "disposition": "Helper56 rejects supported lower1/step3 exact quotient. Shared membership helper omits machine_rows/congruences; independent full machine membership is required before accepting expanded coverage."
+      },
+      {
+        "test": "sync_recognition_arithmetic.pto",
+        "outcome": "FAIL",
+        "category": "semantic-oracle-gap",
+        "disposition": "FileCheck60 expects producer-limit refusal for valid large class parameters on an empty function; actual7 exports. Empty-domain/schema semantics are not independently checked at this entry."
+      },
+      {
+        "test": "sync_storage_effects_reuse.pto",
+        "outcome": "FAIL",
+        "category": "recognition-expectation-gap",
+        "disposition": "RECOGNIZE12 expects Explicit missing-premise; fixed explicit source is applicable. Prior exact five-cell/overlap checks pass; backend execution equivalence not established by recognition."
+      },
+      {
+        "test": "sync_access_regions.pto",
+        "outcome": "FAIL",
+        "category": "descriptor-expectation-gap",
+        "disposition": "CHECK-NOT147 forbids descriptor in conditional metadata; branches restore the original SSA extents, so descriptor join preserves it. Actual access-map test expectation remains open; no global descriptor relaxation."
+      },
+      {
+        "test": "sync_boundary_rotation.pto",
+        "outcome": "FAIL",
+        "category": "unresolved-logical-preparation",
+        "disposition": "check_boundary_rotation validate26 receives accepted=false, unchanged_on_failure=true before interpretation. No conservative fallback or successful command-closure claim; exact failing input/backend gate remains unlocated."
+      },
+      {
+        "test": "sync_mixed_symbolic_regions.pto",
+        "outcome": "FAIL",
+        "category": "producer-inventory-audit-gap",
+        "disposition": "Owned-child branch trace identifies MixedSymbolicRegionChecks.cpp122: first.cost.repeatedRegions==0 after successful nested analysis/error check. Fails required repeated-producer shape before pair/parent composition and independent event oracle. No alternate-route semantic acceptance claimed."
+      }
+    ],
+    "not_a_fresh_all_234_run": true
+  },
+  "kernel_compilation": {
+    "generated_cpp": 8,
+    "device_compiler_runs": 0,
+    "device_runs": 0
+  },
+  "receipt_sha256": {
+    "final-construction-production/summary.json": "6083e3329794ada41c58ca489cfd3a46e79921f2ace306b509b8624688a44962",
+    "final-construction-production/source-manifest.json": "12780efdeb967763bbbcc326a2624efcc73ad926e3b73ef7a85e5361f96b5efd",
+    "final-construction-production/tool-manifest.json": "02626a7fd26ab3804ecf37959d366572972aaca62b726a55631ec0852206ce0e",
+    "final-construction-broad/broad-lit.json": "6c3a78df31f92690ecfa0d972b7aa386ebbd80caba5c8edf1d2cdc1548d74096",
+    "final-construction-broad/source-manifest.json": "12780efdeb967763bbbcc326a2624efcc73ad926e3b73ef7a85e5361f96b5efd",
+    "regional-certificate-oracle-gate/focused-lit.json": "1ba4eef2cdf6804bd1f4cb467d386c741549b04bc4c79c3cfac4858973ad38fb",
+    "late-local-barrier-oracle-gate/focused-lit.json": "57b342b0ef5144df39ad3912ce99c93fc8b59770f42b6b1dbb0aea249a7a694e",
+    "existing-barrier-metadata-oracle-gate/focused-lit.json": "cd5d395a83817bdb0668914d818fe11c28db9790df2c5c014a826b8d00b43683",
+    "allocation-archive-final-gate/focused-lit.json": "073edbc1dcedc8059a8875ecd1d4a94ee6f028518594b79fbcf4e6aa2fa1c7c7",
+    "allocation-archive-final-gate/source-manifest.json": "39de86794a78e22704b7d1f0da3da42784cbda6ccbadbcfd65b1717ee13ece86",
+    "allocation-archive-final-gate/tool-manifest.json": "e45e6dc8247d77fb7a9b65f0fa64d8b3255884da87022bc947fd124f18ab4e16",
+    "final-composed-call-attribution/results.json": "93f405ab84885012d00bf2f68a1025149f997f13b537d126d4d4aa06c103a85c",
+    "final-composed-call-attribution/pins.json": "6b9acee368c53d80ae3f984504cde3e017ebc3e17807bd200df454d19d264000",
+    "final-composed-call-attribution/pin-verification.json": "a344b81ddcd45bb29b2c5ed37771d663056ccfb0ec62caaf4e3b51471d4d7acc",
+    "final-phase-native-stage-samples/interpretation.json": "102f5dc326ba6838fb30d9909438f8766fa33e4b453ffa25535f56a7377b25e2",
+    "final-periodic-call19-sample/results.json": "0217045eca1e6033820dbcd6da901f3a3e8e2a0b3f29fd0f39c38ced26021571",
+    "final-broad-source-dispositions/arithmetic.md": "46cf58ed0f69e1fca8065e659fd1168b4298ec2b2b815146aaa540f87d0e1820",
+    "final-broad-source-dispositions/ownership.md": "9e3a92f42aa224ab0f56bb20130d69bc336bcdd7f92393e8bb206a7ce90c1e2f",
+    "final-milestone-review/tool-scope-verification.json": "f8c4de5df369fa293a85d87489bda915e21cc897cab52f454613d638c67bf748",
+    "final-mixed-symbolic-return/gdb.out": "cb1de2b96840a1a250ca7c903b76d50795ca12cf48d6be6ca2c44e5848353c7c",
+    "final-mixed-symbolic-return/gdb.err": "f983967e0ac9fa65be8d633dbeceb5ac30c2b3fc29629536e0a292adb6c993c1",
+    "final-mixed-symbolic-return/disassembly.txt": "730b47b443f3d652c972d3b9f85c9b15860418a43e272aaeacc48690b168f66a",
+    "final-mixed-symbolic-return/pins.json": "c0b079c1d4472f0ebb2fa9865ba13b6cedfad86ee213c8f99e2a306503115ce0",
+    "final-mixed-symbolic-return/execution-receipt.json": "5b38f10a274088260332ecdb08ee54ede5ddde69ac7ec711ccb2881c770a3073"
+  }
+}

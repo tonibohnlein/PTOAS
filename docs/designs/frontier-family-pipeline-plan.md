@@ -1,7 +1,9 @@
 # Compact command-family pipeline: construction first
 
 The active workspace is `frontier-shared-input`, based on accepted M1
-`629371af1`. Construction work now precedes unresolved allocation investigations.
+`629371af1`. The six construction-first implementation milestones now have
+scoped receipts; the [final validation and remaining limits](frontier-final-construction-validation.md)
+separate implementation, compilation and protocol capacity.
 The implementation owner maintains source, tests and receipts. Correctness and
 architecture reviewers independently assess each batch before its milestone
 commit. Earlier plans and measurements remain in the
@@ -17,20 +19,21 @@ implementation from executed validation and unresolved protocol work.
 | M2 selection and capability ownership | Accepted implementation; [pinned acceptance matrix](frontier-selection-ownership.md#m2-implementation-acceptance) | Separate outcome | Does not certify protocol allocation |
 | M4 compact lowering and mapping selection | Accepted for supported owned-family callers; [implementation and production receipt](frontier-owned-recipe-checkpoint.md) | Eight prepared C++ sources generated; device compilation not established | Three prepared allocation refusals remain separate |
 | M5 qualified child interface | Accepted supported pending-effect subclass in `d8024255a`; [receipt](frontier-qualified-child-receipt.md) | Separate outcome | Explicit resource/reuse contracts remain required |
+| M6 validation and limits | Ordered campaign and broad refresh completed; reviewed repairs and current phase attribution recorded in the [final receipt](frontier-final-construction-validation.md). Ten broad FAIL results and one TIMEOUT remain explicitly reported. | 8/11 prepared C++ sources generated; no device compilation or execution | Does not convert sufficient-placement refusals into checked bounds |
 | GroupNorm lane spans | Accepted partial allocation checkpoint; fresh combined/split/restored trace checks pass | Device compilation not established | Preserved six-ID assignment checked in 24 physical traces across those three routes; tested protocol scope only |
 | Prefill coordinate allocation | Opt-in typed export completed and bounded artifact checks pass; [scope and receipts](frontier-prefill-coordinate-export-checkpoint.md); default remains unchanged | Not established | [Checked four-token fixed protocol](frontier-prefill-fixed-protocol-capacity.md): 20 mutually non-reusable MTE2→V handoffs, requiring 20 directed IDs for that protocol. Default allocation export remains unavailable. The new opt-in probe completes its 16 coordinate-family proofs; physical assignment remains separate. |
 | Decode witness | Retained evidence for the admitted execution | Not established by the witness | Nine-ID witness applies to its fixed protocol, not a universal hardware lower bound |
-| Delta prefix protocol | Logical support retained; construction work continues | Not established | Checked one-token command graph: 46 mutually non-reusable V→MTE3 handoffs under the unchanged prefix protocol; other realizations remain separate |
+| Delta prefix protocol | Logical support retained; measured constructed/live control reduction accepted in `480665618` | Not established | Checked one-token command graph: 46 mutually non-reusable V→MTE3 handoffs under the unchanged prefix protocol; other realizations remain separate |
 
 The first construction checkpoint is `6ff80f2d3`, following M1 `629371af1`.
 The next reviewed construction, selection and lowering checkpoint is described in
 the [current checkpoint receipt](frontier-reviewed-construction-checkpoint.md).
 The qualified pending-child interface is accepted and committed as `d8024255a`;
 its [receipt](frontier-qualified-child-receipt.md) states the supported subclass
-and three passing completion tests. The active reviewer loop continues with
-construction, retained-work selection, allocation export and common lowering.
-The receipt distinguishes its source and execution gates from open production
-campaigns and allocation investigations.
+and three passing completion tests. Construction, retained-work selection,
+allocation export and common lowering have their own reviewed checkpoints.
+The final receipt distinguishes their source and execution gates from open
+allocation, regression and device outcomes.
 Source review found that checkpoint `6ff80f2d3` already invokes the coordinate
 candidate on regional allocation requests. That differs from the planned
 experimental scope. The corrective checkpoint preserves the proof/export code
@@ -42,7 +45,8 @@ correction, and the executed-counter gate validates policy isolation and real
 coordinate export/access on the ownership and recipe snapshots. These focused
 results do not close prefill. Earlier receipts describe the historical checkpoint
 policy. Ordinary logical-only analysis does not invoke the candidate.
-The six milestones are not yet complete. Current receipts live in `.local/milestone-loop/`; the
+The six milestones are delivered within the supported contracts and reported
+validation limits. Current receipts live in `.local/milestone-loop/`; the
 [prior checkpoint receipt](frontier-construction-checkpoint.md) and
 [historical log](frontier-family-pipeline-history.md) retain earlier measurements.
 
