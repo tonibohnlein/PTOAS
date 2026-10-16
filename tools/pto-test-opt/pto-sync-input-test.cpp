@@ -182,7 +182,7 @@ bool checkRetainedCapabilityReuse(func::FuncOp function, pto::GMAliasPolicy poli
     AnalysisRequest strong;
     strong.needs = {true, true, true};
     const auto first = session.analyze(strong);
-    if (first.status != AnalysisStatus::Ready || !first.mathematical || !first.mathematical->explicitDemands) {
+    if (first.status != AnalysisStatus::Ready || !first.mathematical || !first.mathematical->concreteDemands()) {
         return false;
     }
     const auto attempts = session.constructionCounts().mathematicalAttempts;
@@ -1089,7 +1089,7 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
         if (!operation.hasTrait<OpTrait::IsTerminator>()) { expected.push_back(&operation); }
       }
     } else { expected.push_back(node.anchor); }
-    const auto& expanded = first.mathematical->finiteGuardedDemands->expandedProgram;
+    const auto& expanded = first.mathematical->expandedFiniteDemands->expandedProgram;
     if (!expanded || expanded->context.roots != expected) {
       return function.emitError("expanded adapter changed regional root list");
     }
@@ -1153,7 +1153,7 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
         const bool complete = selected.capabilities.completeStorageModel && selected.capabilities.exactSelectors &&
             selected.storageSelectors && selected.symbolicStorage && !selected.prepare &&
             !selected.capabilities.endpointRecipes;
-        const auto state = first.mathematical->finiteGuardedDemands->state;
+        const auto state = first.mathematical->expandedFiniteDemands->state;
         const bool retainedRelations = selected.relations && selected.relations->data.completeRequiredOrder &&
             selected.relations->data.analysis.period == 1 && selected.relations->data.selectors.period == 1 &&
             state->expandedIndexOwner && state->expandedGenerators &&
@@ -1224,10 +1224,10 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
   if (failed(session.initialize(otherPolicy))) { return failure(); }
   const bool cacheReset = session.finiteExpansionPreflights() == 0;
   if (!cacheReset) { return function.emitError("finite preflight cache survived an alias-context reset"); }
-  auto foreign = expandedFiniteRegionalQueries(*retainedOwner->finiteGuardedDemands, session.sharedInput());
+  auto foreign = expandedFiniteRegionalQueries(*retainedOwner->expandedFiniteDemands, session.sharedInput());
   if (foreign.capabilities.exactQueries) { return function.emitError("expanded query accepted a foreign input owner"); }
   std::string foreignError;
-  auto foreignStorage = expandedFiniteRegionalSelectors(*retainedOwner->finiteGuardedDemands,
+  auto foreignStorage = expandedFiniteRegionalSelectors(*retainedOwner->expandedFiniteDemands,
       *retainedQueries, foreignError, session.sharedInput());
   if (succeeded(foreignStorage)) { return function.emitError("expanded selectors accepted a foreign input owner"); }
   if (!retainedStorage) { return function.emitError("finite expansion fixture produced no storage selectors"); }

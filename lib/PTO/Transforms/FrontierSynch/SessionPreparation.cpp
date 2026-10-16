@@ -87,8 +87,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
         }
         return prepared;
     }
-    if (demands.explicitDemands) {
-        auto plan = prepareExplicitInsertion(function, *demands.explicitDemands, false);
+    if (demands.finiteDemands) {
+        auto plan = demands.finiteDemands->prepare();
         const bool nativeScalar = succeeded(plan) && demands.backend == "native-scalar";
         if (nativeScalar) {
             (*plan)->completeInvocation = !storage->instructions().empty();
@@ -239,7 +239,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareRetaine
         return prepareGeneralArithmeticLogicalInsertion(function, *program->arithmetic,
                                                         *demands.generalArithmeticDemands, error, records);
     }
-    if (demands.finiteGuardedDemands) { return prepareFiniteGuardedLogicalInsertion(*demands.finiteGuardedDemands); }
+    if (demands.expandedFiniteDemands) { return prepareFiniteGuardedLogicalInsertion(*demands.expandedFiniteDemands); }
     return failure();
 }
 } // namespace mlir::pto::frontiersynch

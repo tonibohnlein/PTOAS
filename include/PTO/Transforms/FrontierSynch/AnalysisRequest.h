@@ -9,7 +9,7 @@
 // Mathematical ownership is independent of endpoint and allocation outcomes.
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ANALYSISREQUEST_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ANALYSISREQUEST_H
-#include "PTO/Transforms/FrontierSynch/Finite/ExplicitAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Finite/FiniteAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisLedger.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.h"
 #include <memory>
@@ -69,7 +69,8 @@ struct AnalysisObligation {
 struct MathematicalResult {
     std::shared_ptr<const SyncInput> input;
     std::shared_ptr<const WholeInvocationIdentity> identityComposition;
-    std::shared_ptr<const ExplicitAnalysis> explicitDemands;
+    std::shared_ptr<FiniteAnalysis> finiteDemands;
+    const ExplicitAnalysis* concreteDemands() const { return finiteDemands ? finiteDemands->concrete() : nullptr; }
     std::shared_ptr<const ProgramRecognition> recognition;
     std::shared_ptr<const RotatingAnalysis> rotatingDemands;
     std::shared_ptr<const OrderCoveredPeriodicResult> orderCoveredDemands;
@@ -80,7 +81,7 @@ struct MathematicalResult {
     std::shared_ptr<SequenceAnalysis> sequenceDemands;
     std::shared_ptr<const RegionalAnalysis> regionalDemands;
     std::shared_ptr<const ArithmeticRegionalRelations> arithmeticRegionalDemands;
-    std::shared_ptr<FiniteGuardedAnalysis> finiteGuardedDemands;
+    std::shared_ptr<FiniteGuardedAnalysis> expandedFiniteDemands;
     std::shared_ptr<const FiniteVisitAnalysis> finiteVisitDemands;
     // Own the child quotient and all startup/seam/suffix crossings together.
     // Regional query/selector construction is a separate capability.

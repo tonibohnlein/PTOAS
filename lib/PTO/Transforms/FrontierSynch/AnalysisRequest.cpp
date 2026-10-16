@@ -30,10 +30,10 @@ namespace mlir::pto::frontiersynch {
 AnalysisExports mathematicalExports(const MathematicalResult& demands)
 {
     AnalysisExports available;
-    available.queries = demands.explicitDemands || demands.rotatingDemands ||
+    available.queries = demands.finiteDemands || demands.rotatingDemands ||
         demands.guardedRotatingDemands || demands.numericNode || demands.sequenceDemands ||
-        demands.finiteGuardedDemands;
-    available.selectors = demands.explicitDemands || demands.sequenceDemands || demands.finiteGuardedDemands;
+        demands.expandedFiniteDemands;
+    available.selectors = demands.finiteDemands || demands.sequenceDemands || demands.expandedFiniteDemands;
     if (demands.sequenceDemands && demands.sequenceDemands->state &&
         demands.sequenceDemands->state->partialStorage()) { available.selectors = false; }
     if (demands.regionalDemands) {
@@ -220,14 +220,16 @@ std::vector<RegionCertification> FrontierAnalysis::certifyRegions()
             result.selectedClass = "bounded-lifetime";
         } else if (math.arithmeticDemands || math.generalArithmeticDemands || math.arithmeticRegionalDemands) {
             result.selectedClass = "restricted-arithmetic";
-        } else if (math.finiteGuardedDemands) {
+        } else if (math.expandedFiniteDemands || (math.finiteDemands && math.finiteDemands->guarded())) {
             result.selectedClass = "finite-guarded-occurrences";
-            if (math.finiteGuardedDemands->expandedProgram) { result.representation = "small-count-expanded"; }
+            if (math.expandedFiniteDemands && math.expandedFiniteDemands->expandedProgram) {
+                result.representation = "small-count-expanded";
+            }
         } else if (math.finiteVisitDemands) {
             result.selectedClass = "finite-visit-types";
         } else if (math.varyingBoundaryDemands) {
             result.selectedClass = "repeating-boundary-interface";
-        } else if (math.explicitDemands) {
+        } else if (math.concreteDemands()) {
             result.selectedClass = "finite-occurrences";
         } else if (math.sequenceDemands) {
             const auto& node = program->nodes[id];
@@ -352,7 +354,7 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
             AnalysisProfileScope exportProfile(sessionState->ledger, "queries", request.region, "expanded-finite");
             exportProfile.constructed();
             attempt.expandedQueries = std::make_shared<const RegionalAnalysis>(
-                expandedFiniteRegionalQueries(*demands.finiteGuardedDemands, storage));
+                expandedFiniteRegionalQueries(*demands.expandedFiniteDemands, storage));
         }
         result.regionalExports = attempt.expandedQueries;
         result.available.queries = result.regionalExports->capabilities.exactQueries;
@@ -361,7 +363,7 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
             exportProfile.constructed();
             attempt.expandedSelectorsAttempted = true;
             if (construction.expandedSelectorBuilds != UINT64_MAX) { ++construction.expandedSelectorBuilds; }
-            auto selected = expandedFiniteRegionalSelectors(*demands.finiteGuardedDemands,
+            auto selected = expandedFiniteRegionalSelectors(*demands.expandedFiniteDemands,
                 *attempt.expandedQueries, attempt.expandedSelectorError, storage,
                 &construction.expandedSelectorChecks);
             if (succeeded(selected)) {
@@ -411,8 +413,11 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
             if (demands.sequenceDemands && !demands.sequenceDemands->insertionError.empty()) {
                 result.obligations.push_back({result.stage, demands.sequenceDemands->insertionError});
             }
-            if (demands.finiteGuardedDemands && !demands.finiteGuardedDemands->insertionError.empty()) {
-                result.obligations.push_back({result.stage, demands.finiteGuardedDemands->insertionError});
+            if (demands.finiteDemands && !demands.finiteDemands->insertionError().empty()) {
+                result.obligations.push_back({result.stage, demands.finiteDemands->insertionError()});
+            }
+            if (demands.expandedFiniteDemands && !demands.expandedFiniteDemands->insertionError.empty()) {
+                result.obligations.push_back({result.stage, demands.expandedFiniteDemands->insertionError});
             }
         }
     }
@@ -520,19 +525,19 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
                 (request.needs.queries && !answer.available.queries) ||
                 (request.needs.selectors && !answer.available.selectors) ||
                 (request.needs.synchronization && !answer.available.synchronization)) { continue; }
-            if (!retained || (!retained->mathematical->explicitDemands && answer.mathematical->explicitDemands)) {
+            if (!retained || (!retained->mathematical->concreteDemands() && answer.mathematical->concreteDemands())) {
                 retained = &answer;
             }
         }
         // A failed stronger Explicit export may still answer this weaker
         // request. Leave it first in ordinary dispatch rather than bypassing it
         // with another family's cached selection.
-        if (retained && !retained->mathematical->explicitDemands) {
+        if (retained && !retained->mathematical->concreteDemands()) {
             auto region = sessionState->attempts.find(request.region);
             if (region != sessionState->attempts.end()) {
                 auto explicitAttempt = region->second.find(AnalysisBackend::Explicit);
                 if (explicitAttempt != region->second.end() && explicitAttempt->second.mathematical &&
-                    explicitAttempt->second.mathematical->explicitDemands &&
+                    explicitAttempt->second.mathematical->concreteDemands() &&
                     (!request.needs.synchronization || explicitAttempt->second.endpoints.value_or(true))) {
                     retained = nullptr;
                 }
@@ -735,8 +740,8 @@ std::shared_ptr<const RegionalAnalysis> allocationRegion(const MathematicalResul
     if (demands.sequenceDemands) {
         return std::make_shared<const RegionalAnalysis>(sequenceRegionalResult(*demands.sequenceDemands));
     }
-    if (demands.finiteGuardedDemands) {
-        return std::make_shared<const RegionalAnalysis>(finiteGuardedRegionalResult(*demands.finiteGuardedDemands));
+    if (demands.finiteDemands && demands.finiteDemands->guarded()) {
+        return std::make_shared<const RegionalAnalysis>(finiteGuardedRegionalResult(*demands.finiteDemands->guarded()));
     }
     return {};
 }
@@ -770,7 +775,7 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
     uint64_t& guardedImportWork, AllocationProfile* allocationProfile)
 {
     const auto plan = prepared.planId;
-    if (demands.explicitDemands) { return explicitAllocationCertificate(*demands.explicitDemands, plan, context); }
+    if (demands.concreteDemands()) { return explicitAllocationCertificate(*demands.concreteDemands(), plan, context); }
     if (demands.numericNode) {
         return demands.numericalDemands ?
             encodePeriodicSharedAllocation(demands.numericalDemands->analysis, plan, context) : DictionaryAttr{};
@@ -801,7 +806,7 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
         return guardedPeriodicAllocationCertificate(*conversion.expressions, conversion.payloads,
             conversion.generators, *conversion.guarded, plan, context);
     }
-    if (demands.sequenceDemands || demands.finiteGuardedDemands) {
+    if (demands.sequenceDemands || (demands.finiteDemands && demands.finiteDemands->guarded())) {
         auto region = allocationRegion(demands);
         auto certificate = regionalAllocationCertificate(*region, prepared, allocationProfile);
         return certificate ? certificate : finiteRegionalAllocationCertificate(*region, prepared);
@@ -934,7 +939,8 @@ void FrontierAnalysis::invalidate()
 {
     // Dropping modeled input makes all old handles ineligible for preparation.
     // initialize rebuilds every dependent cache before accepting another request.
-    explicitAnalysis.reset();
+    concreteFinite.reset();
+    finiteInput.reset();
     sequenceAnalysis.reset();
     arithmeticAnalysis.reset();
     generalArithmeticAnalysis.reset();

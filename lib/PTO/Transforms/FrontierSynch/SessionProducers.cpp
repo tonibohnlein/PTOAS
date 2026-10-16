@@ -313,7 +313,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceExpandedFinit
         if (cached.demandError.empty()) {
             auto owned = std::make_shared<MathematicalResult>();
             owned->input = storage; owned->recognition = program;
-            owned->normalizedInput = normalized; owned->finiteGuardedDemands = std::move(demands);
+            owned->normalizedInput = normalized; owned->expandedFiniteDemands = std::move(demands);
             owned->backend = "expanded-finite-guarded";
             cached.mathematical = std::move(owned);
         }
@@ -1134,14 +1134,14 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
     case AnalysisBackend::Explicit:
         if (failed(produceExplicitFunction())) {
             if (nativeScalarOnly) {
-                owned->explicitDemands = std::make_shared<ExplicitAnalysis>();
+                owned->finiteDemands = std::make_shared<FiniteAnalysis>(finiteInput, ExplicitAnalysis{});
                 owned->backend = "native-scalar";
                 return owned;
             }
-            error = explicitAnalysis ? explicitAnalysis->error : "explicit form unavailable";
+            error = concreteFinite ? concreteFinite->error() : "explicit form unavailable";
             return {};
         }
-        owned->explicitDemands = explicitAnalysis;
+        owned->finiteDemands = concreteFinite;
         owned->backend = "explicit";
         return owned;
     case AnalysisBackend::NumericalPeriodic:
@@ -1216,14 +1216,13 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
     case AnalysisBackend::ExpandedFinite:
         return produceExpandedFinite(0, error);
     case AnalysisBackend::FiniteGuarded: {
-        SmallVector<Operation*> roots;
-        for (auto& operation : function.front()) {
-            if (!operation.hasTrait<OpTrait::IsTerminator>()) { roots.push_back(&operation); }
+        if (!finiteInput) { finiteInput = finiteFunctionInput(function, storage, structuralIndex); }
+        auto demands = analyzeFinite(finiteInput, FiniteStrategy::Guarded);
+        if (!demands || !demands->error().empty()) {
+            error = demands ? demands->error() : "finite original input unavailable";
+            return {};
         }
-        auto demands = std::make_shared<FiniteGuardedAnalysis>(
-            analyzeFiniteGuarded(function, roots, *structuralIndex, *storage));
-        if (!demands->error.empty()) { error = demands->error; return {}; }
-        owned->finiteGuardedDemands = std::move(demands);
+        owned->finiteDemands = std::move(demands);
         owned->backend = "finite-guarded";
         return owned;
     }

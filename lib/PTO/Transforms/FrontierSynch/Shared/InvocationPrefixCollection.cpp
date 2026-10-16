@@ -336,8 +336,8 @@ LogicalResult collectInvocationPrefix(
     if (retained->boundedDemands) {
         return appendBoundedPrefixRealization(retained->boundedDemands, collection, error);
     }
-    if (retained->explicitDemands) {
-        return appendExplicitPrefixRealization(*retained->explicitDemands, collection, error);
+    if (retained->concreteDemands()) {
+        return appendExplicitPrefixRealization(*retained->concreteDemands(), collection, error);
     }
     if (retained->sequenceDemands && retained->sequenceDemands->state) {
         return retained->sequenceDemands->state->collectPrefix(collection, error);

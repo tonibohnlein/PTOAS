@@ -143,7 +143,7 @@ public:
     // success for a proper child does not establish this property.
     bool hasWholeFunctionMinimumDemands() const;
     void noteSequenceEndpointOutcome(StringRef error);
-    const ExplicitAnalysis* explicitResult() const { return explicitAnalysis ? &*explicitAnalysis : nullptr; }
+    const ExplicitAnalysis* explicitResult() const { return concreteFinite ? concreteFinite->concrete() : nullptr; }
     const SyncInput* input() const { return storage.get(); }
     std::shared_ptr<const SyncInput> sharedInput() const { return storage; }
     // Diagnostic snapshots are current at this boundary. Reacquire after a
@@ -215,7 +215,8 @@ private:
     std::shared_ptr<SyncInput> storage;
     std::shared_ptr<ProgramRecognition> program;
     std::shared_ptr<PhaseIndex> structuralIndex;
-    std::shared_ptr<ExplicitAnalysis> explicitAnalysis;
+    std::shared_ptr<const FiniteOccurrenceInput> finiteInput;
+    std::shared_ptr<FiniteAnalysis> concreteFinite;
     AnalysisConstructionCounts construction;
     std::shared_ptr<SequenceAnalysis> sequenceAnalysis;
     std::shared_ptr<ArithmeticDemandAnalysis> arithmeticAnalysis;
