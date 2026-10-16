@@ -24,12 +24,17 @@ def invoke(tool, path, mode="--structured-trace"):
     return run.stdout if mode == "--insert-logical-library" else json.loads(run.stdout)
 
 
-def validate(report, g, h, n, offset, protected=False):
+def validate(report, g, h, n, offset, protected=False, parity=False):
     assert report["accepted"], report
     trace = report["trace"]
     assert not trace["error"], trace
     payloads = [event for event in trace["events"] if event["kind"] == "payload"]
-    assert [event["label"] for event in payloads] == (["L" if h else "B", "C"] * n if g else [])
+    expected = []
+    if g:
+        for iteration in range(n):
+            active_arm = iteration % 2 == 0 if parity else bool(h)
+            expected.extend([("L" if active_arm else "B", [iteration]), ("C", [iteration])])
+    assert [(event["label"], event["coordinates"]) for event in payloads] == expected
     effects = []
     for event in payloads:
         iteration, = event["coordinates"]
@@ -148,8 +153,9 @@ def main():
                     tainted.add(value)
         assert "overflow<nsw>" not in entry_emitted or masked, emitted
         count += 2
-        # Repeatedly alternating presence is outside immutable guards and finite
-        # monotone boundary slicing (a single equality is now supported there).
+        # The dispatcher can select an exact route for alternating arm guards.
+        # The existing N=3 case visits both arms and revisits the first bank;
+        # check its per-visit payload and full raw-conflict command closure.
         varying = source.replace("// LOCAL_GUARD", "%parity = arith.remui %i, %banks : index\n"
                                  "        %varying = arith.cmpi eq, %parity, %zero : index")
         varying = varying.replace("scf.if %h", "scf.if %varying")
@@ -158,11 +164,12 @@ def main():
         nonadjacent = "\n".join(line for line in source.splitlines() if "pto.tmatmul" not in line)
         path.write_text(varying)
         report = invoke(tool, path)
-        assert not report["accepted"] and report["unchanged_on_failure"], report
+        validate(report, 1, 1, 3, 0, parity=True)
+        count += 1
         path.write_text(nonadjacent)
         report = invoke(tool, path)
         assert report["accepted"], report
-    print(f"guarded rotating: {count} physical-conflict traces and nonadjacent insertion and guard rejection passed")
+    print(f"guarded rotating: {count} physical-conflict traces, parity arms and nonadjacent insertion passed")
 
 
 if __name__ == "__main__":
