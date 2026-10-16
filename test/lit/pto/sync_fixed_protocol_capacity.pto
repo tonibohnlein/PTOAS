@@ -9,3 +9,5 @@
 // The fixture pins one history-enabled decode command protocol, not a hardware bound.
 // RUN: %python %S/Inputs/check_delta_fixed_protocol.py %S/Inputs/delta_fixed_protocol.json
 // Delta pins one feasible token and the actual prefix publications/acquisitions.
+// RUN: %python %S/Inputs/check_prefill_protocol_capacity.py %S/Inputs/prefill_fixed_protocol.json
+// Prefill preserves all payloads for one four-token invocation and pins its actual logical protocol.

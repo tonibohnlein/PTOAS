@@ -1,0 +1,3170 @@
+{
+  "input": "test/npu_validation/benchmarks/auto_sync/prepared/causal_conv1d_prefill/input.pto",
+  "input_sha256": "4a2da46ad42fbded8d15dd4b64cdabc93ae0df9570ea6d5d165712361ce16831",
+  "bindings": {
+    "block_index": 0,
+    "sequence_start": 0,
+    "sequence_end": 4,
+    "cache_index": 0,
+    "initial": 1,
+    "flag_read_0": 1,
+    "flag_read_1": 1,
+    "flag_read_2": 1
+  },
+  "premises": [
+    "Original valid initialized storage and may-not-alias policy.",
+    "Block zero; seqlens[0]=0 and seqlens[1]=4; cache[0]=0; initial[0]=1.",
+    "Both original i32 flag tiles have sole texpands(1) writers; all three observed reads are one.",
+    "Original payloads and command order/cuts/matching unchanged; no textual SET-to-WAIT edge.",
+    "One fixed logical protocol only; no claim about other realizations, hardware, or device execution."
+  ],
+  "provenance": {
+    "source_sha256": "4a2da46ad42fbded8d15dd4b64cdabc93ae0df9570ea6d5d165712361ce16831",
+    "logical_sha256": "2dfbd821eff156d38028e86e2a6a4175ca9a5a8fd362a0858bbf95494dd60908",
+    "tracer_sha256": "ca72cf39cf01463af94af4fc13d4a8c27fd1bca78814eb3a802bbfdc8e036948",
+    "script_sha256": "7b21551bb8bb52c922ae14598215266e9d4d7c7cfb2e846722b362bdfc903f43",
+    "oracle_sha256": {
+      "check_fixed_protocol_capacity.py": "64b924ff07ac21246ab6c7507a05b0434cc1d072069cab1faa1334d1ec13efb2",
+      "check_logical_insertion.py": "facbee1b7ad2a150bae7a9cb1d66ecfd5b9ff9a49d8b75a2f9c279ab056b2474"
+    }
+  },
+  "original_report": {
+    "accepted": true,
+    "trace": {
+      "arithmetic_visits": 179,
+      "error": "",
+      "events": [
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 0
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 2
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 3
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 4
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 5
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 6
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 7
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 8
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 9
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 10
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 11
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 12
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 13
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 14
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 15
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 16
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 17
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 21
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 22
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 23
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 24
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 25
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 26
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 27
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 28
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 29
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 30
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 31
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 32
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 33
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 38
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 39
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 40
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 41
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 42
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 43
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 44
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 45
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 46
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 47
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 48
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 49
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 50
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 51
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 52
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 53
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 54
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 55
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 56
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 57
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 58
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 59
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 60
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 61
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 62
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 63
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 64
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 65
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 66
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 67
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 68
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 69
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 70
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 71
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 72
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 73
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 74
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 75
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 76
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 77
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 78
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 79
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 80
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 81
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 82
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 83
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 84
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 85
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 86
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 87
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 88
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 89
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 90
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 91
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 92
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 93
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 94
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 95
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 96
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 97
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 98
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 99
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 100
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 101
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 102
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 103
+        }
+      ],
+      "function": "causal_conv1d_prefill",
+      "guard_visits": 9,
+      "outer_trips": 0,
+      "payloads": 97,
+      "select_visits": 0,
+      "visit_limit": 20000000,
+      "visits": 361
+    }
+  },
+  "report": {
+    "accepted": true,
+    "trace": {
+      "arithmetic_visits": 70912,
+      "error": "",
+      "events": [
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 0
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 2
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 3
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 4
+        },
+        {
+          "gap": 5,
+          "kind": "set",
+          "members": [
+            0
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 0,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 5
+        },
+        {
+          "gap": 6,
+          "kind": "set",
+          "members": [
+            110
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 0,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 6
+        },
+        {
+          "gap": 7,
+          "kind": "set",
+          "members": [
+            13
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 7,
+          "kind": "set",
+          "members": [
+            17
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 7,
+          "kind": "set",
+          "members": [
+            26
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 7,
+          "kind": "set",
+          "members": [
+            115
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 7
+        },
+        {
+          "gap": 8,
+          "kind": "set",
+          "members": [
+            21
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 8,
+          "kind": "set",
+          "members": [
+            30
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 8,
+          "kind": "set",
+          "members": [
+            116
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 8
+        },
+        {
+          "gap": 9,
+          "kind": "set",
+          "members": [
+            35
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 9,
+          "kind": "set",
+          "members": [
+            117
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 9
+        },
+        {
+          "gap": 10,
+          "kind": "set",
+          "members": [
+            118
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 10
+        },
+        {
+          "gap": 11,
+          "kind": "set",
+          "members": [
+            1
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 11,
+          "kind": "set",
+          "members": [
+            5
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 11
+        },
+        {
+          "gap": 12,
+          "kind": "set",
+          "members": [
+            2
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 12,
+          "kind": "set",
+          "members": [
+            7
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 12
+        },
+        {
+          "gap": 13,
+          "kind": "set",
+          "members": [
+            3
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 13,
+          "kind": "set",
+          "members": [
+            9
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 13,
+          "kind": "wait",
+          "members": [
+            0
+          ],
+          "pipe": 0,
+          "plan": 0,
+          "record": 0,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 13
+        },
+        {
+          "gap": 14,
+          "kind": "wait",
+          "members": [
+            1
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 14
+        },
+        {
+          "gap": 15,
+          "kind": "set",
+          "members": [
+            24
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 15,
+          "kind": "set",
+          "members": [
+            99
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 98,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 5
+        },
+        {
+          "gap": 15,
+          "kind": "wait",
+          "members": [
+            2
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 15
+        },
+        {
+          "gap": 16,
+          "kind": "set",
+          "members": [
+            15
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 16,
+          "kind": "set",
+          "members": [
+            29
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 16,
+          "kind": "set",
+          "members": [
+            100
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 98,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 5
+        },
+        {
+          "gap": 16,
+          "kind": "wait",
+          "members": [
+            3
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 16
+        },
+        {
+          "gap": 17,
+          "kind": "set",
+          "members": [
+            11
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 17,
+          "kind": "set",
+          "members": [
+            19
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 17,
+          "kind": "set",
+          "members": [
+            34
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 17,
+          "kind": "set",
+          "members": [
+            101
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 98,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 17
+        },
+        {
+          "gap": 18,
+          "kind": "wait",
+          "members": [
+            11
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 21
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 22
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 23
+        },
+        {
+          "gap": 21,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 24
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 25
+        },
+        {
+          "gap": 23,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 26
+        },
+        {
+          "gap": 24,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 27
+        },
+        {
+          "gap": 25,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 28
+        },
+        {
+          "gap": 26,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 29
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 30
+        },
+        {
+          "gap": 28,
+          "kind": "set",
+          "members": [
+            103
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 31
+        },
+        {
+          "gap": 29,
+          "kind": "set",
+          "members": [
+            105
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 32
+        },
+        {
+          "gap": 30,
+          "kind": "set",
+          "members": [
+            107
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 33
+        },
+        {
+          "gap": 31,
+          "kind": "set",
+          "members": [
+            109
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 31,
+          "kind": "wait",
+          "members": [
+            103
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 38
+        },
+        {
+          "gap": 32,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 39
+        },
+        {
+          "gap": 33,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 40
+        },
+        {
+          "gap": 34,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 41
+        },
+        {
+          "gap": 35,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 42
+        },
+        {
+          "gap": 36,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 43
+        },
+        {
+          "gap": 37,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 44
+        },
+        {
+          "gap": 38,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 45
+        },
+        {
+          "gap": 39,
+          "kind": "set",
+          "members": [
+            48,
+            0
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 48,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 46
+        },
+        {
+          "gap": 40,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 47
+        },
+        {
+          "gap": 41,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 48
+        },
+        {
+          "gap": 42,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 49
+        },
+        {
+          "gap": 43,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 50
+        },
+        {
+          "gap": 44,
+          "kind": "wait",
+          "members": [
+            105
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 51
+        },
+        {
+          "gap": 45,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 52
+        },
+        {
+          "gap": 46,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 53
+        },
+        {
+          "gap": 47,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 54
+        },
+        {
+          "gap": 48,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 55
+        },
+        {
+          "gap": 49,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 56
+        },
+        {
+          "gap": 50,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 57
+        },
+        {
+          "gap": 51,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 58
+        },
+        {
+          "gap": 52,
+          "kind": "set",
+          "members": [
+            61,
+            0
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 48,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 59
+        },
+        {
+          "gap": 53,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 60
+        },
+        {
+          "gap": 54,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 61
+        },
+        {
+          "gap": 55,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 62
+        },
+        {
+          "gap": 56,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 63
+        },
+        {
+          "gap": 57,
+          "kind": "wait",
+          "members": [
+            107
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 64
+        },
+        {
+          "gap": 58,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 65
+        },
+        {
+          "gap": 59,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 66
+        },
+        {
+          "gap": 60,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 67
+        },
+        {
+          "gap": 61,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 68
+        },
+        {
+          "gap": 62,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 69
+        },
+        {
+          "gap": 63,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 70
+        },
+        {
+          "gap": 64,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 71
+        },
+        {
+          "gap": 65,
+          "kind": "set",
+          "members": [
+            74,
+            0
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 48,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 72
+        },
+        {
+          "gap": 66,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 73
+        },
+        {
+          "gap": 67,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 74
+        },
+        {
+          "gap": 68,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 75
+        },
+        {
+          "gap": 69,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 76
+        },
+        {
+          "gap": 70,
+          "kind": "wait",
+          "members": [
+            109
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 77
+        },
+        {
+          "gap": 71,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 78
+        },
+        {
+          "gap": 72,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 79
+        },
+        {
+          "gap": 73,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 80
+        },
+        {
+          "gap": 74,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 81
+        },
+        {
+          "gap": 75,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 82
+        },
+        {
+          "gap": 76,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 83
+        },
+        {
+          "gap": 77,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 84
+        },
+        {
+          "gap": 78,
+          "kind": "set",
+          "members": [
+            87,
+            0
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 48,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 85
+        },
+        {
+          "gap": 79,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 86
+        },
+        {
+          "gap": 80,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 87
+        },
+        {
+          "gap": 81,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 88
+        },
+        {
+          "gap": 82,
+          "kind": "barrier",
+          "pipe": 1
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 89
+        },
+        {
+          "gap": 83,
+          "kind": "wait",
+          "members": [
+            48,
+            0
+          ],
+          "pipe": 5,
+          "plan": 0,
+          "record": 48,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 90
+        },
+        {
+          "gap": 84,
+          "kind": "wait",
+          "members": [
+            61,
+            0
+          ],
+          "pipe": 5,
+          "plan": 0,
+          "record": 48,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 91
+        },
+        {
+          "gap": 85,
+          "kind": "wait",
+          "members": [
+            74,
+            0
+          ],
+          "pipe": 5,
+          "plan": 0,
+          "record": 48,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 92
+        },
+        {
+          "gap": 86,
+          "kind": "wait",
+          "members": [
+            87,
+            0
+          ],
+          "pipe": 5,
+          "plan": 0,
+          "record": 48,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [
+            0
+          ],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 93
+        },
+        {
+          "gap": 87,
+          "kind": "wait",
+          "members": [
+            110
+          ],
+          "pipe": 0,
+          "plan": 0,
+          "record": 0,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 0
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 0,
+          "type": 94
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 95
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 96
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 1,
+          "type": 97
+        },
+        {
+          "gap": 91,
+          "kind": "set",
+          "members": [
+            97
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 91,
+          "kind": "wait",
+          "members": [
+            97
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 98
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 99
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 4,
+          "type": 100
+        },
+        {
+          "gap": 94,
+          "kind": "set",
+          "members": [
+            98
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 98,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 5
+        },
+        {
+          "gap": 94,
+          "kind": "wait",
+          "members": [
+            98
+          ],
+          "pipe": 5,
+          "plan": 0,
+          "record": 98,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 5
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 101
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 102
+        },
+        {
+          "coordinates": [],
+          "kind": "payload",
+          "pipe": 5,
+          "type": 103
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            5
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            7
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            9
+          ],
+          "pipe": 4,
+          "plan": 0,
+          "record": 1,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 1,
+          "target_pipe": 4
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            13
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            15
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            17
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            19
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            21
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            24
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            26
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            29
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            30
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            34
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            35
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            99
+          ],
+          "pipe": 5,
+          "plan": 0,
+          "record": 98,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 5
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            100
+          ],
+          "pipe": 5,
+          "plan": 0,
+          "record": 98,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 5
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            101
+          ],
+          "pipe": 5,
+          "plan": 0,
+          "record": 98,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 5
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            115
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            116
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            117
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "wait",
+          "members": [
+            118
+          ],
+          "pipe": 1,
+          "plan": 0,
+          "record": 10,
+          "record_label": true,
+          "source_ordinal": 0,
+          "source_pipe": 4,
+          "target_pipe": 1
+        },
+        {
+          "gap": 97,
+          "kind": "barrier",
+          "pipe": 6
+        }
+      ],
+      "function": "causal_conv1d_prefill",
+      "guard_visits": 163,
+      "outer_trips": 0,
+      "payloads": 97,
+      "select_visits": 2220,
+      "visit_limit": 20000000,
+      "visits": 71479
+    }
+  },
+  "expected": {
+    "payloads": 97,
+    "commands": 124,
+    "directions": [
+      {
+        "direction": [
+          1,
+          0
+        ],
+        "handoffs": 2,
+        "minimum_ids": 2,
+        "reuse_edges": 0,
+        "antichain": [
+          [
+            1,
+            0,
+            0,
+            0,
+            0,
+            [
+              0
+            ]
+          ],
+          [
+            1,
+            0,
+            0,
+            0,
+            0,
+            [
+              110
+            ]
+          ]
+        ]
+      },
+      {
+        "direction": [
+          1,
+          4
+        ],
+        "handoffs": 7,
+        "minimum_ids": 6,
+        "reuse_edges": 3,
+        "antichain": [
+          [
+            1,
+            4,
+            0,
+            1,
+            0,
+            [
+              1
+            ]
+          ],
+          [
+            1,
+            4,
+            0,
+            1,
+            0,
+            [
+              5
+            ]
+          ],
+          [
+            1,
+            4,
+            0,
+            1,
+            0,
+            [
+              2
+            ]
+          ],
+          [
+            1,
+            4,
+            0,
+            1,
+            0,
+            [
+              7
+            ]
+          ],
+          [
+            1,
+            4,
+            0,
+            1,
+            0,
+            [
+              3
+            ]
+          ],
+          [
+            1,
+            4,
+            0,
+            1,
+            0,
+            [
+              9
+            ]
+          ]
+        ]
+      },
+      {
+        "direction": [
+          1,
+          5
+        ],
+        "handoffs": 4,
+        "minimum_ids": 4,
+        "reuse_edges": 0,
+        "antichain": [
+          [
+            1,
+            5,
+            0,
+            48,
+            0,
+            [
+              48,
+              0
+            ]
+          ],
+          [
+            1,
+            5,
+            0,
+            48,
+            0,
+            [
+              61,
+              0
+            ]
+          ],
+          [
+            1,
+            5,
+            0,
+            48,
+            0,
+            [
+              74,
+              0
+            ]
+          ],
+          [
+            1,
+            5,
+            0,
+            48,
+            0,
+            [
+              87,
+              0
+            ]
+          ]
+        ]
+      },
+      {
+        "direction": [
+          4,
+          1
+        ],
+        "handoffs": 20,
+        "minimum_ids": 20,
+        "reuse_edges": 0,
+        "antichain": [
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              13
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              17
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              26
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              115
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              21
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              30
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              116
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              35
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              117
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              118
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              24
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              15
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              29
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              11
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              19
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              34
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              103
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              105
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              107
+            ]
+          ],
+          [
+            4,
+            1,
+            0,
+            10,
+            0,
+            [
+              109
+            ]
+          ]
+        ]
+      },
+      {
+        "direction": [
+          4,
+          5
+        ],
+        "handoffs": 4,
+        "minimum_ids": 4,
+        "reuse_edges": 0,
+        "antichain": [
+          [
+            4,
+            5,
+            0,
+            98,
+            0,
+            [
+              99
+            ]
+          ],
+          [
+            4,
+            5,
+            0,
+            98,
+            0,
+            [
+              100
+            ]
+          ],
+          [
+            4,
+            5,
+            0,
+            98,
+            0,
+            [
+              101
+            ]
+          ],
+          [
+            4,
+            5,
+            0,
+            98,
+            0,
+            [
+              98
+            ]
+          ]
+        ]
+      }
+    ]
+  }
+}
