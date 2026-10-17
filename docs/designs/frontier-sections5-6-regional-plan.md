@@ -1,6 +1,6 @@
 # Sections 5–6: regional fallback and reusable certificates
 
-Baseline: `4710959d9`. Status: M1–M3 accepted; M4–M5 remain open.
+Baseline: `4710959d9`. Status: M1–M4 accepted; M5 remains open.
 
 The implementation preserves exact minimum demands, original cuts, matching and
 established realization guarantees on exact paths. Completion fallback reports
@@ -226,3 +226,42 @@ pairs give an original-fixture candidate/baseline median ratio of 0.997. The
 two-phase fixture's baseline hit 20 seconds in all three pairs; candidate runs
 completed around 0.040 seconds. Those baseline measurements are censored, so no
 finite speedup ratio is claimed. No device measurement was performed.
+
+## M4 implementation and qualification
+
+Rotating generator extraction and bounded refresh qualification now share one
+geometry/protection normalizer. It retains supplied fragment order, validates
+family moduli/strides and duplicate protection, and computes orbit phases without
+constructing hazard generators or enumerating slots. Generator extraction keeps
+its existing consolidation and circular sweeps after normalization.
+
+Refresh qualification groups guaranteed writer phases by family, atom and orbit.
+The largest circular gap in each union bounds refresh from any starting visit;
+the final bound includes the supplied prerequisite span. Possible writers do not
+establish guaranteed refresh. Complementary guards count only through the
+existing producer's exact-map coverage proof. Read-only orbits require no refresh;
+an uncovered writable orbit still refuses. This changes a sufficient window
+bound, not activity, endpoint availability, history or the physical-ID protocol.
+
+The existing bounded owner retains one window for subsequent requests and exports.
+No new runtime evaluator or separate bounded emitter is introduced. The new
+physical-orbit oracle enumerates slots and start visits independently, and
+compares the shorter window's source covers with the older sufficient window.
+Production tests retain dynamically changing guards and independent command
+closure checks. Normalization scaling counts supplied fragments and families for
+64–4,096 fragments over a 2^48-slot domain; it does not expand that domain.
+
+| Previous work | Replacement | Removal status |
+|---|---|---|
+| Refresh calls full rotating generator extraction only for validation | Shared original-order normalization | Unused generator construction removed |
+| Maximum individual writer period | Maximum gap of guaranteed writer phase union | Old bound construction removed; prerequisites remain |
+| Repeated duplicate-protection validation during consolidation | Shared normalizer validates the exact key | Redundant production rejection removed |
+
+Both reviewers accepted M4 after 19/19 focused tests and the independent
+refresh/rank oracle passed. The [M4 receipt](frontier-sections56-m4-results.json)
+records 13,640 physical-orbit cases and the production command checks. Three
+interleaved short fixture runs have a median paired ratio of 0.646; this is a
+fixture-local observation including process/interpreter overhead, not an
+end-to-end compiler or device speedup claim. Interpreted arithmetic falls from
+3,603 to 2,175 evaluations with 39 trace events in each version; both pass the
+independent conflict/order oracle.

@@ -467,10 +467,12 @@ bool storageScans()
     return true;
 }
 } // namespace
+bool checkCollectiveRotatingRefresh();
 int runGuardedRankChecks()
 {
     mlir::MLIRContext context;
-    if (!compactFiniteControlChecks::run(context) || !moduloSpans() || !storageScans() ||
+    if (!checkCollectiveRotatingRefresh() || !compactFiniteControlChecks::run(context) ||
+        !moduloSpans() || !storageScans() ||
         !referenceRankConstruction(context) || !activityOnlyRows(context) ||
         !writerPairIndexChecks() || !restrictedIncomingScaling(context) ||
         !guardedQueryProjectionChecks::run(context)) {

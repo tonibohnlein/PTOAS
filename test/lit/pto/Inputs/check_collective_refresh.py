@@ -58,7 +58,7 @@ def variants(source):
         ("missing_arm", missing, False), ("same_orbit_different_offsets", shifted, False))]
 
 
-def check_trace(document, n, threshold, nested):
+def check_trace(document, n, threshold, nested, banks=2, extra_writer=False):
     assert document["accepted"] and not document["trace"]["error"], document
     payloads = [item for item in document["trace"]["events"] if item["kind"] == "payload"]
     expected_payloads = []
@@ -66,9 +66,13 @@ def check_trace(document, n, threshold, nested):
     for visit in range(n):
         writer = "writer_else" if visit >= threshold else (
             "writer_other" if nested and visit % 2 else "writer_then")
-        expected_payloads.extend(((writer, [visit]), ("compute", [visit])))
-        accesses.extend((({("mat", 0)}, {("left", visit % 2)}),
-                         ({("left", visit % 2), ("right", 0)}, {("acc", 0)})))
+        expected_payloads.append((writer, [visit]))
+        accesses.append(({("mat", 0)}, {("left", visit % banks)}))
+        if extra_writer:
+            expected_payloads.append(("writer_offset", [visit]))
+            accesses.append(({("mat", 0)}, {("left", (visit + 2) % banks)}))
+        expected_payloads.append(("compute", [visit]))
+        accesses.append(({("left", visit % banks), ("right", 0)}, {("acc", 0)}))
     assert [(item["label"], item["coordinates"]) for item in payloads] == expected_payloads
     edges = native([item["pipe"] for item in payloads])
     for a, (reads, writes) in enumerate(accesses):
@@ -110,7 +114,26 @@ def main():
                 result = subprocess.run([tool, "--structured-trace", str(path)], capture_output=True,
                                         text=True, check=True, timeout=90)
                 check_trace(json.loads(result.stdout), n, threshold, name == "nested")
-    print("collective refresh: complementary/nested guards, exact covers and map-offset rejection passed")
+        # Two guaranteed writer maps jointly refresh four slots every two visits.
+        # One map remains supplied by complementary dynamically changing guards.
+        collective = variants(source)[0][1].replace("count=2", "count=4").replace(
+            "%two = arith.constant 2", "%two = arith.constant 4")
+        extra = ("      %half = arith.constant 2 : index\n"
+                 "      %shifted = arith.addi %slot, %half : index\n"
+                 "      %offsetslot = arith.remui %shifted, %two : index\n"
+                 "      %offsetleft = pto.multi_tile_get %ring[%offsetslot] : !ring -> !left\n" +
+                 labelled_writer("writer_offset", "%offsetleft") + "\n")
+        collective = collective.replace(COMPUTE, extra + COMPUTE)
+        path.write_text(collective)
+        good = [item for item in attempts(report(tool, path), "bounded-lifetime")
+                if item["state"] == "applicable"]
+        assert len(good) == 1 and good[0]["refresh_span"] == 2, good
+        for n, threshold in ((0, 0), (1, 0), (2, 1), (3, 2), (5, 4), (7, 2)):
+            path.write_text(collective.replace("array<i64: 2, 3>", f"array<i64: {n}, {threshold}>"))
+            result = subprocess.run([tool, "--structured-trace", str(path)], capture_output=True,
+                                    text=True, check=True, timeout=90)
+            check_trace(json.loads(result.stdout), n, threshold, False, banks=4, extra_writer=True)
+    print("collective refresh: complementary/nested guards, circular coverage and exact covers passed")
 
 
 if __name__ == "__main__":

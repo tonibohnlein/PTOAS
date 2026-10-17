@@ -6,12 +6,13 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Sort accesses to one representative slot by modular phase and body order.
-#include "PTO/Transforms/FrontierSynch/Structured/RotatingExtraction.h"
+#include "RotatingNormalization.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "llvm/ADT/APInt.h"
 #include "../Shared/ModularArithmetic.h"
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <tuple>
 #include <unordered_map>
@@ -33,12 +34,7 @@ struct Family {
     uint64_t period;
     uint64_t inverseStride;
 };
-struct Access {
-    RotatingFragment fragment;
-    uint64_t residue;
-    uint64_t phase;
-    uint64_t period;
-};
+using Access = NormalizedRotatingFragment;
 auto key(const Access& access)
 {
     return std::make_tuple(access.fragment.family, access.fragment.atom, access.residue,
@@ -59,43 +55,27 @@ uint64_t distance(const Access& source, const Access& target)
     }
     return source.fragment.payload < target.fragment.payload ? 0 : source.period;
 }
-class Extractor {
+class Normalizer {
 public:
-    RotatingExtraction output;
-    Extractor(llvm::ArrayRef<PeriodicPayload> input, StorageProtectionPolicy policy)
-        : storageProtection(policy), payloads(input) {}
+    RotatingNormalization output;
+    explicit Normalizer(llvm::ArrayRef<PeriodicPayload> input) : payloads(input) {}
     bool run(llvm::ArrayRef<RotatingFragment> fragments)
     {
         const auto maxID = std::numeric_limits<uint32_t>::max();
         if (payloads.size() > maxID / 3 || fragments.size() > maxID / 2) {
-            output.error = "rotating generator identity overflow";
-            return false;
+            output.error = "rotating generator identity overflow"; return false;
         }
         for (const auto& fragment : fragments) {
-            if (!append(fragment)) {
-                return false;
-            }
+            ++output.inspectedFragments;
+            if (!append(fragment)) { return false; }
         }
-        if (!consolidate()) {
-            return false;
-        }
-        for (std::size_t first = 0; first < accesses.size();) {
-            std::size_t end = first + 1;
-            while (end < accesses.size() && sameGroup(accesses[first], accesses[end])) {
-                ++end;
-            }
-            sweep(first, end);
-            first = end;
-        }
-        deduplicate();
         return true;
     }
 private:
-    StorageProtectionPolicy storageProtection;
     llvm::ArrayRef<PeriodicPayload> payloads;
     std::unordered_map<uint32_t, Family> families;
     std::unordered_map<uint64_t, uint32_t> groupPipes;
-    std::vector<Access> accesses;
+    std::map<std::tuple<uint32_t, uint32_t, uint64_t, uint64_t, uint32_t>, uint64_t> protections;
     bool append(RotatingFragment fragment)
     {
         if (fragment.payload >= payloads.size() || fragment.slots == 0 || (!fragment.read && !fragment.write)) {
@@ -111,7 +91,12 @@ private:
         const auto residue = fragment.offset % descriptor.divisor;
         const auto phase = modularPhase(fragment.offset / descriptor.divisor,
                                         descriptor.inverseStride, descriptor.period);
-        accesses.push_back({fragment, residue, phase, descriptor.period});
+        auto normalized = Access{fragment, residue, phase, descriptor.period};
+        auto found = protections.emplace(key(normalized), fragment.protectionGroup);
+        if (!found.second && found.first->second != fragment.protectionGroup) {
+            output.error = "inconsistent rotating access protection"; return false;
+        }
+        output.accesses.push_back(std::move(normalized));
         return true;
     }
     bool family(const RotatingFragment& fragment)
@@ -127,6 +112,7 @@ private:
         const auto divisor = std::gcd(fragment.stride, fragment.slots);
         const auto period = fragment.slots / divisor;
         const auto inverseStride = period == 1 ? 0 : detail::modularInverse(fragment.stride / divisor, period);
+        ++output.normalizedFamilies;
         families.emplace(fragment.family, Family{fragment.slots, fragment.stride, divisor, period, inverseStride});
         output.refreshBound = std::max(output.refreshBound, period);
         return true;
@@ -144,6 +130,36 @@ private:
         }
         return true;
     }
+};
+class Extractor {
+public:
+    RotatingExtraction output;
+    Extractor(llvm::ArrayRef<PeriodicPayload> input, StorageProtectionPolicy policy)
+        : storageProtection(policy), payloads(input) {}
+    bool run(llvm::ArrayRef<RotatingFragment> fragments)
+    {
+        auto normalized = normalizeRotatingFragments(payloads, fragments);
+        if (!normalized.error.empty()) { output.error = normalized.error; return false; }
+        output.refreshBound = normalized.refreshBound;
+        accesses = std::move(normalized.accesses);
+        if (!consolidate()) {
+            return false;
+        }
+        for (std::size_t first = 0; first < accesses.size();) {
+            std::size_t end = first + 1;
+            while (end < accesses.size() && sameGroup(accesses[first], accesses[end])) {
+                ++end;
+            }
+            sweep(first, end);
+            first = end;
+        }
+        deduplicate();
+        return true;
+    }
+private:
+    StorageProtectionPolicy storageProtection;
+    llvm::ArrayRef<PeriodicPayload> payloads;
+    std::vector<Access> accesses;
     bool consolidate()
     {
         std::sort(accesses.begin(), accesses.end(), [](const Access& a, const Access& b) { return key(a) < key(b); });
@@ -151,10 +167,8 @@ private:
         for (const auto& access : accesses) {
             if (kept != 0 && key(accesses[kept - 1]) == key(access)) {
                 auto& previous = accesses[kept - 1].fragment;
-                if (previous.protectionGroup != access.fragment.protectionGroup) {
-                    output.error = "inconsistent rotating access protection";
-                    return false;
-                }
+                // Shared normalization already checked protection agreement
+                // for this exact payload/family/atom/phase key.
                 previous.read |= access.fragment.read;
                 previous.write |= access.fragment.write;
             } else {
@@ -227,6 +241,17 @@ private:
     }
 };
 } // namespace
+RotatingNormalization normalizeRotatingFragments(llvm::ArrayRef<PeriodicPayload> payloads,
+    llvm::ArrayRef<RotatingFragment> fragments)
+{
+    Normalizer normalizer(payloads);
+    if (!normalizer.run(fragments)) {
+        RotatingNormalization failure;
+        failure.error = normalizer.output.error;
+        return failure;
+    }
+    return std::move(normalizer.output);
+}
 RotatingExtraction extractRotatingGenerators(llvm::ArrayRef<PeriodicPayload> payloads,
                                              llvm::ArrayRef<RotatingFragment> fragments,
                                              StorageProtectionPolicy protection)

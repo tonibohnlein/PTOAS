@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "RotatingNormalization.h"
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetime.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "../Shared/GuardedStorageScan.h"
@@ -203,36 +204,46 @@ RefreshCertificate certifyRotatingRefreshCoverage(
     if (coveredWriters.size() != fragments.size()) {
         result.error = "refresh coverage list does not match fragments"; return result;
     }
-    auto normalized = extractRotatingGenerators(payloads, fragments);
+    auto normalized = normalizeRotatingFragments(payloads, fragments);
     if (!normalized.error.empty()) {
         result.error = normalized.error;
         return result;
     }
     using Orbit = std::tuple<uint32_t, uint32_t, uint64_t>;
-    std::set<Orbit> writable, refreshed;
+    struct OrbitWriters {
+        uint64_t period = 0;
+        std::vector<uint64_t> phases;
+    };
+    std::map<Orbit, OrbitWriters> writable;
     result.span = prerequisiteSpan;
-    for (std::size_t i = 0; i < fragments.size(); ++i) {
-        const auto& f = fragments[i];
+    for (std::size_t i = 0; i < normalized.accesses.size(); ++i) {
+        const auto& access = normalized.accesses[i];
+        const auto& f = access.fragment;
         if (f.protectionGroup) {
             result.error = "refresh certificate requires ordinary storage generators";
             return result;
         }
-        if (!f.write) {
-            continue;
-        }
-        const auto divisor = std::gcd(f.stride % f.slots, f.slots);
-        Orbit orbit{f.family, f.atom, f.offset % divisor};
-        writable.insert(orbit);
-        if (coveredWriters[i]) {
-            refreshed.insert(orbit);
-            result.span = std::max(result.span, f.slots / divisor);
-        }
+        if (!f.write) { continue; }
+        auto& orbit = writable[{f.family, f.atom, access.residue}];
+        orbit.period = access.period;
+        if (coveredWriters[i]) { orbit.phases.push_back(access.phase); }
     }
-    for (const auto& orbit : writable) {
-        if (!refreshed.count(orbit)) {
+    for (auto& [key, orbit] : writable) {
+        auto& phases = orbit.phases;
+        if (phases.empty()) {
             result.error = "a writable orbit has no collectively complete refresh map";
             return result;
         }
+        std::sort(phases.begin(), phases.end());
+        phases.erase(std::unique(phases.begin(), phases.end()), phases.end());
+        // Every physical slot in this orbit translates the same circular word.
+        // The longest gap bounds refresh from any starting iteration. Subtract
+        // before adding to keep the wrap gap within the supplied period.
+        auto gap = orbit.period - (phases.back() - phases.front());
+        for (std::size_t i = 1; i < phases.size(); ++i) {
+            gap = std::max(gap, phases[i] - phases[i - 1]);
+        }
+        result.span = std::max(result.span, gap);
     }
     return result;
 }

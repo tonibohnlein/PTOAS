@@ -1,0 +1,188 @@
+{
+  "milestone": "M4 collective refresh and shared rotating normalization",
+  "status": "accepted",
+  "baseline_revision": "f920c40d4629130ad9fab97fe34a824fe77c2bc3",
+  "source_sha256": {
+    "lib/PTO/Transforms/FrontierSynch/Structured/BoundedLifetime.cpp": "b55662842a3bb457dac5be3425cb6ce9d59733fa77e8a1720d17f36aced9306f",
+    "lib/PTO/Transforms/FrontierSynch/Structured/RotatingExtraction.cpp": "838f85aaa4b9ac33fa681b891e30b6fc6a6d52f6546f005b7db077dcd006a71b",
+    "test/lit/pto/Inputs/check_collective_refresh.py": "8a497fd5ea32191cad4df1bc2146f07cbbff322a812319da60aa47b89c3aa251",
+    "tools/pto-test-opt/CMakeLists.txt": "6c926b8fde0030cddb39c3ef16f5118c2e4c191623c77a434d44915375dea972",
+    "tools/pto-test-opt/GuardedRankChecks.cpp": "bc9687eaf8f984a7874b968095d84715db76bb9fa93223eb60198b3607468978",
+    "lib/PTO/Transforms/FrontierSynch/Structured/RotatingNormalization.h": "7ab196ca6ecb1f42766d6173975fe3162ee759113b3eccfc69fedf292ea39587",
+    "tools/pto-test-opt/RotatingRefreshChecks.cpp": "1f9428c3f753bf65589fe360921d0d2006940efe66c55694e6fe52c5377de3bc"
+  },
+  "scope": {
+    "bound": "Maximum circular gap among guaranteed writer phases per writable family/atom/residue; supplied prerequisite span remains a maximum. No slot/iteration enumeration.",
+    "coverage": "Only existing exact-map unconditional/complementary-guard coverage contributes. Possible writers and uncovered writable orbits do not establish refresh.",
+    "ownership": "Existing retained bounded result/window and separate query/history exports unchanged.",
+    "normalization": "One geometry/protection validator shared by extraction and refresh; original input order retained. No hazard generators built for refresh validation."
+  },
+  "validation": {
+    "tests": [
+      {
+        "name": "PTOIR :: pto/sync_physical_refresh.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_regional_interfaces.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_varying_rotating.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_guarded_rotating_analysis.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_rotating_analysis.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_rotating_region.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_regional_allocation.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_first_tail_allocation.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_boundary_presence.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_macro_selectors.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_prefix_realization.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_rotating_extraction.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_lifetime_provenance.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_rotating_region_storage.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_predicate_history.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_recognition_rotating.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_endpoint_audit.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_allocation_session.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_inactive_emission.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/rotating_boundary_certificate.pto",
+        "status": "PASS"
+      }
+    ],
+    "physical_orbit_cases": 13640,
+    "window_oracle": "Source covers from spans2and4 agree for0..7trips; production fourbank/complementary writer fixture reports span2 and passes6 commandclosure traces.",
+    "scaling": "64/256/1024/4096 supplied fragments over2^48slots: inspectedFragments=N, normalizedFamilies=1, retained accesses=N. O(NlogN) normalization/grouping, no slot expansion.",
+    "negative": "Missing orbit, mixed/nonnormalized strides, zero slots, duplicate protection mismatch, protected refresh, interleaved family/mask association.",
+    "timing": {
+      "baseline_revision": "f920c40d4629130ad9fab97fe34a824fe77c2bc3",
+      "tools": {
+        "baseline": "fd0ab5473f54da6422bb4e48704d3b305aa3dde1116bad67cfa8bcc8e46a7b39",
+        "candidate": "2325f075e9f16ab74cd591979793404afa7baebddac8ba3897eabb4fe6f237f1"
+      },
+      "timeout_seconds": 20,
+      "runs": [
+        {
+          "fixture": "collective",
+          "pair": 0,
+          "tool": "baseline",
+          "seconds": 0.056708070915192366,
+          "status": 0
+        },
+        {
+          "fixture": "collective",
+          "pair": 0,
+          "tool": "candidate",
+          "seconds": 0.03601992316544056,
+          "status": 0
+        },
+        {
+          "fixture": "collective",
+          "pair": 1,
+          "tool": "baseline",
+          "seconds": 0.05628669587895274,
+          "status": 0
+        },
+        {
+          "fixture": "collective",
+          "pair": 1,
+          "tool": "candidate",
+          "seconds": 0.036878326907753944,
+          "status": 0
+        },
+        {
+          "fixture": "collective",
+          "pair": 2,
+          "tool": "baseline",
+          "seconds": 0.057034882716834545,
+          "status": 0
+        },
+        {
+          "fixture": "collective",
+          "pair": 2,
+          "tool": "candidate",
+          "seconds": 0.03685045521706343,
+          "status": 0
+        }
+      ],
+      "median_paired_ratio": 0.6461038133455574
+    },
+    "control": {
+      "baseline": {
+        "arithmetic_visits": 3603,
+        "select_visits": 881,
+        "guard_visits": 75,
+        "visits": 3767,
+        "events": 39
+      },
+      "candidate": {
+        "arithmetic_visits": 2175,
+        "select_visits": 491,
+        "guard_visits": 55,
+        "visits": 2319,
+        "events": 39
+      }
+    },
+    "comparison": "Both baseline/candidate measured traces independently checked with physical conflicts and command closure;39events each. No general speedup or device claim.",
+    "full_suite": "Final gate deferred to M5.",
+    "device": "Not run",
+    "compliance": {
+      "raw": "lib/PTO/Transforms/FrontierSynch/Structured/RotatingExtraction.cpp:150: error G.FMT.11-CPP put the control-statement body in braces\ntest/lit/pto/Inputs/check_collective_refresh.py:133: error G.EDV.02/G.EDV.05 do not start child processes from a Python test; use a shell test\ntools/pto-test-opt/GuardedRankChecks.cpp:474: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingRefreshChecks.cpp:44: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingRefreshChecks.cpp:51: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingRefreshChecks.cpp:58: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingRefreshChecks.cpp:70: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingRefreshChecks.cpp:90: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingRefreshChecks.cpp:94: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingRefreshChecks.cpp:103: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingRefreshChecks.cpp:110: error G.FMT.11-CPP put the control-statement body in braces\nchecked_files=7 errors=11 warnings=0\n",
+      "adjudication": "Remaining brace diagnostics are regex false positives; inspected fully braced bodies. Subprocess diagnostic is in existing lit compiler/oracle driver, not Python unit tests; argument-vector invocation, timeout and no shell follow established repository harness. One actual line-length issue fixed by line wrap."
+    }
+  },
+  "reviews": {
+    "architecture": "accepted after20test receipts",
+    "compiler_correctness": "accepted after20test receipts and source/mirror audit"
+  }
+}
