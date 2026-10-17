@@ -345,6 +345,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Shared/RegionSubstitution.cpp
   FrontierSynch/Shared/RegionalAllocation.cpp
   FrontierSynch/Shared/RegionalConstantPalette.cpp
+  FrontierSynch/Shared/RegionalSelectorPartition.cpp
   FrontierSynch/Shared/RegionalEvents.cpp
   FrontierSynch/Shared/RegionalLaneCertificate.cpp
   FrontierSynch/Shared/RegionalLaneExports.cpp

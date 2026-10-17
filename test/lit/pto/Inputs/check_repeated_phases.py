@@ -33,11 +33,49 @@ def main():
             path.write_text(source)
             report = json.loads(run(tool, "--sequence-analysis", path))
             assert not report["error"] and report["prepared"] and report["numeric_visits"] == 0, report
+            assert report["relational_compositions"] == 0, report
+            assert report["selector_partition_atoms"] <= 8, report
             small = run(tool, "--insert-logical", path)
             path.write_text(source.replace("array<i64: 2, 3>", "array<i64: 1000000000, 1000000001>"))
             large = run(tool, "--insert-logical", path)
             assert small == large.replace("1000000000, 1000000001", "2, 3")
             assert len(re.findall(r"(?m)^\s*scf\.for\b", small)) == 2 and "version = 4" in small
+        # Tile width changes the number of physical bytes, not the supplied
+        # bank/cell description. Inspect partition work and exercise emitted
+        # commands at each size, without widening the existing trace ceiling.
+        # Direct compact child exports may need no finite projection at all;
+        # the native partition oracle separately exercises nonempty partitions.
+        scaling = []
+        for width in (16, 32, 64, 128):
+            program = source.replace("16x16", f"{width}x{width}")
+            path.write_text(program)
+            report = json.loads(run(tool, "--sequence-analysis", path))
+            assert not report["error"] and report["prepared"], report
+            assert report["relational_compositions"] == 0, report
+            assert report["selector_partition_atoms"] <= 8, report
+            assert report["selector_partition_visits"] <= 128, report
+            scaling.append((report["selector_partition_atoms"], report["selector_partition_visits"]))
+            check(json.loads(run(tool, "--structured-trace", path)), [2, 3], outer_slots=3)
+            tested += 1
+        assert len(set(scaling)) == 1, scaling
+        print(f"rotating finite-boundary scaling: {scaling}", flush=True)
+        # Partially overlapping finite counterparts refine the same symbolic
+        # family twice. The independent oracle uses physical bytes here.
+        overlap = source.replace("16x16", "32x32")
+        overlap = overlap.replace("module attributes", "!partial = !pto.tile_buf<left, 16x32xf16, slayout=row_major>\n"
+                                  "module attributes")
+        overlap = overlap.replace("    %first =", "    %low = arith.constant 512 : i64\n"
+                                  "    %high = arith.constant 1024 : i64\n"
+                                  "    %a = pto.alloc_tile addr = %low : !partial\n"
+                                  "    %b = pto.alloc_tile addr = %high : !partial\n    %first =")
+        external = "outs(%first : !left)"
+        overlap = overlap.replace(external, "outs(%a : !partial)", 1)
+        overlap = overlap.replace(external, "outs(%b : !partial)", 1)
+        for n, m in ((0, 0), (1, 2), (4, 2)):
+            path.write_text(overlap.replace("array<i64: 2, 3>", f"array<i64: {n}, {m}>"))
+            check(json.loads(run(tool, "--structured-trace", path)), [n, m], outer_slots=3,
+                  external_ranges=((512, 1536), (1024, 2048)), bank_bytes=2048)
+            tested += 1
         # Enclosing q=1 composition must preserve the child's period-coordinate
         # divisor and original phase binding at every emitted endpoint.
         triple = source.replace("%n: index, %m: index", "%p: index, %n: index, %m: index")
@@ -87,9 +125,16 @@ def main():
         writer = writer.replace("      pto.tmatmul",
                                 "      pto.store %value, %out[%i] : !pto.ptr<f32, gm>, f32\n      pto.tmatmul")
         path.write_text(writer)
-        rejected = json.loads(run(tool, "--sequence-analysis", path))
-        assert rejected["error"] and not rejected["prepared"], rejected
-        assert "q1 repeat" in rejected["error"] and "q-phase repeat" in rejected["error"], rejected
+        report = json.loads(run(tool, "--sequence-analysis", path))
+        # The discharged writer still excludes the compact repetition route.
+        # An independently admitted arithmetic child is valid; check its actual
+        # output instead of requiring every production strategy to refuse.
+        assert not report["error"] and report["prepared"], report
+        assert report["arithmetic_regions"] == 1 and report["repeated_regions"] == 0, report
+        for n, m in ((0, 0), (1, 2), (2, 3), (4, 2)):
+            path.write_text(writer.replace("array<i64: 2, 3>", f"array<i64: {n}, {m}>"))
+            check(json.loads(run(tool, "--structured-trace", path)), [n, m], outer_slots=3, inner_writer=True)
+            tested += 1
         print(f"repeated phases: {tested} exact command closures, partial periods and compact size passed")
 
 

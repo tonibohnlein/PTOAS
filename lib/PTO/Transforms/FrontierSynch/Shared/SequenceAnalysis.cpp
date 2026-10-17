@@ -56,7 +56,8 @@ SequenceAnalysis finishSequence(std::shared_ptr<SequenceAnalysisState> state)
             &RegionalCost::retainedExpressionNodes, &RegionalCost::physicalFragments,
             &RegionalCost::rotatingResidues, &RegionalCost::numericVisits, &RegionalCost::repeatedRegions,
             &RegionalCost::phaseDescriptions, &RegionalCost::selectorComparisons, &RegionalCost::crossingCandidates,
-            &RegionalCost::implicationChecks, &RegionalCost::numericalLeafQueries,
+            &RegionalCost::implicationChecks, &RegionalCost::selectorPartitionVisits,
+            &RegionalCost::selectorPartitionAtoms, &RegionalCost::numericalLeafQueries,
             &RegionalCost::numericalIndexOperations, &RegionalCost::numericalMerges,
             &RegionalCost::numericalReusedChildren}) {
             accumulateCost(composer.costs.*member, cost.*member);

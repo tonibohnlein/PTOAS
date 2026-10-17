@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "../Shared/ModularArithmetic.h"
+#include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingRegion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/BoundingRepetition.h"
 #include "../Shared/RepeatedRegionInternal.h"
@@ -55,6 +56,43 @@ struct Storage {
     std::vector<FamilySelectors> families;
     std::shared_ptr<RepeatedStorage> residual;
     std::function<std::optional<Id>(RegionalEvent, RegionalEvent)> before;
+    std::optional<std::vector<uint64_t>> partition(SyncStorageCell requested, uint64_t& visits) const
+    {
+        if (requested.begin >= requested.end || requested.end > uint64_t(INT64_MAX) || residual) {
+            return std::nullopt;
+        }
+        std::set<uint64_t> cuts{requested.begin, requested.end};
+        for (const auto& item : families) {
+            accumulateCost(visits, 1);
+            const auto& f = item.family;
+            if (f.firstBank.space != requested.space) { continue; }
+            if (f.firstBank.base != requested.base) {
+                SmallVector<SyncStorageCell> domains{f.firstBank, requested};
+                if (!storageBasesAreComparable(domains, gmAliasPolicy)) { return std::nullopt; }
+                continue;
+            }
+            const auto canonical = f.firstBank.begin + f.offset * f.bankStride;
+            // Each local cell is uniform by the child certificate. Translating
+            // its endpoints partitions only the requested banks; neither the
+            // bank count nor the joint address period is expanded.
+            for (const auto& cell : item.cells) {
+                accumulateCost(visits, 1);
+                const auto first = f.firstBank.begin + (cell.cell.begin - canonical);
+                const auto end = f.firstBank.begin + (cell.cell.end - canonical);
+                if (requested.end <= first) { continue; }
+                const auto low = requested.begin < end ? 0 : (requested.begin - end) / f.bankStride + 1;
+                const auto high = std::min(f.banks - 1, (requested.end - 1 - first) / f.bankStride);
+                if (low > high) { continue; }
+                for (auto bank = low; bank <= high; ++bank) {
+                    accumulateCost(visits, 1);
+                    cuts.insert(std::max(requested.begin, first + bank * f.bankStride));
+                    cuts.insert(std::min(requested.end, end + bank * f.bankStride));
+                    if (cuts.size() - 1 > maxRegionalSlotVisits) { return std::nullopt; }
+                }
+            }
+        }
+        return std::vector<uint64_t>(cuts.begin(), cuts.end());
+    }
     bool normalizeReaders(std::vector<RegionalSelector>& selected, bool first) const
     {
         auto& e = *arena;
@@ -361,6 +399,22 @@ RepeatedRegionAnalysis repeatRotatingRegion(func::FuncOp function, scf::ForOp lo
     auto certificate = std::make_shared<RegionalSymbolicStorageCertificate>();
     certificate->expressions = out.expressions; certificate->accessModel = out.accessModel;
     certificate->gmAliasPolicy = out.gmAliasPolicy;
+    if (!storage->residual) {
+        certificate->selectorSupport = [storage](uint64_t& visits)
+            -> std::optional<std::vector<SyncStorageCell>> {
+            std::vector<SyncStorageCell> ranges;
+            for (const auto& item : storage->families) {
+                accumulateCost(visits, 1);
+                const auto& f = item.family;
+                ranges.push_back({f.firstBank.space, f.firstBank.begin,
+                    f.firstBank.end + (f.banks - 1) * f.bankStride, f.firstBank.base});
+            }
+            return ranges;
+        };
+        certificate->selectorCuts = [storage](SyncStorageCell range, uint64_t& visits) {
+            return storage->partition(range, visits);
+        };
+    }
     for (const auto& item : storage->families) {
         RegionalStorageFamily family;
         family.space = item.family.firstBank.space; family.base = item.family.firstBank.base;

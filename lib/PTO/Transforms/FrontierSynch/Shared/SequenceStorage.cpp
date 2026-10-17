@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
 #include "SequenceStorageIndex.h"
+#include "RepeatedRegionInternal.h"
 #include "../WholeInvocationIdentity.h"
 #include "CountedLoop.h"
 #include "../Structured/OrderCoveredPeriodic.h"
@@ -360,6 +361,20 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
             auto rotating = recognizeRotatingRegion(function, *input, *program,
                 static_cast<std::size_t>(&node - program->nodes.data()), index, arena);
             if (rotating.error.empty()) {
+                // Try the existing phase interface for one supplied nonunit
+                // crossing period; leave mixed crossing periods compact.
+                // Prefer its supported allocation shape before selecting a plan;
+                // allocation remains lazy and may still refuse that whole plan.
+                if (rotating.state && !rotating.state->hasAllocationCrossingInterface()) {
+                    const auto nonunit = llvm::find_if(rotating.state->crossings,
+                        [](const auto& crossing) { return crossing.displacement != 1; });
+                    const auto displacement = nonunit->displacement;
+                    const bool onePeriod = llvm::all_of(rotating.state->crossings,
+                        [&](const auto& crossing) {
+                            return crossing.displacement == 1 || crossing.displacement == displacement;
+                        });
+                    if (onePeriod && phasedChild(node, child.trips)) { return true; }
+                }
                 child.regional = std::move(rotating.regional); child.anchors = child.regional.anchors;
                 children.push_back(std::move(child)); return true;
             }

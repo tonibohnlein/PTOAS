@@ -301,6 +301,30 @@ bool distinctPhaseScenario(MLIRContext* context, bool finite = false)
         phases.push_back(std::move(phase));
     }
     if (finite) {
+        // A coordinate lift must not restamp stale geometry as belonging to
+        // its new owner. The finite selector callback remains usable without it.
+        for (unsigned mismatch = 0; mismatch < 3; ++mismatch) {
+            auto stale = phases[1];
+            auto certificate = std::make_shared<fs::RegionalSymbolicStorageCertificate>();
+            certificate->expressions = mismatch == 0 ? std::make_shared<fs::RegionExpressions>() : arena;
+            certificate->accessModel = mismatch == 1 ? nullptr : stale.accessModel;
+            certificate->gmAliasPolicy = mismatch == 2 ? pto::GMAliasPolicy::MayAlias : stale.gmAliasPolicy;
+            if (mismatch == 2 && certificate->gmAliasPolicy == stale.gmAliasPolicy) {
+                certificate->gmAliasPolicy = pto::GMAliasPolicy::MayNotAlias;
+            }
+            certificate->selectorCuts = [](pto::SyncStorageCell range, uint64_t&)
+                -> std::optional<std::vector<uint64_t>> { return std::vector<uint64_t>{range.begin, range.end}; };
+            certificate->selectorSupport = [](uint64_t&) -> std::optional<std::vector<pto::SyncStorageCell>> {
+                return std::vector<pto::SyncStorageCell>{};
+            };
+            stale.symbolicStorage = std::move(certificate);
+            auto repeated = fs::repeatInvariantRegion(function, loops[0], std::move(stale), e.constant(2));
+            if (!repeated.error.empty() || (repeated.regional.symbolicStorage &&
+                (repeated.regional.symbolicStorage->selectorCuts ||
+                 repeated.regional.symbolicStorage->selectorSupport))) {
+                return fail("repetition promoted a stale partition certificate");
+            }
+        }
         // Adding an exact callback must preserve the ordinary finite route.
         // Check both invariant repetition and the clipped phase path below.
         for (uint64_t trips : {0U, 1U, 3U}) {

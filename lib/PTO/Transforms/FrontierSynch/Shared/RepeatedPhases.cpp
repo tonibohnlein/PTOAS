@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "RegionalSelectorPartition.h"
 #include "RegionalCapabilitiesInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RepeatedPhases.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RepeatedStorage.h"
@@ -589,6 +590,26 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
             }
             return projectStorage(*arena, selected, starts, begin, trips);
         };
+        if (!storage) {
+            auto partition = std::make_shared<RegionalSymbolicStorageCertificate>();
+            partition->expressions = out.expressions;
+            partition->accessModel = out.accessModel;
+            partition->gmAliasPolicy = out.gmAliasPolicy;
+            partition->selectorCuts = [originalPhases](SyncStorageCell range, uint64_t& visits) {
+                return commonSelectorCuts(*originalPhases, range, visits);
+            };
+            partition->selectorSupport = [originalPhases](uint64_t& visits)
+                -> std::optional<std::vector<SyncStorageCell>> {
+                std::vector<SyncStorageCell> ranges;
+                for (const auto& phase : *originalPhases) {
+                    auto local = selectorSupportRanges(phase, visits);
+                    if (!local) { return std::nullopt; }
+                    ranges.insert(ranges.end(), local->begin(), local->end());
+                }
+                return ranges;
+            };
+            out.symbolicStorage = std::move(partition);
+        }
         if (storage) {
             auto finitePhases = std::make_shared<const std::vector<RegionalAnalysis>>(phases);
             out.storageSelectors = [finitePhases, storage, familyCertificates, starts, begin, trips]

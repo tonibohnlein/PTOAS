@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "SequenceAnalysisInternal.h"
 #include "SequenceStorageIndex.h"
+#include "RegionalSelectorPartition.h"
 #include "BoundarySlices.h"
 #include "InvocationPrefixCollection.h"
 #include "../Structured/OrderCoveredPeriodic.h"
@@ -240,16 +241,20 @@ bool projectFiniteCrossings(std::vector<Child>& children,
                             if (!storageBasesAreComparable(identities, source.gmAliasPolicy)) { return false; }
                             if (!llvm::any_of(modeled.regions,
                                 [&](const auto& region) { return region.base == cell.base; })) { continue; }
-                            if (cell.begin > cell.end || cell.end > uint64_t(INT64_MAX) ||
-                                cell.end - cell.begin > maxRegionalSlotVisits) { return false; }
+                            if (cell.begin > cell.end || cell.end > uint64_t(INT64_MAX)) { return false; }
+                            if (cell.begin == cell.end) { found = true; continue; }
+                            auto cuts = finiteSelectorCuts(source, cell, costs.selectorPartitionVisits);
+                            if (!cuts) { return false; }
                             found = true;
-                            for (auto byte = cell.begin; byte < cell.end; ++byte) {
+                            for (std::size_t cut = 1; cut < cuts->size(); ++cut) {
+                                const SyncStorageCell atom{cell.space, (*cuts)[cut - 1], (*cuts)[cut], cell.base};
                                 if (llvm::any_of(support[i], [&](const auto& old) {
-                                    return sameStorageDomain(old, cell) && old.begin == byte;
+                                    return sameStorageDomain(old, atom) && old.begin == atom.begin &&
+                                        old.end == atom.end;
                                 })) { continue; }
-                                if (support[i].size() == maxRegionalSlotVisits) { return false; }
-                                support[i].push_back({cell.space, byte, byte + 1, cell.base});
+                                support[i].push_back(atom);
                             }
+                            if (!normalizeSelectorSupport(support[i])) { return false; }
                         }
                         if (!found) { return false; }
                         pairs.insert(i < j ? SequenceAnalysisState::StoragePair{i, effect, j, other} :
@@ -266,13 +271,14 @@ bool projectFiniteCrossings(std::vector<Child>& children,
         for (const auto& original : source.storageBoundary) {
             std::set<uint64_t> cuts{original.cell.begin, original.cell.end};
             for (const auto& byte : support[i]) {
-                if (!sameStorageDomain(byte, original.cell) || byte.begin < original.cell.begin ||
-                    byte.end > original.cell.end) { continue; }
-                cuts.insert(byte.begin); cuts.insert(byte.end);
+                if (!sameStorageDomain(byte, original.cell) || byte.end <= original.cell.begin ||
+                    byte.begin >= original.cell.end) { continue; }
+                cuts.insert(std::max(byte.begin, original.cell.begin));
+                cuts.insert(std::min(byte.end, original.cell.end));
             }
             for (auto it = cuts.begin(); std::next(it) != cuts.end(); ++it) {
                 if (llvm::any_of(support[i], [&](const auto& byte) {
-                    return sameStorageDomain(byte, original.cell) && byte.begin == *it;
+                    return sameStorageDomain(byte, original.cell) && byte.begin <= *it && *it < byte.end;
                 })) { continue; }
                 auto piece = original;
                 piece.cell.begin = *it; piece.cell.end = *std::next(it);
@@ -288,7 +294,7 @@ bool projectFiniteCrossings(std::vector<Child>& children,
     }
     uint64_t addedBytes = 0;
     for (const auto& bytes : support) {
-        accumulateCost(addedBytes, bytes.size());
+        for (const auto& atom : bytes) { accumulateCost(addedBytes, atom.end - atom.begin); }
     }
     // Publish only after every pair and every point query succeeds. A failed
     // attempt leaves original regional summaries available to relational routes.
@@ -296,9 +302,12 @@ bool projectFiniteCrossings(std::vector<Child>& children,
         if (support[i].empty()) { continue; }
         children[i].regional.storageBoundary = std::move(projected[i]);
         children[i].regional.cost.cells = children[i].regional.storageBoundary.size();
-        accumulateCost(children[i].regional.cost.boundaryBytes, support[i].size());
+        for (const auto& atom : support[i]) {
+            accumulateCost(children[i].regional.cost.boundaryBytes, atom.end - atom.begin);
+        }
     }
     accumulateCost(costs.boundaryBytes, addedBytes);
+    for (const auto& atoms : support) { accumulateCost(costs.selectorPartitionAtoms, atoms.size()); }
     covered = std::move(pairs);
     return true;
 }
@@ -861,6 +870,27 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
         certificate->expressions = out.expressions;
         certificate->accessModel = out.accessModel;
         certificate->gmAliasPolicy = out.gmAliasPolicy;
+        certificate->selectorSupport = [state](uint64_t& visits)
+            -> std::optional<std::vector<SyncStorageCell>> {
+            std::vector<SyncStorageCell> ranges;
+            for (const auto& child : state->children) {
+                auto local = selectorSupportRanges(child.regional, visits);
+                if (!local) { return std::nullopt; }
+                ranges.insert(ranges.end(), local->begin(), local->end());
+            }
+            return ranges;
+        };
+        certificate->selectorCuts = [state](SyncStorageCell range, uint64_t& visits)
+            -> std::optional<std::vector<uint64_t>> {
+            std::set<uint64_t> cuts{range.begin, range.end};
+            for (const auto& child : state->children) {
+                auto local = uniformSelectorCuts(child.regional, range, visits);
+                if (!local) { return std::nullopt; }
+                cuts.insert(local->begin(), local->end());
+                if (cuts.size() - 1 > maxRegionalSlotVisits) { return std::nullopt; }
+            }
+            return std::vector<uint64_t>(cuts.begin(), cuts.end());
+        };
         for (const auto& child : state->children) {
             if (!child.regional.symbolicStorage) { continue; }
             for (auto family : child.regional.symbolicStorage->families) {

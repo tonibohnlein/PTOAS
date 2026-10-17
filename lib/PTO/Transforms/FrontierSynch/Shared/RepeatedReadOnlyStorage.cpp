@@ -176,6 +176,18 @@ RepeatedRegionAnalysis repeatSymbolicStorageRegion(func::FuncOp function, scf::F
     out.accessBoundary = std::move(lifted.accessBoundary);
     out.deferredAccessBoundary = std::move(lifted.deferredAccessBoundary);
     out.symbolicStorageEffects = original->symbolicStorageEffects;
+    if (original->symbolicStorage &&
+        original->symbolicStorage->expressions == original->expressions &&
+        original->symbolicStorage->accessModel == original->accessModel &&
+        original->symbolicStorage->gmAliasPolicy == original->gmAliasPolicy) {
+        auto partition = std::make_shared<RegionalSymbolicStorageCertificate>();
+        partition->expressions = out.expressions;
+        partition->accessModel = out.accessModel;
+        partition->gmAliasPolicy = out.gmAliasPolicy;
+        partition->selectorCuts = original->symbolicStorage->selectorCuts;
+        partition->selectorSupport = original->symbolicStorage->selectorSupport;
+        out.symbolicStorage = std::move(partition);
+    }
     out.storageSelectors = [original, trips](RegionalByteAddress address)
         -> std::optional<RegionalStorageSelectors> {
         if (original->expressions->constantValue(trips) == uint64_t(0)) { return RegionalStorageSelectors{}; }

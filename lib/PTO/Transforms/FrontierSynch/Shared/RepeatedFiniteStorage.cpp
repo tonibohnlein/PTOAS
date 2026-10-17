@@ -5,32 +5,39 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Finite symbolic support is queried per byte; no interval-constant selector assumption.
+// Finite symbolic support uses certified uniform atoms, with exact per-byte fallback.
 #include "RepeatedReadOnlyStorage.h"
+#include "RegionalSelectorPartition.h"
 #include "llvm/ADT/STLExtras.h"
 #include <iterator>
 namespace mlir::pto::frontiersynch {
 namespace {
-std::optional<SmallVector<SyncStorageCell>> support(const RegionalAnalysis& body)
+std::optional<SmallVector<SyncStorageCell>> support(RegionalAnalysis& body)
 {
-    if (!body.accessModel->hasMaterializedCellPartition(body.symbolicStorageEffects)) { return std::nullopt; }
+    std::vector<SyncStorageCell> ranges;
+    if (body.accessModel->hasMaterializedCellPartition(body.symbolicStorageEffects)) {
+        for (auto id : body.symbolicStorageEffects) {
+            const auto& supplied = body.accessModel->effects()[id].ranges;
+            ranges.insert(ranges.end(), supplied.begin(), supplied.end());
+        }
+    } else {
+        auto supplied = selectorSupportRanges(body, body.cost.selectorPartitionVisits);
+        if (!supplied) { return std::nullopt; }
+        ranges = std::move(*supplied);
+    }
     SmallVector<SyncStorageCell> bytes, domains;
     for (const auto& boundary : body.storageBoundary) { domains.push_back(boundary.cell); }
-    for (auto id : body.symbolicStorageEffects) {
-        for (const auto& range : body.accessModel->effects()[id].ranges) {
-            // The shared model validates identity and complete materialization;
-            // this export additionally checks its own alias context and budget.
-            if (range.begin > range.end || range.end - range.begin > maxRegionalSlotVisits) { return std::nullopt; }
-            domains.push_back(range);
-            for (auto byte = range.begin; byte < range.end; ++byte) {
-                auto same = [&](const SyncStorageCell& old) {
-                    return sameStorageDomain(old, range) && old.begin == byte;
-                };
-                if (llvm::any_of(bytes, same)) { continue; }
-                if (bytes.size() == maxRegionalSlotVisits) { return std::nullopt; }
-                bytes.push_back({range.space, byte, byte + 1, range.base});
-            }
+    for (const auto& range : ranges) {
+        domains.push_back(range);
+        if (range.begin == range.end) { continue; }
+        // Complete support may include holes. Partition evidence establishes
+        // uniform selectors, and the existing exact query determines membership.
+        auto cuts = finiteSelectorCuts(body, range, body.cost.selectorPartitionVisits);
+        if (!cuts) { return std::nullopt; }
+        for (std::size_t cut = 1; cut < cuts->size(); ++cut) {
+            bytes.push_back({range.space, (*cuts)[cut - 1], (*cuts)[cut], range.base});
         }
+        if (!normalizeSelectorSupport(bytes)) { return std::nullopt; }
     }
     if (!storageBasesAreComparable(domains, body.gmAliasPolicy)) { return std::nullopt; }
     return bytes;
@@ -85,13 +92,22 @@ std::string materializeRepeatedSymbolicStorage(
         boundaries.push_back({byte, std::move(selectors->firstWriters), std::move(selectors->lastWriters),
             std::move(selectors->firstReaders), std::move(selectors->lastReaders)});
     }
-    if (boundaries.size() > UINT64_MAX - body.cost.cells || boundaries.size() > UINT64_MAX - body.cost.boundaryBytes) {
+    uint64_t representedBytes = 0;
+    for (const auto& boundary : boundaries) {
+        const auto width = boundary.cell.end - boundary.cell.begin;
+        if (width > UINT64_MAX - representedBytes) { return "finite selector byte cost overflow"; }
+        representedBytes += width;
+    }
+    if (boundaries.size() > UINT64_MAX - body.cost.cells ||
+        boundaries.size() > UINT64_MAX - body.cost.selectorPartitionAtoms ||
+        representedBytes > UINT64_MAX - body.cost.boundaryBytes) {
         return "finite repeated selector representation cost overflow";
     }
     // Existing explicit cells retain their exact selectors. Overlapping atoms
     // are combined by the ordinary sequence interface's selector normalization.
     body.cost.cells += boundaries.size();
-    body.cost.boundaryBytes += boundaries.size();
+    body.cost.selectorPartitionAtoms += boundaries.size();
+    body.cost.boundaryBytes += representedBytes;
     body.storageBoundary.insert(body.storageBoundary.end(),
         std::make_move_iterator(boundaries.begin()), std::make_move_iterator(boundaries.end()));
     return {};

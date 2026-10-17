@@ -24,7 +24,7 @@ def run(tool, mode, path):
 
 
 def check(document, dimensions, outer_slots=None, outer_lower=0, outer_step=1,
-          external_work=True, visits=None):
+          external_work=True, visits=None, external_ranges=None, bank_bytes=512, inner_writer=False):
     assert document["accepted"], document
     trace = document["trace"]
     assert not trace["error"], trace
@@ -32,30 +32,49 @@ def check(document, dimensions, outer_slots=None, outer_lower=0, outer_step=1,
     payloads = [event for event in events if event["kind"] == "payload"]
     expected = [(0, [])] if external_work else []
     load_type, compute_type = (1, 2) if external_work else (0, 1)
+    if inner_writer:
+        assert external_work
+        compute_type = 3
     if visits is None:
         visits = itertools.product(*(range(max(0, count)) for count in dimensions))
     for coordinates in visits:
         actual = list(coordinates)
         if outer_slots is not None:
             actual[-2] = outer_lower + outer_step * actual[-2]
-        expected.extend([(load_type, actual), (compute_type, actual)])
+        expected.append((load_type, actual))
+        if inner_writer:
+            expected.append((2, actual))
+        expected.append((compute_type, actual))
     if external_work:
-        expected.append((3, []))
+        expected.append((4 if inner_writer else 3, []))
     assert [(p["type"], p["coordinates"]) for p in payloads] == expected
     effects = []
     for kind, coordinates in expected:
+        if inner_writer and kind == 2:
+            effects.append((set(), {("gm", coordinates[-1])}))
+            continue
         slot = coordinates[-1] % 2 if coordinates else 0
         if outer_slots is not None and coordinates:
             slot = coordinates[-2] % outer_slots
-        effects.append(({("left", slot), ("right", 0)}, {("acc", 0)}) if kind == compute_type else
-                       ({("mat", 0)}, {("left", slot)}))
+        left = ({("left-byte", byte) for byte in range(bank_bytes * slot, bank_bytes * (slot + 1))}
+                if external_ranges is not None else {("left", slot)})
+        if external_ranges is not None and not coordinates:
+            begin, end = external_ranges[0 if kind == 0 else 1]
+            left = {("left-byte", byte) for byte in range(begin, end)}
+        effects.append((left | {("right", 0)}, {("acc", 0)}) if kind == compute_type else
+                       ({("mat", 0)}, left))
     pipes = [p["pipe"] for p in payloads]
     edges = native(pipes)
+    # Target-protected scalar storage hazards are native; disjoint scalar
+    # accesses do not acquire universal completion-before-start order.
+    protected = set()
     for a, (reads, writes) in enumerate(effects):
         for b in range(a+1, len(effects)):
             later_reads, later_writes = effects[b]
             if writes & (later_reads | later_writes) or reads & later_writes:
                 edges.add((2*a+1, 2*b))
+                if inner_writer and pipes[a] == pipes[b] == 0:
+                    protected.add((2*a+1, 2*b))
     required = closure(2*len(effects), edges)[0]
     commands = []
     for event in events:
@@ -70,6 +89,10 @@ def check(document, dimensions, outer_slots=None, outer_lower=0, outer_step=1,
                                    tuple(event.get("members", [])))
         commands.append(command)
     actual = closure_with_commands(pipes, commands)
+    if protected:
+        actual_edges = {(a, b) for a, row in enumerate(actual) for b in range(len(actual)) if row & (1 << b)}
+        actual = closure(len(actual), actual_edges | protected)[0]
+        actual = [row & ~(1 << i) for i, row in enumerate(actual)]
     assert actual == [row & ~(1 << i) for i, row in enumerate(required)], (dimensions, document)
 
 

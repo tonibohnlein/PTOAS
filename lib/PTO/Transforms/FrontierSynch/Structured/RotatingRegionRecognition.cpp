@@ -9,6 +9,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingRegion.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/Structured/NumericTemplateRegional.h"
+#include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
 #include "../Shared/PhaseNormalization.h"
 #include "../Shared/CountedLoop.h"
@@ -165,6 +166,45 @@ private:
         }
         return result;
     }
+    FailureOr<RegionalAnalysis> guardedCanonical(scf::ForOp inner)
+    {
+        // Moving outer banks require the phase provider's allocation lifting.
+        // Reuse this compact child directly only for invariant physical banks;
+        // other canonical children retain their established arithmetic route.
+        if (llvm::any_of(specification.families, [](const auto& family) {
+                return !family.banks || family.stride % family.banks != 0;
+            })) { return failure(); }
+        RegionExpressions::Transaction transaction(*arena);
+        auto recognized = recognizeGuardedRotating(inner, index, input, input.accesses());
+        if (recognized.result.state != RecognitionState::Applicable) { return failure(); }
+        auto analyzed = analyzeGuardedRotating(inner, input, recognized, index, arena);
+        if (!analyzed.error.empty()) { return failure(); }
+        SmallVector<std::pair<Id, Id>> replacements;
+        DenseSet<Value> seen;
+        for (const auto& access : recognized.result.accesses) {
+            for (Value parameter : access.parameters) {
+                if (!seen.insert(parameter).second) { continue; }
+                auto fixed = geometry(parameter);
+                if (fixed) {
+                    replacements.emplace_back(arena->input(parameter),
+                        arena->constant(static_cast<uint64_t>(*fixed)));
+                } else if (!normalizer.independent(parameter)) {
+                    return failure();
+                }
+            }
+        }
+        // Only certified bank geometry is specialized. Original occurrence
+        // coordinates, invariant symbolic trip counts and command cuts survive.
+        RegionExpressions::Substitution substitution(replacements);
+        rewriteGuardedRotatingExpressions(analyzed, [&](Id expression) {
+            return arena->substitute(expression, substitution);
+        });
+        std::string diagnostic;
+        auto result = guardedRotatingRegionalResult(function, input, analyzed, diagnostic);
+        if (failed(result)) { return failure(); }
+        transaction.commit();
+        return result;
+    }
     FailureOr<RegionalAnalysis> canonical(std::size_t id)
     {
         const auto& child = program.nodes[id];
@@ -224,6 +264,10 @@ private:
             return sequenceRegionalResult(composed);
         }
         if (child.kind == StructureKind::Loop || child.kind == StructureKind::Conditional) {
+            if (auto inner = dyn_cast_or_null<scf::ForOp>(child.anchor)) {
+                auto compact = guardedCanonical(inner);
+                if (succeeded(compact)) { return compact; }
+            }
             return analyzeArithmeticRegionWithProfiles({function, child.anchor}, index, input, arena, error,
                 program.regionalArithmeticProfiles,
                 [&](Value value) -> std::optional<Id> {

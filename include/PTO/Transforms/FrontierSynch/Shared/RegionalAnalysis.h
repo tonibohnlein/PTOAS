@@ -30,6 +30,7 @@ struct RegionalCost {
     uint64_t arithmeticRegions = 0;
     uint64_t boundaryBytes = 0; // Physical bytes represented by the certified boundary atoms.
     uint64_t selectorComparisons = 0, crossingCandidates = 0, expressionNodes = 0;
+    uint64_t selectorPartitionVisits = 0, selectorPartitionAtoms = 0;
     // Owned analysis arenas distinct from the composing regional expression DAG.
     uint64_t retainedExpressionNodes = 0;
     // Proof requests, including cached requests. Each producer states its query
@@ -95,6 +96,17 @@ struct RegionalSymbolicStorageCertificate {
     // Symbolic support not covered here keeps its per-cell query interface.
     std::vector<std::size_t> uniformEffects;
     std::vector<RegionalStorageBoundary> uniformBoundaries;
+    // Requested-range partition of the COMPLETE selector interface. Within each
+    // returned half-open atom, all selected occurrences and their exact guards
+    // are byte-independent for every admitted execution, including absence.
+    // Cuts include both range endpoints, are strictly increasing, and retain
+    // holes. This is producer evidence, never inferred by sampling a byte.
+    // No selectors or occurrence coordinates are stored in this geometry map.
+    std::function<std::optional<std::vector<uint64_t>>(SyncStorageCell, uint64_t&)> selectorCuts;
+    // Complete finite physical support envelopes for the regional selector
+    // interface. They may contain holes: only exact selectors establish access
+    // membership. Construct lazily without enumerating banks or invocation visits.
+    std::function<std::optional<std::vector<SyncStorageCell>>(uint64_t&)> selectorSupport;
 };
 struct ArithmeticRegionalRelations;
 struct RegionalRelations;

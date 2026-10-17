@@ -60,9 +60,7 @@ class RepeatedPreparation
         {
             return failure();
         }
-        const bool unitCrossings = llvm::all_of(state.crossings,
-            [](const RepeatedCrossing& crossing) { return crossing.displacement == 1; });
-        if (unitCrossings) {
+        if (state.hasAllocationCrossingInterface()) {
             plan->allocationPreparation = AllocationPreparation::candidates(
                 [owner = state.shared_from_this(), childView, crossings = std::move(allocationCrossings),
                  coalescing = AllocationInputCache{}, fallback = std::shared_ptr<RegionalAllocationSummary>{},

@@ -26,6 +26,12 @@ struct RepeatedRegionState : std::enable_shared_from_this<RepeatedRegionState> {
     Id originalBegin = RegionExpressions::invalid;
     std::vector<uint32_t> typePhases;
     std::vector<RepeatedCrossing> crossings;
+    // The current allocation adapter lifts one complete visit at a time.
+    bool hasAllocationCrossingInterface() const
+    {
+        return llvm::all_of(crossings,
+            [](const RepeatedCrossing& crossing) { return crossing.displacement == 1; });
+    }
     // Raw bridge generators define Q; reduced guards are only endpoint recipes.
     std::vector<RepeatedCrossing> queryCrossings;
     // Optional certified weighted quotient, owned by its producing adapter.

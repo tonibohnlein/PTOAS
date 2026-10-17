@@ -12,6 +12,9 @@
 #include <set>
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
+bool checkRotatingPartitions(const fs::RegionalAnalysis& region, func::FuncOp function);
+bool checkGappedRotatingPartition(const fs::RegionalAnalysis& region, func::FuncOp function);
+bool checkHugeRotatingPartition(const fs::RegionalAnalysis& region, uint64_t bank, uint64_t banks);
 namespace {
 using Id = fs::RegionExpressions::Id;
 bool selectors(const fs::RegionalAnalysis& region, func::FuncOp function)
@@ -111,6 +114,7 @@ int runRotatingRegionChecks(func::FuncOp function)
         llvm::outs() << "rotating original-input residual storage: owned and read-only exports retained\n";
         return 0;
     }
+    if (!checkRotatingPartitions(result.regional, function)) { return 1; }
     auto large = fs::repeatRotatingRegion(function, loop, normalized(result.state->body, 17, 19), result.state->trips);
     if (!large.error.empty() || !large.state || large.state->body.anchors.size() != 4 ||
         large.state->queryCrossings.size() != result.state->queryCrossings.size()) {
@@ -126,6 +130,7 @@ int runRotatingRegionChecks(func::FuncOp function)
     const uint64_t visit = hugeBanks / 2, bank = (3 * visit) % hugeBanks;
     auto selectedHuge = huge.error.empty() ? huge.regional.storageSelectors(
         {pto::AddressSpace::LEFT, {}, arena->constant(bank * 512)}) : std::nullopt;
+    if (!checkHugeRotatingPartition(huge.regional, bank, hugeBanks)) { return 1; }
     if (!selectedHuge) { llvm::errs() << "large rotating selector: " << huge.error << "\n"; return 1; }
     fs::RegionExpressions::Substitution hugeValues({
         {arena->input(function.getArgument(0)), arena->constant(hugeBanks)},
@@ -142,6 +147,18 @@ int runRotatingRegionChecks(func::FuncOp function)
         }
     }
     if (selectedCount != 1) { return 1; }
+    auto gaps = normalized(result.state->body, 6, 5);
+    for (auto& family : gaps.families) {
+        if (family.firstBank.space == pto::AddressSpace::LEFT) {
+            family.bankStride = 1024;
+            family.stride = 2;
+        }
+    }
+    auto gapped = fs::repeatRotatingRegion(function, loop, std::move(gaps), result.state->trips);
+    if (!gapped.error.empty() || !checkGappedRotatingPartition(gapped.regional, function)) {
+        llvm::errs() << "rotating holes or noncoprime owner selectors differ\n";
+        return 1;
+    }
     auto residual = normalized(result.state->body, 3, 5);
     auto readOnly = llvm::find_if(residual.families, [](const auto& family) {
         return family.firstBank.space == pto::AddressSpace::MAT;
@@ -150,7 +167,8 @@ int runRotatingRegionChecks(func::FuncOp function)
     residual.residualEffects.push_back(readOnly->effects.back());
     readOnly->effects.pop_back();
     auto withResidual = fs::repeatRotatingRegion(function, loop, std::move(residual), result.state->trips);
-    if (!withResidual.error.empty() || !withResidual.regional.symbolicStorage) {
+    if (!withResidual.error.empty() || !withResidual.regional.symbolicStorage ||
+        withResidual.regional.symbolicStorage->selectorCuts || withResidual.regional.symbolicStorage->selectorSupport) {
         llvm::errs() << "rotating shared residual read-only proof: " << withResidual.error << "\n"; return 1;
     }
     auto& e = *arena;

@@ -1,6 +1,6 @@
 # Sections 5–6: regional fallback and reusable certificates
 
-Baseline: `4710959d9`. Status: M1–M2 accepted; M3–M5 remain open.
+Baseline: `4710959d9`. Status: M1–M3 accepted; M4–M5 remain open.
 
 The implementation preserves exact minimum demands, original cuts, matching and
 established realization guarantees on exact paths. Completion fallback reports
@@ -150,3 +150,79 @@ interleaved immediate-M1 timing pairs are neutral: candidate/baseline medians
 1.013, 1.019 and 0.998 for disjoint256, wildcard256 and while control. Disjoint256
 reduces ALL barriers from 256 to one invocation drain; wildcard256 reduces 257
 to two. These are conservative-order improvements, not device-speed measurements.
+
+## M3 implementation and qualification
+
+The existing regional storage certificate now separates three capabilities:
+complete physical support envelopes, uniform selector partitions of requested
+ranges, and exact byte-selector queries. Envelopes may contain holes; neither an
+envelope nor a partition establishes access membership. All four boundary
+selector sets and their exact guards must be uniform within a certified atom.
+
+Rotating storage derives these capabilities from its admitted canonical cells and
+checked bank geometry. Requested partitions inspect intersecting banks; complete
+support uses one envelope per family. No joint address period is enumerated.
+Unsupported residual storage supplies neither new capability. Sequence and
+invariant repetition retain geometry under their existing physical-map premises;
+coordinate transformations do not substitute for a physical invariance proof.
+Arena, access-model and alias context must match before evidence is forwarded.
+
+Finite crossing projection refines overlapping counterpart ranges together and
+keeps symbolic effects and pair-specific coverage. A partial requested projection
+never becomes a whole-region uniform-effects certificate. Ordinary repetition
+still accepts materialized original ranges; otherwise complete regional support
+can supply the crossing footprint. Both paths use the same exact selectors and
+retain original effect-extrema, invariance and alias checks.
+
+| Previous conversion | Replacement | Compatibility behavior |
+|---|---|---|
+| Every requested physical byte becomes a crossing atom | Certified uniform cuts, then exact selector queries | Bounded per-byte adapter remains when no uniform proof exists |
+| Original effect ranges must be materialized before repetition | Original ranges or complete regional support envelopes | Missing complete support remains unavailable |
+| Geometry discarded across coordinate-only composition | Scoped certificate forwarding and common refinement | Address-changing or unsupported residual cases refuse |
+
+The existing regional atom limit remains in force. Large complete interfaces can
+still exceed it; a compact support envelope is not a promise that all its atoms
+can be materialized economically. Inspected partition work, retained atoms,
+represented bytes and relational compositions are reported separately.
+
+Canonical nested loops with invariant physical banks now try the existing guarded
+periodic exporter before arithmetic. Only certified geometry parameters are
+substituted; original coordinates, symbolic trip bounds and cuts survive. Moving
+outer banks retain the established canonical/phase path: the new guarded-child
+composition does not yet supply its allocation lifting. A mathematical regional
+success does not imply that lazy physical allocation can retry another protocol.
+No allocation certificate is transferred between different logical plans.
+
+Initial representation selection shares the existing repeated-allocation
+crossing-shape check: the current adapter requires unit displacement. When all
+nonunit crossings have one supplied displacement, composition may prefer the
+existing phase representation before publishing the selected owner. Mixed nonunit crossing periods retain the compact representation. The phase
+recognizer can still discover additional storage periods; its existing
+qualification and limits govern that work. Failed phase construction leaves the incumbent
+available. This is a capability/cost heuristic, not an allocation attempt or
+capacity proof. Mathematical requests can pay this phase qualification cost:
+later endpoint requests otherwise reuse the already-ready mathematical owner and
+do not revisit representation choice. Physical assignment remains separately
+certified for the selected whole plan.
+
+M3 qualification passes 17/17 focused tests. The repeated fixture now completes
+its 17 general traces, 43 phase/overlap/writer cases and 21 physical allocation
+checks under unchanged interpreter limits. Required and emitted payload closures,
+logical matching and consumption-before-republication are checked independently.
+The scalar oracle adds target-protected edges only for actual conflicting scalar
+effects, never for every pair of scalar operations. The partition oracle checks
+all bytes in supplied finite domains, holes and noncoprime orbits, foreign arena/
+model/alias contexts and huge bank geometry with bounded inspected work.
+
+| Additional replaced orchestration | Replacement | Remaining limitation |
+|---|---|---|
+| Unconditional arithmetic canonical nested loop | Optional guarded export for invariant physical banks | Moving-bank guarded canonical lifting is not added |
+| Repeated insertion's private crossing-shape check | One shared allocation-interface shape predicate | Unit shape does not guarantee an assignment |
+| First regional success despite a known missing crossing export | Single-nonunit-period phase preference before ownership publication | General physical-request-driven retry remains separate |
+
+The [M3 receipt](frontier-sections56-m3-results.json) records both reviewer
+acceptances, source hashes and the final gate. Three serial interleaved timing
+pairs give an original-fixture candidate/baseline median ratio of 0.997. The
+two-phase fixture's baseline hit 20 seconds in all three pairs; candidate runs
+completed around 0.040 seconds. Those baseline measurements are censored, so no
+finite speedup ratio is claimed. No device measurement was performed.

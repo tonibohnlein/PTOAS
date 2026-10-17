@@ -1,0 +1,222 @@
+{
+  "milestone": "M3 periodic/repeated certificate preservation",
+  "status": "accepted",
+  "baseline_revision": "c15bebcdb259d8e0fd336d386bd60a713f2d6d2b",
+  "source_sha256": {
+    "include/PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h": "3eb537b276cf357408cc7ebffc84ee9ee656e3c2415f36478340302a7d16e53b",
+    "lib/PTO/Transforms/CMakeLists.txt": "b9fe4d5cf8a64134d09f07e1e0bd7941c5006d823b1ae51aab5e2b3c771e86bf",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedFiniteStorage.cpp": "368c36e8adc2e07600b1ee8b9d3c394f05774bdda3cc7d0df45714d85acd7903",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedPhases.cpp": "d1708755bf314cc9686e31517c389b6d4f7f7c53de567159d1f6eab25b3c8c86",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedReadOnlyStorage.cpp": "d97507534f49d1e72c983355913dde017afdcf9bb72ad4e54726e2370a0440a2",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedRegionInsertion.cpp": "eb21af0f812e1c09b3655b9538e540868174430f32e1532ce2aaf96cf7e1ce31",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedRegionInternal.h": "3c0e5e79c8bb74a659fd1f3aaa2c64ddff717a11b2f8f29ccbfd26627540581a",
+    "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAdapters.cpp": "b697dffbf95be2d76a11b1a459da056e6f94723525483d6c4d13363e50bcaf89",
+    "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.cpp": "5e267c9b6a0c0f86f42c6e978933bdb480a5d11e87faa91742225b096a47f638",
+    "lib/PTO/Transforms/FrontierSynch/Shared/SequenceStorage.cpp": "bb9c08aadbb4f310d74bd962cf94beb8d6462ec025d9fee1c5e6e6b7e7b5aa40",
+    "lib/PTO/Transforms/FrontierSynch/Structured/RotatingRegion.cpp": "9920b3c9dbff8be1b690796578c91754589e443b19a0479c15e29d1f22ca7a20",
+    "lib/PTO/Transforms/FrontierSynch/Structured/RotatingRegionRecognition.cpp": "9e21923c0f623b322fc71716b282d027582bb1c8b7c254cca0d1f756d58199bb",
+    "test/lit/pto/Inputs/check_repeated_phases.py": "03e591ed801677a52b28ba4088e8cac4faced689f89aa635a9c28d42914cafc8",
+    "test/lit/pto/Inputs/check_repeated_region.py": "436bda522335c1ca89dde4951f1f0462d886e5661a9aef334006db2c4b808680",
+    "tools/pto-test-opt/CMakeLists.txt": "2d82afe02433758894a1164eb10fe55847880beefc506aca6635985049bd0ce5",
+    "tools/pto-test-opt/RepeatedReadOnlyStorageChecks.cpp": "89bab51a84fb1aa0aa4e0c277baf634ff6b60fa1da157a1aa0e2abe741201c89",
+    "tools/pto-test-opt/RotatingRegionChecks.cpp": "278d6c7eaf35d1ce36ba7e7ace463a678e6afdf70ee5e918c40f54dd2e87d0a0",
+    "tools/pto-test-opt/SyncLogicalInsertionChecks.cpp": "d0be12fbc5e0c8d513f31e6aa933480fc9b9cf7823eedd0153aa99ee1240340f",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RegionalSelectorPartition.cpp": "22b10ec42530314e3bf4da853be77b22a0d231822fec0769309f4514021f741b",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RegionalSelectorPartition.h": "d38018ffd5ce94fac15f77dc14fc00841fc58d3b1a2fbe38967cb96bbb14d387",
+    "tools/pto-test-opt/RotatingPartitionChecks.cpp": "2cf01928fb3950e349b271814de707b4bbe0e5b3dc348ae42297dc7fc0738a5d"
+  },
+  "scope": {
+    "geometry": "Complete support envelopes and uniform selector cuts are distinct from exact byte membership. All four selectors including absence are uniform in each atom.",
+    "context": "Arena, access model and alias policy must match; partial finite projection retains symbolic effects and pair-scoped coverage.",
+    "canonical": "Guarded nested-loop export only for invariant physical outer banks. Moving-bank allocation lifting through this new export remains unavailable; existing arithmetic/phase paths retained.",
+    "limits": "Existing regional atom limit and all allocation/command contracts unchanged.",
+    "selection": "Single nonunit crossing-period preference at initial selection; unit crossings allowed. Existing phased qualification applies, physical allocation remains separate. Mixed nonunit crossing periods keep compact candidate."
+  },
+  "validation": {
+    "tests": [
+      {
+        "name": "PTOIR :: pto/sync_repeated_region.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_periodic_demands.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_varying_rotating.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_sequence_analysis.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_guarded_rotating_analysis.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_periodic_invariant_gm.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_rotating_region.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_sequence_endpoint_retry.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_sequence_prefix.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_phase_minmax.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_periodic_shared_allocation.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_sequence_bridge_work.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_rotating_region_storage.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_periodic_slice_allocation.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_sequence_analysis_gm.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_sequence_retained_demands.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_phase_index.pto",
+        "status": "PASS"
+      }
+    ],
+    "partition_oracle": "Full supplied byte domains and all four boundary sets; holes, partial overlaps, noncoprime strides, foreign contexts; huge bank count with bounded inspected work.",
+    "phase_oracle": "17 repeated traces, 43 phase/overlap/writer cases, 21 nested allocation traces; exact required/emitted payload closure, matching and causal reuse. Scalar protection only on independently derived actual conflicting scalar effect pairs.",
+    "scaling": "16/32/64/128 tile widths; no relational composition, bounded constant atom/partition work. Original runtime trip changes do not change logical code.",
+    "device": "Not run",
+    "full_suite": "Deferred to final M5 gate.",
+    "source_boundary": "Tested mirror differs only by two comment lines and one test-only line wrap; executable code unchanged.",
+    "compliance": {
+      "raw_output": "lib/PTO/Transforms/FrontierSynch/Shared/RegionalSelectorPartition.cpp:28: error G.FMT.11-CPP put the control-statement body in braces\nlib/PTO/Transforms/FrontierSynch/Shared/RegionalSelectorPartition.cpp:52: error G.FMT.11-CPP put the control-statement body in braces\nlib/PTO/Transforms/FrontierSynch/Shared/RegionalSelectorPartition.cpp:58: error G.FMT.11-CPP put the control-statement body in braces\nlib/PTO/Transforms/FrontierSynch/Shared/RegionalSelectorPartition.cpp:76: error G.FMT.11-CPP put the control-statement body in braces\nlib/PTO/Transforms/FrontierSynch/Shared/RegionalSelectorPartition.cpp:84: error G.FMT.11-CPP put the control-statement body in braces\nlib/PTO/Transforms/FrontierSynch/Shared/RegionalSelectorPartition.cpp:111: error G.FMT.11-CPP put the control-statement body in braces\nlib/PTO/Transforms/FrontierSynch/Shared/RegionalSelectorPartition.cpp:130: error G.FMT.11-CPP put the control-statement body in braces\nlib/PTO/Transforms/FrontierSynch/Shared/RepeatedFiniteStorage.cpp:101: error G.FMT.11-CPP put the control-statement body in braces\nlib/PTO/Transforms/FrontierSynch/Shared/SequenceAdapters.cpp:274: error G.FMT.11-CPP put the control-statement body in braces\nlib/PTO/Transforms/FrontierSynch/Shared/SequenceAdapters.cpp:890: error G.FMT.11-CPP put the control-statement body in braces\nlib/PTO/Transforms/FrontierSynch/Structured/RotatingRegion.cpp:61: error G.FMT.11-CPP put the control-statement body in braces\nlib/PTO/Transforms/FrontierSynch/Structured/RotatingRegion.cpp:90: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RepeatedReadOnlyStorageChecks.cpp:322: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingPartitionChecks.cpp:41: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingPartitionChecks.cpp:56: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingPartitionChecks.cpp:71: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingPartitionChecks.cpp:79: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingPartitionChecks.cpp:88: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingPartitionChecks.cpp:101: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingPartitionChecks.cpp:131: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingRegionChecks.cpp:158: error G.FMT.11-CPP put the control-statement body in braces\ntools/pto-test-opt/RotatingRegionChecks.cpp:170: error G.FMT.11-CPP put the control-statement body in braces\nchecked_files=21 errors=22 warnings=0\n",
+      "adjudication": "All remaining22 G.FMT.11-CPP diagnostics are regex false positives on fully braced conditions with nested calls/parentheses. Inspected each reported body; no brace suppression or weakened checks. One actual line-length issue was fixed by wrapping. git diff --check passes."
+    }
+  },
+  "timing": {
+    "baseline_revision": "c15bebcdb259d8e0fd336d386bd60a713f2d6d2b",
+    "tools": {
+      "baseline": "ef8125ad46f3603ad4b017246efa5f5178ca739b4b2a04a101eb0984052f6abc",
+      "candidate": "fd0ab5473f54da6422bb4e48704d3b305aa3dde1116bad67cfa8bcc8e46a7b39"
+    },
+    "timeout_seconds": 20,
+    "runs": [
+      {
+        "fixture": "original",
+        "pair": 0,
+        "tool": "baseline",
+        "seconds": 0.034056215081363916,
+        "status": 0
+      },
+      {
+        "fixture": "original",
+        "pair": 0,
+        "tool": "candidate",
+        "seconds": 0.03332324372604489,
+        "status": 0
+      },
+      {
+        "fixture": "original",
+        "pair": 1,
+        "tool": "baseline",
+        "seconds": 0.03340712422505021,
+        "status": 0
+      },
+      {
+        "fixture": "original",
+        "pair": 1,
+        "tool": "candidate",
+        "seconds": 0.03331222524866462,
+        "status": 0
+      },
+      {
+        "fixture": "original",
+        "pair": 2,
+        "tool": "baseline",
+        "seconds": 0.03331584483385086,
+        "status": 0
+      },
+      {
+        "fixture": "original",
+        "pair": 2,
+        "tool": "candidate",
+        "seconds": 0.034310535062104464,
+        "status": 0
+      },
+      {
+        "fixture": "phase2",
+        "pair": 0,
+        "tool": "baseline",
+        "seconds": 20.035561192315072,
+        "status": "timeout"
+      },
+      {
+        "fixture": "phase2",
+        "pair": 0,
+        "tool": "candidate",
+        "seconds": 0.040134178940206766,
+        "status": 0
+      },
+      {
+        "fixture": "phase2",
+        "pair": 1,
+        "tool": "baseline",
+        "seconds": 20.03669665567577,
+        "status": "timeout"
+      },
+      {
+        "fixture": "phase2",
+        "pair": 1,
+        "tool": "candidate",
+        "seconds": 0.039582435972988605,
+        "status": 0
+      },
+      {
+        "fixture": "phase2",
+        "pair": 2,
+        "tool": "baseline",
+        "seconds": 20.035713474731892,
+        "status": "timeout"
+      },
+      {
+        "fixture": "phase2",
+        "pair": 2,
+        "tool": "candidate",
+        "seconds": 0.03960674814879894,
+        "status": 0
+      }
+    ],
+    "original_median_paired_ratio": 0.9971593191995127,
+    "phase2_result": "Baseline20-second timeout in all3 pairs; candidate about0.040seconds. Censored comparison, no finite speedup ratio."
+  },
+  "limitations": [
+    "No new allocation-aware alternative-protocol retry.",
+    "No claim of device latency improvement.",
+    "Timeout baseline samples are censored; do not derive a finite speedup ratio from them."
+  ],
+  "reviews": {
+    "architecture": "accepted after final17/17 gate",
+    "compiler_correctness": "accepted after source and final17/17 receipt audit"
+  }
+}
