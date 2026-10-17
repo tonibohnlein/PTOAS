@@ -8,7 +8,9 @@
 // Shared, typed expression DAG for exact regional queries and endpoint recipes.
 #include "PTO/Transforms/FrontierSynch/Shared/GuardedRanks.h"
 #include "GuardedQueryProjection.h"
+#include "FixedRankThresholds.h"
 #include <map>
+#include <set>
 namespace mlir::pto::frontiersynch {
 GuardedRankFrontier initGuardedRankFrontier(RegionExpressions& e, uint32_t columns)
 {
@@ -21,7 +23,8 @@ namespace {
 GuardedRankStep advanceRank(
     RegionExpressions& e, GuardedRankFrontier& frontier, uint32_t column, RegionExpressions::Id present,
     llvm::ArrayRef<GuardedRankIncoming> candidates, llvm::ArrayRef<GuardedRankIncoming> native,
-    std::optional<RegionExpressions::Id> referenceRank, bool knownEndpointOrder = false)
+    std::optional<RegionExpressions::Id> referenceRank, bool knownEndpointOrder = false,
+    detail::FixedRankThresholds* thresholds = nullptr)
 {
     GuardedRankStep out;
     const auto k = frontier.counters.size();
@@ -58,7 +61,9 @@ GuardedRankStep advanceRank(
             return false;
         }
         for (std::size_t p = 0; p < k; ++p) {
-            to[p] = e.select(e.land(guard, e.lt(to[p], from[p])), from[p], to[p]);
+            const auto previous = to[p];
+            to[p] = e.select(e.land(guard, e.lt(previous, from[p])), from[p], previous);
+            if (thresholds) { thresholds->record(to[p], guard, from[p], previous, true); }
         }
         return true;
     };
@@ -106,7 +111,9 @@ GuardedRankStep advanceRank(
             }
             source.rank = e.select(choose, edge.rank, source.rank);
             for (std::size_t p = 0; p < k; ++p) {
-                source.completion[p] = e.select(choose, edge.completion[p], source.completion[p]);
+                const auto previous = source.completion[p];
+                source.completion[p] = e.select(choose, edge.completion[p], previous);
+                if (thresholds) { thresholds->record(source.completion[p], choose, edge.completion[p], previous); }
             }
             source.active = e.lor(source.active, active);
         }
@@ -117,7 +124,7 @@ GuardedRankStep advanceRank(
         std::vector<RegionExpressions::Id> keep(k, no);
         for (std::size_t p = 0; p < k; ++p) {
             const auto& source = selected[p];
-            if (e.constantValue(source.active) == 0) {
+            if (thresholds || e.constantValue(source.active) == 0) {
                 continue;
             }
             auto required = e.land(source.active, e.lt(out.start[p], source.rank));
@@ -132,7 +139,23 @@ GuardedRankStep advanceRank(
             keep[p] = required;
         }
         for (std::size_t i = 0; i < candidates.size(); ++i) {
-            out.retained.push_back(e.land(latest[i], keep[candidates[i].column]));
+            const auto& edge = candidates[i];
+            const auto incumbent = e.land(latest[i], keep[edge.column]);
+            if (!thresholds || e.constantValue(latest[i]) == 0) {
+                out.retained.push_back(incumbent);
+                continue;
+            }
+            // Under latest[i], the selected source on this pipe is precisely
+            // this candidate. Use its fixed label, never a selected rank DAG.
+            const auto label = e.constantValue(edge.rank);
+            if (!label) { out.error = "reference rank is not a fixed label"; return out; }
+            auto required = thresholds->below(out.start[edge.column], *label);
+            for (std::size_t q = 0; q < k; ++q) {
+                if (q == edge.column || e.constantValue(selected[q].active) == 0) { continue; }
+                required = e.land(required, e.select(selected[q].active,
+                    thresholds->below(selected[q].completion[edge.column], *label), e.boolean(true)));
+            }
+            out.retained.push_back(e.land(latest[i], required));
         }
         // Reachability depends on original active generators, not their
         // cover-selection guards. Keep reduction out of subsequent H0 rows.
@@ -145,7 +168,12 @@ GuardedRankStep advanceRank(
     } else {
         for (const auto& edge : candidates) {
             const auto active = e.land(present, edge.guard);
-            auto keep = e.land(active, e.lt(out.start[edge.column], edge.rank));
+            const auto incumbent = e.land(active, e.lt(out.start[edge.column], edge.rank));
+            const auto label = e.constantValue(edge.rank);
+            if (thresholds && !label) { out.error = "reference rank is not a fixed label"; return out; }
+            auto uncovered = thresholds ? thresholds->below(out.start[edge.column], *label) :
+                                          e.lt(out.start[edge.column], edge.rank);
+            auto keep = e.land(active, uncovered);
             out.retained.push_back(keep);
             // If this source already reaches the accumulated prefix, its entire
             // completion row is contained in that prefix. Joining an active
@@ -153,7 +181,7 @@ GuardedRankStep advanceRank(
             // out of the reachability circuit; otherwise each later row embeds
             // the earlier reduction tests in every component. Statically rejected
             // candidates still require no join construction at all.
-            if (e.constantValue(keep) == 0) {
+            if (e.constantValue(incumbent) == 0) {
                 continue;
             }
             if (!join(out.start, edge.completion, active)) {
@@ -173,6 +201,10 @@ GuardedRankStep advanceRank(
     for (std::size_t p = 0; p < k; ++p) {
         nextStart[p] = e.select(present, out.start[p], nextStart[p]);
         nextCompletion[p] = e.select(present, out.completion[p], nextCompletion[p]);
+        if (thresholds) {
+            thresholds->record(nextStart[p], present, out.start[p], frontier.starts[column][p]);
+            thresholds->record(nextCompletion[p], present, out.completion[p], frontier.completions[column][p]);
+        }
     }
     if (!e.constructionError().empty()) {
         out.error = e.constructionError();
@@ -192,7 +224,8 @@ GuardedRankStep advanceGuardedRank(
 }
 GuardedRanks reduceGuardedRanks(
     RegionExpressions& e, llvm::ArrayRef<GuardedRankPayload> payloads, llvm::ArrayRef<GuardedRankEdge> generators,
-    llvm::ArrayRef<GuardedRankEdge> native, GuardedRankLabels labels, bool retainQueryGraph)
+    llvm::ArrayRef<GuardedRankEdge> native, GuardedRankLabels labels, bool retainQueryGraph,
+    bool projectFixedThresholds)
 {
     GuardedRanks out;
     out.payloads.assign(payloads.begin(), payloads.end());
@@ -250,6 +283,56 @@ GuardedRanks reduceGuardedRanks(
         detail::RegionAlternativeWork::add(work.guardQualification, graph->qualificationNodes);
         out.queryGraph = std::move(graph);
     }
+    bool project = false;
+    if (projectFixedThresholds && labels == GuardedRankLabels::Reference) {
+        if (out.queryGraph) { project = out.queryGraph->totalGuards; }
+        else {
+            SmallVector<RegionExpressions::Id> sourceGuards;
+            for (const auto& payload : payloads) { sourceGuards.push_back(payload.present); }
+            for (auto edge : generators) { sourceGuards.push_back(edge.guard); }
+            for (auto edge : native) { sourceGuards.push_back(edge.guard); }
+            uint64_t qualificationVisits = 0;
+            project = detail::RegionConstructionAccess::totalScalarDag(e, sourceGuards, qualificationVisits);
+            auto& work = detail::RegionConstructionAccess::alternativeConstructionWork(e);
+            detail::RegionAlternativeWork::add(work.guardQualification, qualificationVisits);
+        }
+    }
+    if (project) {
+        // Fixed-threshold projection is economical for pipe-uniform presence:
+        // each pipe has one atomic presence predicate and edge activity uses
+        // only that same vocabulary. Independent per-occurrence guards retain
+        // the numeric representation. Sharing in this arena alone is not a
+        // cost model for lowering at distinct original cuts.
+        std::map<uint32_t, RegionExpressions::Id> presence;
+        std::set<RegionExpressions::Id> inputs;
+        uint64_t qualificationVisits = 0;
+        for (const auto& payload : payloads) {
+            const auto [it, inserted] = presence.emplace(payload.pipe, payload.present);
+            ++qualificationVisits;
+            if (!inserted && it->second != payload.present) { project = false; break; }
+            if (!inserted) { continue; }
+            if (e.constantValue(payload.present)) { continue; }
+            uint64_t atomVisits = 0;
+            const auto atoms = e.referencedInputs(ArrayRef<RegionExpressions::Id>{payload.present}, &atomVisits);
+            detail::RegionAlternativeWork::add(qualificationVisits, atomVisits);
+            if (atoms.size() != 1 || atoms.front().first != payload.present) { project = false; break; }
+            inputs.insert(payload.present);
+        }
+        if (project) {
+            SmallVector<RegionExpressions::Id> guards;
+            for (auto edge : generators) { guards.push_back(edge.guard); }
+            for (auto edge : native) { guards.push_back(edge.guard); }
+            uint64_t guardVisits = 0;
+            const auto atoms = e.referencedInputs(guards, &guardVisits);
+            detail::RegionAlternativeWork::add(qualificationVisits, guardVisits);
+            for (const auto& atom : atoms) {
+                if (!inputs.count(atom.first)) { project = false; break; }
+            }
+        }
+        auto& work = detail::RegionConstructionAccess::alternativeConstructionWork(e);
+        detail::RegionAlternativeWork::add(work.guardQualification, qualificationVisits);
+    }
+    detail::FixedRankThresholds thresholds(e, out.projectionWork);
     auto frontier = initGuardedRankFrontier(e, pipes.size());
     std::vector<uint64_t> referenceRanks(pipes.size());
     for (uint32_t i = 0; i < payloads.size(); ++i) {
@@ -269,11 +352,13 @@ GuardedRanks reduceGuardedRanks(
             referenceRank = e.constant(++referenceRanks[out.columns[i]]);
         }
         auto step = advanceRank(
-            e, frontier, out.columns[i], payloads[i].present, candidates, nativeSources, referenceRank, true);
+            e, frontier, out.columns[i], payloads[i].present, candidates, nativeSources, referenceRank, true,
+            project ? &thresholds : nullptr);
         if (!step.error.empty()) { out.error = step.error; return out; }
         std::size_t at = 0;
         for (auto [source, guard] : incoming[i]) {
-            auto keep = step.retained[at++];
+            auto keep = step.retained[at];
+            ++at;
             if (e.constantValue(keep) != 0) { out.retained.push_back({source, i, keep}); }
         }
         out.ranks.push_back(step.rank);

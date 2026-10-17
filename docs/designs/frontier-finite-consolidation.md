@@ -7,6 +7,14 @@ This qualifies the tested finite migration; it does not establish uniformly smal
 control code. The inherited repeated-phase timeout remains open. The original
 completion claim preceded this evidence and was corrected before the follow-up.
 
+The subsequent [compact finite synchronization control milestone](frontier-compact-finite-control.md)
+is implemented and accepted by architecture and compiler reviewers. Its separate
+receipt attributes guard, selector and ID costs, qualifies the production repair,
+and enforces scaling bounds under unchanged demand and protocol semantics. The
+current gate is 266/267 Frontier tests and 302/304 broad tests; the inherited
+phased-repeat timeout and separate legacy InsertSync failure remain explicit.
+Allocation proof growth is measured separately and is not repaired by this batch.
+
 ## Contracts
 
 One retained finite service owns either concrete numerical analysis or guarded

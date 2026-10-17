@@ -21,6 +21,14 @@ baseline corpus qualification are now recorded in the
 The tested migration is qualified; quadratic guarded/composed control and the
 inherited phased-repeat timeout remain explicit limitations.
 
+The [compact finite synchronization control milestone](frontier-compact-finite-control.md)
+is implemented and accepted by architecture and compiler reviewers. It attributes
+guard/selector/ID growth, reduces qualified production construction, and enforces
+subclass-specific bounds while preserving the fixed protocol. The current gate
+is 266/267 Frontier tests and 302/304 broad tests: the inherited phased-repeat
+timeout and separate legacy InsertSync failure remain reported. Allocation proof
+construction remains a separately measured scaling limitation.
+
 ## Current status
 
 | Work | Implementation acceptance | Kernel compilation | Fixed-protocol capacity investigation |

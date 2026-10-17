@@ -9,6 +9,7 @@
 #define PTO_FRONTIER_REGIONCONSTRUCTION_H
 #include "ScalarConstruction.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
+#include "llvm/Support/JSON.h"
 namespace mlir::pto::frontiersynch::detail {
 struct RegionConstructionContext {
     llvm::DenseMap<RegionExpressions::Id, ScalarToken> values;
@@ -25,6 +26,8 @@ struct RegionConstructionBindings {
 // This service consumes the already qualified CutExpressionRecipe; it neither
 // reruns dependence analysis nor creates a different availability contract.
 struct RegionConstructionAccess {
+    static llvm::json::Object profileRoots(const RegionExpressions& arena,
+        ArrayRef<RegionExpressions::Id> guards, ArrayRef<RegionExpressions::Id> selectors);
     // One existing select arm under a supplied condition value; otherwise the
     // original expression. Constant work, no new nodes. The caller must retain
     // the condition around every use of the returned activity-scoped value.

@@ -10,6 +10,8 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInternal.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "llvm/Support/JSON.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionConstruction.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/RegionAlternativeWork.h"
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 LogicalResult checkFiniteGuardedPreparation(const std::shared_ptr<fs::FiniteAnalysis>& owner);
@@ -250,6 +252,24 @@ LogicalResult guardedWork(const std::shared_ptr<fs::FiniteAnalysis>& result, llv
     report["residual_effects"] = state.residualEffectVisits;
     report["expressions"] = result->guarded()->cost.expressionNodes;
     report["selectors"] = state.cost.selectorComparisons;
+    SmallVector<Id> guards, selectors;
+    for (const auto& edge : state.retained) { guards.push_back(edge.guard); }
+    auto append = [&](const auto& entries) {
+        for (const auto& entry : entries) { selectors.push_back(entry.present); }
+    };
+    for (const auto& boundary : state.storageBoundary) {
+        append(boundary.firstWriters); append(boundary.lastWriters);
+        for (const auto& entry : boundary.firstReaders) { append(entry.second); }
+        for (const auto& entry : boundary.lastReaders) { append(entry.second); }
+    }
+    report["mathematical_control_roots"] =
+        fs::detail::RegionConstructionAccess::profileRoots(*state.arena, guards, selectors);
+    const auto& work = state.rankIndex.projectionWork;
+    report["guard_qualification_visits"] =
+        fs::detail::RegionConstructionAccess::alternativeConstructionWork(*state.arena).guardQualification;
+    report["fixed_thresholds"] = llvm::json::Object{{"requests", work.requests}, {"cache_hits", work.hits},
+        {"visits", work.visits}, {"entries", work.entries}, {"descriptions", work.descriptions},
+        {"range_folds", work.rangeFolds}};
     return success();
 }
 } // namespace

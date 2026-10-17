@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "FiniteGuardedInternal.h"
 #include "../Shared/GuardedStorageScan.h"
+#include "../Shared/RegionConstruction.h"
+#include "../Shared/RegionAlternativeWork.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticStorageSelectors.h"
 #include "../Shared/RegionalRelationsInternal.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
@@ -100,7 +102,22 @@ void FiniteGuardedState::closeAndReduce()
         native.push_back({edge.source, edge.target, yes()});
     }
     for (auto edge : guardedNative) { native.push_back({edge.source, edge.target, edge.guard}); }
-    rankIndex = reduceGuardedRanks(*arena, payloads, generators, native, GuardedRankLabels::Reference);
+    // Restrict this representation optimization to entry-available predicates.
+    // Removing a dependency on a future value must not silently switch an
+    // existing early-publication protocol to selective publication.
+    SmallVector<Expr> roots(presence.begin(), presence.end());
+    for (const auto& edge : generators) { roots.push_back(edge.guard); }
+    for (const auto& edge : native) { roots.push_back(edge.guard); }
+    uint64_t qualificationVisits = 0;
+    const auto inputs = arena->referencedInputs(roots, &qualificationVisits);
+    auto& work = detail::RegionConstructionAccess::alternativeConstructionWork(*arena);
+    detail::RegionAlternativeWork::add(work.guardQualification, qualificationVisits);
+    const bool entryAvailable = llvm::all_of(inputs, [&](const auto& item) {
+        auto argument = dyn_cast<BlockArgument>(item.second);
+        return argument && argument.getOwner() == &function.getBody().front();
+    });
+    rankIndex = reduceGuardedRanks(*arena, payloads, generators, native, GuardedRankLabels::Reference,
+                                  false, entryAvailable);
     retained.clear();
     for (auto edge : rankIndex.retained) {
         retained.push_back({edge.source, edge.target, edge.guard});

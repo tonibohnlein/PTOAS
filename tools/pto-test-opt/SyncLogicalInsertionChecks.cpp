@@ -11,6 +11,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRegional.h"
 #include "SyncLogicalInsertionChecks.h"
 #include "NumericalLogicalTraceChecks.h"
+#include "ControlEvaluationChecks.h"
 #include "SequenceBridgeChecks.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/InvocationPrefixCollection.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/CountedLoop.h"
@@ -85,6 +86,7 @@ private:
     uint64_t visitLimit = MaxVisits;
     uint64_t payloads = 0;
     uint64_t outerTrips = 0;
+    std::unique_ptr<finite_control_checks::Evaluation> control;
 };
 std::optional<int64_t> Interpreter::integer(Value value) const
 {
@@ -113,10 +115,12 @@ bool Interpreter::block(Block& body, SmallVectorImpl<Attribute>& yielded, unsign
         if (++visits > visitLimit || events.size() >= MaxEvents) {
             return fail("trace visit or event limit exceeded");
         }
+        if (control) { control->operation(op); }
         arithmeticVisits += op.getName().getDialectNamespace() == "arith";
         selectVisits += isa<arith::SelectOp>(op);
         guardVisits += isa<scf::IfOp>(op);
         if (isa<scf::YieldOp, func::ReturnOp>(op)) {
+            if (control) { control->yielded = control->inputs(op.getOperands()); }
             for (auto operand : op.getOperands()) {
                 yielded.push_back(lookup(operand));
             }
@@ -139,13 +143,17 @@ bool Interpreter::loop(scf::ForOp op, unsigned depth)
     for (auto initial : op.getInitArgs()) {
         state.push_back(lookup(initial));
     }
+    if (control) { control->loopEnter(op); }
+    auto stateEvaluations = control ? control->inputs(op.getInitArgs()) : SmallVector<uint64_t>{};
     int64_t induction = *lower;
     while (induction < *upper) {
         if (input && op == input->outer) {
             ++outerTrips;
         }
+        if (control) { control->induction(op); }
         values[op.getInductionVar()] = IntegerAttr::get(op.getInductionVar().getType(), induction);
         bind(op.getRegionIterArgs(), state);
+        if (control) { control->bind(op.getRegionIterArgs(), stateEvaluations); }
         SmallVector<Attribute> next;
         coordinates.push_back(induction);
         const bool executed = block(*op.getBody(), next, depth + 1);
@@ -154,6 +162,7 @@ bool Interpreter::loop(scf::ForOp op, unsigned depth)
             return fail(error.empty() ? "trace loop yield arity mismatch" : StringRef(error));
         }
         state = std::move(next);
+        if (control) { stateEvaluations = control->yielded; }
         int64_t following = 0;
         if (llvm::AddOverflow(induction, *step, following)) {
             return fail("trace loop induction overflow");
@@ -161,6 +170,7 @@ bool Interpreter::loop(scf::ForOp op, unsigned depth)
         induction = following;
     }
     bind(op.getResults(), state);
+    if (control) { control->loopResults(op, stateEvaluations); }
     return true;
 }
 bool Interpreter::branch(scf::IfOp op, unsigned depth)
@@ -169,6 +179,7 @@ bool Interpreter::branch(scf::IfOp op, unsigned depth)
     if (!condition) {
         return fail("trace branch condition is unknown");
     }
+    if (control) { control->branch(op, !condition.getValue().isZero()); }
     auto& region = condition.getValue().isZero() ? op.getElseRegion() : op.getThenRegion();
     SmallVector<Attribute> yielded;
     if (!region.empty() && !block(region.front(), yielded, depth + 1)) {
@@ -178,6 +189,7 @@ bool Interpreter::branch(scf::IfOp op, unsigned depth)
         return fail("trace branch yield arity mismatch");
     }
     bind(op.getResults(), yielded);
+    if (control) { control->branchResults(op); }
     return true;
 }
 bool Interpreter::payload(Operation& op, ArrayRef<uint32_t> candidates)
@@ -273,6 +285,7 @@ bool Interpreter::command(Operation& op)
         if (!source || !target || !id) {
             return fail("trace physical command has an unknown ID");
         }
+        if (control) { control->command(op, 2); }
         const bool publish = isa<pto::SetFlagOp, pto::SetFlagDynOp>(op);
         events.push_back(llvm::json::Object{{"kind", publish ? "set" : "wait"}, {"gap", payloads},
             {"pipe", static_cast<unsigned>((publish ? source : target).getPipe())},
@@ -294,6 +307,7 @@ bool Interpreter::command(Operation& op)
         }
         members.push_back(member.getValue().getZExtValue());
     }
+    if (control) { control->command(op, 1); }
     const bool publish = name == "pto.logical_set";
     llvm::json::Object event(llvm::json::Object{{"kind", publish ? "set" : "wait"}, {"gap", payloads},
         {"pipe", static_cast<unsigned>((publish ? source : target).getPipe())},
@@ -370,6 +384,9 @@ llvm::json::Object Interpreter::run(func::FuncOp function)
         }
         visitLimit = static_cast<uint64_t>(integer.getInt());
     }
+    if (function->hasAttr("test.trace_control_profile")) {
+        control = std::make_unique<finite_control_checks::Evaluation>(function);
+    }
     auto supplied = function->getAttrOfType<DenseI64ArrayAttr>("test.trace_arguments");
     std::size_t index = 0;
     for (auto argument : function.getArguments()) {
@@ -386,7 +403,8 @@ llvm::json::Object Interpreter::run(func::FuncOp function)
     return llvm::json::Object{{"function", function.getSymName()}, {"error", error},
         {"payloads", payloads}, {"outer_trips", outerTrips}, {"visits", visits},
         {"arithmetic_visits", arithmeticVisits}, {"select_visits", selectVisits}, {"guard_visits", guardVisits},
-        {"visit_limit", visitLimit}, {"events", std::move(events)}};
+        {"visit_limit", visitLimit}, {"control", control ? control->report() : llvm::json::Object{}},
+        {"events", std::move(events)}};
 }
 } // namespace
 llvm::json::Object traceStructuredLogicalInsertion(func::FuncOp function,
