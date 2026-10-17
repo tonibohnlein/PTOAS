@@ -22,6 +22,7 @@
 #include <chrono>
 #include <array>
 namespace mlir::pto::frontiersynch {
+class CompletionSourceSnapshot;
 // Full request capability/mode key, shared by selection and cost recipes.
 inline uint8_t analysisRequestKey(const AnalysisRequest& request)
 {
@@ -187,9 +188,23 @@ struct AnalysisSessionState {
     {
         exhaustedRequests[key] = {retainedEvidenceGeneration, outcome, backend};
     }
-    bool completionAttempted = false;
-    std::shared_ptr<const CompletionRegion> completion;
-    std::string completionError;
+    std::shared_ptr<const CompletionSourceSnapshot> completionSource;
+    struct CompletionAttempt {
+        bool attempted = false;
+        std::shared_ptr<const CompletionRegion> owner;
+        std::string error;
+    };
+    std::map<std::size_t, CompletionAttempt> completions;
+    bool ownsCompletion(const std::shared_ptr<const CompletionRegion>& owner) const
+    {
+        return owner && llvm::any_of(completions, [&](const auto& entry) {
+            if (entry.second.owner != owner) { return false; }
+            auto scope = attempts.find(entry.first);
+            return scope == attempts.end() || llvm::none_of(scope->second, [](const auto& attempt) {
+                return attempt.first != AnalysisBackend::CompactBounding && bool(attempt.second.mathematical);
+            });
+        });
+    }
     // The diagnostic owner exists during initialization. Only an actual analysis
     // request freezes configurable profiles, matching the prior lazy session.
     bool requestsStarted = false;

@@ -10,6 +10,8 @@
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/CompletionInlineChild.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/IR/Diagnostics.h"
 #include "llvm/Support/raw_ostream.h"
@@ -21,10 +23,223 @@ std::string render(Operation* operation)
 {
     std::string text; llvm::raw_string_ostream stream(text); operation->print(stream); return text;
 }
+LogicalResult manyScopesChecks(func::FuncOp function)
+{
+    auto input = std::make_shared<pto::SyncInput>();
+    fs::PhaseIndex index;
+    if (failed(input->build(function, pto::SyncInstructionView::PipeEnvelopes)) ||
+        failed(index.build(function, *input))) { return failure(); }
+    std::string error;
+    auto source = fs::CompletionRegion::captureSource(function, input, index, error);
+    SmallVector<std::shared_ptr<const fs::CompletionInlineChild>> children;
+    uint64_t visits = 0, phases = 0, vertices = 0;
+    for (auto& op : function.front()) {
+        if (!op.hasAttr("test.region_root")) { continue; }
+        auto owner = fs::CompletionRegion::buildRegion(function, input, index, {&op}, {}, error, source);
+        if (!owner || owner->sourceOwner() != source || owner->transfer().summary.suffix != std::vector<uint8_t>{2} ||
+            !owner->transfer().summary.transparent) { return failure(); }
+        visits += owner->constructionWork().scopedOperations;
+        phases += owner->constructionWork().scopedPhases;
+        vertices += owner->constructionWork().graphVertices;
+        children.push_back(fs::CompletionInlineChild::qualify(owner));
+    }
+    const auto count = children.size();
+    if (!count || visits != count || phases != count || vertices != 2 * count) {
+        return function.emitError("regional construction revisited unrelated scope work");
+    }
+    auto whole = fs::CompletionRegion::buildWithChildren(function, input, index, children, error, source);
+    if (!whole || whole->inlineChildren() != count) { return failure(); }
+    children.clear(); source.reset(); input.reset();
+    fs::PreparedLogicalPlan plan(0); plan.completeInvocation = true; plan.completionOwner = whole;
+    if (failed(fs::insertLogicalSynchronization(function, plan)) || failed(verify(function))) { return failure(); }
+    std::size_t barriers = 0;
+    function.walk([&](pto::BarrierOp) { ++barriers; });
+    if (barriers != count) { return function.emitError("proper children acquired implicit exit drains"); }
+    llvm::outs() << "regional scaling: children=" << count << " scoped-visits=" << visits
+                 << " phase-visits=" << phases << " vertices=" << vertices << "\n";
+    return success();
+}
+LogicalResult productionChecks(func::FuncOp function)
+{
+    std::shared_ptr<const fs::CompletionRegion> selected;
+    std::unique_ptr<fs::PreparedLogicalPlan> prepared;
+    for (bool prequery : {false, true}) {
+        fs::FrontierAnalysis analysis(function);
+        if (failed(analysis.initialize())) { return failure(); }
+        if (prequery) {
+            for (auto [id, node] : llvm::enumerate(analysis.result()->nodes)) {
+                if (node.kind != fs::StructureKind::ExplicitRun) { continue; }
+                fs::AnalysisRequest child; child.region = id; child.needs.synchronization = true;
+                (void)analysis.analyze(child);
+            }
+        }
+        fs::AnalysisRequest request; request.mode = fs::AnalysisMode::Fallback;
+        request.needs.synchronization = true;
+        auto outcome = analysis.analyze(request);
+        if (outcome.status != fs::AnalysisStatus::Ready || !outcome.completion || outcome.mathematical ||
+            !outcome.completion->completesInvocation() || !outcome.completion->inlineChildren()) {
+            return function.emitError("parent fallback did not retain qualified inline children: status=")
+                << static_cast<int>(outcome.status) << " mathematical=" << bool(outcome.mathematical)
+                << " completion=" << bool(outcome.completion)
+                << " children=" << (outcome.completion ? outcome.completion->inlineChildren() : 0);
+        }
+        if (selected && (selected->transfer().protectEntry != outcome.completion->transfer().protectEntry ||
+            selected->inlineChildren() != outcome.completion->inlineChildren())) {
+            return function.emitError("child request order changed parent completion selection");
+        }
+        selected = outcome.completion;
+        auto plan = analysis.prepareLogical(outcome);
+        if (failed(plan) || failed(analysis.attachAllocation(outcome, **plan))) { return failure(); }
+        prepared = std::move(*plan);
+    }
+    // Both sessions are gone: retained recipes and input must own their lifetime.
+    if (failed(fs::insertLogicalSynchronization(function, *prepared)) || failed(verify(function))) { return failure(); }
+    int local = 0, returns = 0;
+    function.walk([&](pto::BarrierOp barrier) {
+        local += !barrier->hasAttr("pto.completion_boundary");
+        returns += isa_and_nonnull<func::ReturnOp>(barrier->getNextNode());
+    });
+    if (local != 1 || returns != 1) { return function.emitError("parent lost child barrier or invocation drain"); }
+    llvm::outs() << "regional production: " << function.getSymName() << " retained-local=1 invocation-drain=1\n";
+    return success();
+}
+LogicalResult scopedChecks(func::FuncOp function)
+{
+    const auto original = render(function);
+    auto input = std::make_shared<pto::SyncInput>();
+    auto index = std::make_shared<fs::PhaseIndex>();
+    if (failed(input->build(function, pto::SyncInstructionView::PipeEnvelopes)) ||
+        failed(index->build(function, *input))) { return failure(); }
+    SmallVector<Operation*> roots, childRoots;
+    function.walk([&](Operation* op) {
+        if (op->hasAttr("test.region_root")) { roots.push_back(op); }
+        if (op->hasAttr("test.exact_child")) { childRoots.push_back(op); }
+    });
+    SmallVector<std::shared_ptr<const fs::CompletionInlineChild>> children;
+    if (!childRoots.empty()) {
+        auto source = fs::finiteFunctionInput(function, input, index);
+        auto slice = fs::finiteRegionInput(source, childRoots);
+        auto finite = fs::analyzeFinite(slice, fs::FiniteStrategy::Concrete);
+        auto child = fs::CompletionInlineChild::qualify(finite);
+        if (function->hasAttr("test.reject_exact_child")) {
+            if (child) { return function.emitError("eventful inline child was called resource-empty"); }
+        } else {
+            if (!child) { return function.emitError("exact child did not qualify as event-free"); }
+            children.push_back(child);
+        }
+    }
+    std::string error;
+    auto source = fs::CompletionRegion::captureSource(function, input, *index, error);
+    auto owner = fs::CompletionRegion::buildRegion(function, input, *index, roots, children, error, source);
+    if (!owner || owner->completesInvocation() || render(function) != original) {
+        return function.emitError("proper-region qualification failed: ") << error;
+    }
+    const auto& summary = owner->transfer().summary;
+    const auto expected = function->getAttrOfType<DenseI64ArrayAttr>("test.scoped_completion");
+    SmallVector<int64_t> observed{summary.all[0], summary.exposed[0], summary.suffix[0], summary.transparent};
+    if (!expected || expected.asArrayRef() != ArrayRef<int64_t>(observed)) {
+        return function.emitError("proper-region pending summary differs from oracle");
+    }
+    if (roots.size() > 1) {
+        SmallVector<Operation*> reversed(roots.rbegin(), roots.rend());
+        if (fs::CompletionRegion::buildRegion(function, input, *index, reversed, {}, error, source)) {
+            return function.emitError("noncontiguous original roots were accepted");
+        }
+    }
+    if (!children.empty()) {
+        SmallVector<std::shared_ptr<const fs::CompletionInlineChild>> duplicate{children[0], children[0]};
+        if (fs::CompletionRegion::buildRegion(function, input, *index, roots, duplicate, error, source)) {
+            return function.emitError("overlapping exact children were accepted");
+        }
+    }
+    if (function->hasAttr("test.production_scope")) {
+        fs::FrontierAnalysis analysis(function);
+        if (failed(analysis.initialize())) { return failure(); }
+        auto* program = analysis.result();
+        std::optional<std::size_t> id;
+        for (auto [i, node] : llvm::enumerate(program->nodes)) {
+            if (roots.size() == 1 && node.anchor == roots.front()) { id = i; break; }
+        }
+        if (!id || !*id) { return function.emitError("proper structural scope not found"); }
+        fs::AnalysisRequest request; request.region = *id; request.mode = fs::AnalysisMode::Fallback;
+        request.needs.synchronization = true;
+        auto result = analysis.analyze(request);
+        if (!result.completion || result.mathematical || result.status != fs::AnalysisStatus::Ready ||
+            result.completion->completesInvocation()) { return function.emitError("regional fallback request failed"); }
+        auto repeated = analysis.analyze(request);
+        if (repeated.completion != result.completion) { return function.emitError("regional fallback was rebuilt"); }
+        auto prepared = analysis.prepareLogical(result);
+        if (failed(prepared) || (*prepared)->completeInvocation ||
+            failed(analysis.attachAllocation(result, **prepared))) {
+            return function.emitError("regional completion preparation lost ownership");
+        }
+        request.needs.queries = true;
+        auto query = analysis.analyze(request);
+        if (!query.completion || query.available.queries || query.status != fs::AnalysisStatus::UnmetObligation) {
+            return function.emitError("conservative summary impersonates exact queries");
+        }
+    }
+    fs::PreparedLogicalPlan plan(0);
+    plan.completionOwner = owner;
+    {
+        ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
+        if (succeeded(fs::insertLogicalSynchronization(function, plan)) || render(function) != original) {
+            return function.emitError("proper-region fragment independently changed whole-function metadata");
+        }
+    }
+    auto expectedBarriers = function->getAttrOfType<IntegerAttr>("test.local_barriers");
+    if (expectedBarriers) {
+        auto fragment = fs::CompletionInlineChild::qualify(owner);
+        auto whole = fs::CompletionRegion::buildWithChildren(function, input, *index, {fragment}, error, source);
+        if (!whole || !whole->completesInvocation()) { return failure(); }
+        fs::PreparedLogicalPlan wholePlan(0); wholePlan.completeInvocation = true; wholePlan.completionOwner = whole;
+        // Equal module attributes do not preserve symbol resolution after relocation.
+        auto* block = function->getBlock();
+        auto position = std::next(function->getIterator());
+        OwningOpRef<ModuleOp> other = ModuleOp::create(function.getLoc());
+        other->getOperation()->setAttrs(function->getParentOp()->getAttrs());
+        function->moveBefore(other->getBody(), other->getBody()->end());
+        bool rejected = false;
+        {
+            ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
+            rejected = failed(fs::insertLogicalSynchronization(function, wholePlan));
+        }
+        function->moveBefore(block, position);
+        if (!rejected || render(function) != original) {
+            return function.emitError("source snapshot accepted a different symbol context");
+        }
+        // Accepted fragments cannot silently fall back to primitive descent
+        // after their original implementation changes.
+        childRoots.back()->setAttr("test.stale_child", UnitAttr::get(function.getContext()));
+        const auto stale = render(function);
+        {
+            ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
+            if (succeeded(fs::insertLogicalSynchronization(function, wholePlan)) || render(function) != stale) {
+                return function.emitError("stale accepted child mutated its parent transaction");
+            }
+        }
+        childRoots.back()->removeAttr("test.stale_child");
+        if (failed(fs::insertLogicalSynchronization(function, wholePlan)) || failed(verify(function))) {
+            return failure();
+        }
+        int64_t barriers = 0;
+        function.walk([&](pto::BarrierOp barrier) { barriers += !barrier->hasAttr("pto.completion_boundary"); });
+        if (barriers != expectedBarriers.getInt()) { return function.emitError("retained child barriers changed"); }
+    }
+    if (fs::CompletionInlineChild::qualify(std::make_shared<fs::FiniteAnalysis>(nullptr, fs::ExplicitAnalysis{}))) {
+        return function.emitError("malformed finite ownership was accepted");
+    }
+    llvm::outs() << "scoped completion: " << function.getSymName() << " pending=" << unsigned(summary.suffix[0])
+                 << " transparent=" << summary.transparent << " children=" << owner->inlineChildren() << "\n";
+    return success();
+}
 }
 LogicalResult runCompletionRegionChecks(func::FuncOp function)
 {
     if (function.isDeclaration()) { return success(); }
+    if (function->hasAttr("test.many_completion")) { return manyScopesChecks(function); }
+    if (function->hasAttr("test.production_parent")) { return productionChecks(function); }
+    if (function->hasAttr("test.scoped_completion")) { return scopedChecks(function); }
     const auto original = render(function);
     auto input = std::make_shared<pto::SyncInput>();
     fs::PhaseIndex index;

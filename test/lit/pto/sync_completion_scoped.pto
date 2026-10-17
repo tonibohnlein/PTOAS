@@ -1,0 +1,122 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --completion-region-checks %s | FileCheck %s
+// RUN: %python %S/Inputs/check_completion_regional.py pto-sync-input-test pto-test-opt
+// CHECK: scoped completion: empty pending=0 transparent=1 children=0
+// CHECK: scoped completion: sibling_protocol pending=2 transparent=1 children=0
+// CHECK: scoped completion: pending_write pending=2 transparent=1 children=0
+// CHECK: scoped completion: zero_trip pending=2 transparent=1 children=0
+// CHECK: scoped completion: final_false pending=1 transparent=1 children=0
+// CHECK: scoped completion: read_then_complete pending=0 transparent=0 children=0
+// CHECK: scoped completion: complete_then_write pending=2 transparent=0 children=0
+// CHECK: scoped completion: optional_completion pending=0 transparent=1 children=0
+// CHECK: scoped completion: retained pending=3 transparent=1 children=1
+// CHECK: scoped completion: eventful_candidate pending=1 transparent=0 children=0
+// CHECK: regional production: mixed_parent retained-local=1 invocation-drain=1
+!tile = !pto.tile_buf<vec, 1x8xf32>
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func private @unknown()
+  func.func @empty() attributes {test.scoped_completion = array<i64: 0, 0, 0, 1>} {
+    func.call @unknown() : () -> ()
+    return
+  }
+  func.func @sibling_protocol() attributes {test.scoped_completion = array<i64: 2, 2, 2, 1>, pto.endpoint_families = {sentinel = "sibling"}} {
+    %addr = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %addr : !tile
+    "pto.texpands"(%one, %tile) {test.region_root} : (f32, !tile) -> ()
+    pto.set_flag [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, #pto.event<EVENT_ID0>]
+    return
+  }
+  func.func @pending_write() attributes {test.scoped_completion = array<i64: 2, 2, 2, 1>} {
+    %addr = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %addr : !tile
+    "pto.texpands"(%one, %tile) {test.region_root} : (f32, !tile) -> ()
+    func.call @unknown() : () -> ()
+    return
+  }
+  func.func @zero_trip(%count: index) attributes {test.scoped_completion = array<i64: 2, 0, 2, 1>} {
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %step = arith.constant 1 : index
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %addr : !tile
+    scf.for %i = %zero to %count step %step {
+      pto.texpands ins(%one : f32) outs(%tile : !tile)
+    } {test.region_root}
+    return
+  }
+  func.func @final_false() attributes {test.scoped_completion = array<i64: 1, 1, 1, 1>, test.production_scope} {
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %false = arith.constant false
+    %tile = pto.alloc_tile addr = %addr : !tile
+    scf.while : () -> () {
+      %read = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+      scf.condition(%false)
+    } do {
+      scf.yield
+    } attributes {test.region_root}
+    return
+  }
+  func.func @read_then_complete() attributes {test.scoped_completion = array<i64: 1, 1, 0, 0>} {
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %tile = pto.alloc_tile addr = %addr : !tile
+    %read = "pto.tgetval"(%tile, %zero) {test.region_root} : (!tile, index) -> f32
+    "pto.barrier"() {pipe = #pto.pipe<PIPE_ALL>, test.region_root} : () -> ()
+    return
+  }
+  func.func @complete_then_write() attributes {test.scoped_completion = array<i64: 2, 0, 2, 0>} {
+    %addr = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %addr : !tile
+    "pto.barrier"() {pipe = #pto.pipe<PIPE_ALL>, test.region_root} : () -> ()
+    "pto.texpands"(%one, %tile) {test.region_root} : (f32, !tile) -> ()
+    return
+  }
+  func.func @optional_completion(%condition: i1) attributes {test.scoped_completion = array<i64: 0, 0, 0, 1>} {
+    scf.if %condition {
+      pto.barrier <PIPE_ALL>
+    } {test.region_root}
+    return
+  }
+  func.func @retained() attributes {test.scoped_completion = array<i64: 3, 3, 3, 1>, test.local_barriers = 1 : i64} {
+    %addr = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %addr : !tile
+    "pto.texpands"(%one, %tile) {test.region_root, test.exact_child} : (f32, !tile) -> ()
+    "pto.tadds"(%tile, %one, %tile) {test.region_root, test.exact_child} : (!tile, f32, !tile) -> ()
+    return
+  }
+  func.func @eventful_candidate() attributes {test.scoped_completion = array<i64: 3, 2, 1, 0>, test.reject_exact_child} {
+    %addr = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %zero = arith.constant 0 : index
+    %tile = pto.alloc_tile addr = %addr : !tile
+    "pto.texpands"(%one, %tile) {test.region_root, test.exact_child} : (f32, !tile) -> ()
+    %read = "pto.tgetval"(%tile, %zero) {test.region_root, test.exact_child} : (!tile, index) -> f32
+    return
+  }
+  func.func @mixed_parent() attributes {test.production_parent} {
+    %addr = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %false = arith.constant false
+    %tile = pto.alloc_tile addr = %addr : !tile
+    pto.texpands ins(%one : f32) outs(%tile : !tile)
+    pto.tadds ins(%tile, %one : !tile, f32) outs(%tile : !tile)
+    scf.while : () -> () {
+      scf.condition(%false)
+    } do {
+      scf.yield
+    }
+    return
+  }
+
+}
