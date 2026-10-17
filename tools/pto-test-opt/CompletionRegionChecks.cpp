@@ -18,6 +18,7 @@
 #include <set>
 using namespace mlir;
 namespace fs = pto::frontiersynch;
+LogicalResult runCompletionInputChecks(func::FuncOp function);
 namespace {
 std::string render(Operation* operation)
 {
@@ -38,6 +39,10 @@ LogicalResult manyScopesChecks(func::FuncOp function)
         auto owner = fs::CompletionRegion::buildRegion(function, input, index, {&op}, {}, error, source);
         if (!owner || owner->sourceOwner() != source || owner->transfer().summary.suffix != std::vector<uint8_t>{2} ||
             !owner->transfer().summary.transparent) { return failure(); }
+        if (owner->constructionWork().readinessOperationVisits != 3 ||
+            owner->constructionWork().readinessUseVisits != 0) {
+            return function.emitError("readiness discovery exceeded its scoped traversal contract");
+        }
         visits += owner->constructionWork().scopedOperations;
         phases += owner->constructionWork().scopedPhases;
         vertices += owner->constructionWork().graphVertices;
@@ -237,6 +242,9 @@ LogicalResult scopedChecks(func::FuncOp function)
 LogicalResult runCompletionRegionChecks(func::FuncOp function)
 {
     if (function.isDeclaration()) { return success(); }
+    if (function->hasAttr("test.storage_classes") || function->hasAttr("test.readiness")) {
+        return runCompletionInputChecks(function);
+    }
     if (function->hasAttr("test.many_completion")) { return manyScopesChecks(function); }
     if (function->hasAttr("test.production_parent")) { return productionChecks(function); }
     if (function->hasAttr("test.scoped_completion")) { return scopedChecks(function); }
@@ -269,6 +277,18 @@ LogicalResult runCompletionRegionChecks(func::FuncOp function)
     }
     if (!completion || render(function) != original) {
         return function.emitError("completion construction failed: ") << error;
+    }
+    if (function->hasAttr("test.class_scope")) {
+        auto* first = input->instructions().front()->elementOp;
+        auto proper = fs::CompletionRegion::buildRegion(function, input, index, {first}, {}, error);
+        auto child = fs::CompletionInlineChild::qualify(proper);
+        // Separate snapshots over the same input must agree on full-input class IDs.
+        auto parent = fs::CompletionRegion::buildWithChildren(function, input, index, {child}, error);
+        if (!parent || parent->sourceOwner() == proper->sourceOwner() ||
+            parent->transfer().summary.all != completion->transfer().summary.all ||
+            parent->transfer().protectEntry != completion->transfer().protectEntry) {
+            return function.emitError("proper child changed the shared storage class interpretation");
+        }
     }
     auto expected = function->getAttrOfType<DenseI64ArrayAttr>("test.completion_cuts");
     if (!expected) { return failure(); }

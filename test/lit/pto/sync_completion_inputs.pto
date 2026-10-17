@@ -1,0 +1,58 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --completion-region-checks %s | FileCheck %s
+// CHECK: completion storage: 400000 overlap checks and wildcard/call contracts passed
+// CHECK: completion readiness: scalar_chain checked
+// CHECK: completion readiness: control_refused checked
+// CHECK: completion readiness: external_refused checked
+// CHECK: completion region: disjoint cuts=1 payload-control-preserved
+// CHECK: completion region: overlap cuts=2 payload-control-preserved
+!tile = !pto.tile_buf<vec, 1x8xf32>
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @storage_classes() attributes {test.storage_classes} { return }
+  func.func @scalar_chain(%tile: !tile, %zero: index, %one: f32) attributes {test.readiness} {
+    %read = "pto.tgetval"(%tile, %zero) {test.async} : (!tile, index) -> f32
+    %read2 = "pto.tgetval"(%tile, %zero) {test.async} : (!tile, index) -> f32
+    %sum = arith.addf %read, %read2 {test.first_use} : f32
+    %other = arith.mulf %read, %one : f32
+    pto.texpands ins(%sum : f32) outs(%tile : !tile)
+    pto.texpands ins(%other : f32) outs(%tile : !tile)
+    return
+  }
+  func.func @control_refused(%tile: !tile, %zero: index, %one: f32) attributes {test.readiness, test.readiness_refuse} {
+    %read = "pto.tgetval"(%tile, %zero) {test.async} : (!tile, index) -> f32
+    %positive = arith.cmpf ogt, %read, %one : f32
+    scf.if %positive { pto.texpands ins(%one : f32) outs(%tile : !tile) }
+    return
+  }
+  func.func @external_refused(%tile: !tile, %zero: index, %one: f32) attributes {test.readiness, test.readiness_refuse} {
+    %read = "pto.tgetval"(%tile, %zero) {test.async, test.external} : (!tile, index) -> f32
+    pto.texpands ins(%read : f32) outs(%tile : !tile)
+    return
+  }
+  func.func @disjoint() attributes {test.class_scope, test.completion_cuts = array<i64: 3>} {
+    %a = arith.constant 0 : i64
+    %b = arith.constant 64 : i64
+    %one = arith.constant 1.0 : f32
+    %x = pto.alloc_tile addr = %a : !tile
+    %y = pto.alloc_tile addr = %b : !tile
+    pto.texpands ins(%one : f32) outs(%x : !tile)
+    "pto.texpands"(%one, %y) {test.cut = 2 : i64} : (f32, !tile) -> ()
+    "func.return"() {test.cut = 3 : i64} : () -> ()
+  }
+  func.func @overlap() attributes {test.completion_cuts = array<i64: 2, 3>} {
+    %a = arith.constant 0 : i64
+    %b = arith.constant 0 : i64
+    %one = arith.constant 1.0 : f32
+    %x = pto.alloc_tile addr = %a : !tile
+    %y = pto.alloc_tile addr = %b : !tile
+    pto.texpands ins(%one : f32) outs(%x : !tile)
+    "pto.texpands"(%one, %y) {test.cut = 2 : i64} : (f32, !tile) -> ()
+    "func.return"() {test.cut = 3 : i64} : () -> ()
+  }
+}

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Preserve a qualified exact child's barriers through the common materializer.
 #include "CompletionInlineChild.h"
+#include "CompletionStorage.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 namespace mlir::pto::frontiersynch {
@@ -66,6 +67,13 @@ std::shared_ptr<const CompletionInlineChild> CompletionInlineChild::qualify(std:
     // not reconstruct which effects they complete; it conservatively carries all.
     child->effects = {{modes}, {modes}, {modes}, true};
     return child;
+}
+CompletionSummary CompletionInlineChild::classifiedSummary(
+    const CompletionStorage& storage, const PhaseIndex& index) const
+{
+    // Proper completion children use the same full-input class interpretation.
+    // Finite children retain their exact code but import conservative effects.
+    return completion ? effects : storage.summarize(roots(), index);
 }
 ArrayRef<Operation*> CompletionInlineChild::roots() const
 {

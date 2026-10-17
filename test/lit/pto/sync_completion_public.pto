@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-test-opt --pto-frontier-analysis="prepare-allocation=false" %s | FileCheck %s
 // RUN: pto-test-opt --pto-frontier-analysis --pto-frontier-allocate="eligible-ids=0,1,2,3,4,5" %s > %t
-// CHECK: pto.completion_protocol = "a3-single-core-all; coarse-memory-class"
+// CHECK: pto.completion_protocol = "a3-single-core-all; conservative-storage-classes"
 // CHECK-SAME: selected_logical_backend = "completion-transfer"
 // CHECK: scf.while
 // CHECK: pto.barrier <PIPE_ALL>

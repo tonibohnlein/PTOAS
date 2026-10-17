@@ -1,6 +1,6 @@
 # Sections 5–6: regional fallback and reusable certificates
 
-Baseline: `4710959d9`. Status: M1 accepted; M2–M5 remain open.
+Baseline: `4710959d9`. Status: M1–M2 accepted; M3–M5 remain open.
 
 The implementation preserves exact minimum demands, original cuts, matching and
 established realization guarantees on exact paths. Completion fallback reports
@@ -99,3 +99,54 @@ The mixed case replaces eight coarse ALL barriers with eight retained exact loca
 barriers, while preserving eight invocation drains. This is a change to the
 conservative parent construction; no fixed-protocol equivalence or device speedup
 is claimed. Storage classes and prerequisite support remain M2 work.
+
+## M2 implementation and deletion ledger
+
+Implemented and accepted by architecture and compiler-correctness reviewers.
+The [M2 receipt](frontier-sections56-m2-results.json) records source hashes and evidence.
+
+Completion source snapshots now own one deterministic storage-class universe for
+all proper scopes. Classes distinguish proved address spaces and disjoint local
+physical reservations. Overlapping or adjacent reservations are merged; every
+address-table alternative participates. Missing addresses, zero/overflowing
+extents and lost provenance conservatively cover the entire space. Unknown
+spaces cover all classes. GM remains coarse. Unknown memberships retain ranges,
+not copied class inventories. Empty and call-only functions have at least one
+class. Dense graph summaries still cost O(vertices × classes); this is not an
+end-to-end linearity claim.
+
+Finite inline effects use that same classifier. Proper completion children share
+the full input's deterministic numbering, including across source snapshots.
+Callee exports remain deliberately coarse: collapse and lift A, E and S separately
+and preserve transparency. Callee-local reservations never become caller class
+identities without argument-substitution evidence.
+
+A qualified scalar prerequisite stays within one original block and visit.
+Completion precedes the earliest direct scalar use, including intermediate pure
+arithmetic; the final payload consumer is not used as a substitute for that cut.
+Control, carried, escaping and externally sourced obligations remain unavailable.
+An accepted atomic child hiding a mandatory cut is refused. Readiness discovery
+reports operation and use visits separately. Integration tests inject an
+asynchronous contract into test-owned input phases; production tgetval remains
+synchronous and its ISA semantics are unchanged.
+
+The result reports covering modeled order, SCC placement, actual class count,
+readiness cuts, retained inline children, zero parent event IDs and separate
+matching/payload-completion semantics. The optional realized-order loss bound
+remains explicitly unavailable, never zero. Existing child-resource restrictions
+remain unchanged.
+
+| Previous adapter | Replacement | Removal status |
+|---|---|---|
+| One-class primitive effect assembly | Snapshot-owned CompletionStorage | Removed |
+| Direct copy of callee class numbering | Coarse A/E/S collapse and caller lift | Removed |
+| Blanket nonnative scalar-result refusal | Same-block first-use readiness certificate and mandatory SCC entries | Unsupported forms still explicitly refused |
+| Implicit single-class completion metadata | Explicit storage/readiness/child guarantee fields | Replaced |
+
+M2 qualification passes 12/12 focused tests, including storage overlap oracles,
+first-use insertion, separate-snapshot class compatibility and threaded production
+output. Public disjoint/wildcard fixtures scale through 512 classes. Three serial
+interleaved immediate-M1 timing pairs are neutral: candidate/baseline medians
+1.013, 1.019 and 0.998 for disjoint256, wildcard256 and while control. Disjoint256
+reduces ALL barriers from 256 to one invocation drain; wildcard256 reduces 257
+to two. These are conservative-order improvements, not device-speed measurements.

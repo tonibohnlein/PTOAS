@@ -59,7 +59,8 @@ public:
     ChildContracts childContracts() const;
     bool completesInvocation() const { return !summaryOnly && wholeInvocation; }
     struct ConstructionWork {
-        uint64_t scopedOperations = 0, scopedPhases = 0, graphVertices = 0;
+        uint64_t scopedOperations = 0, scopedPhases = 0, graphVertices = 0, readinessCuts = 0;
+        uint64_t readinessOperationVisits = 0, readinessUseVisits = 0;
     };
     const ConstructionWork& constructionWork() const { return work; }
     std::shared_ptr<const CompletionSourceSnapshot> sourceOwner() const { return source; }

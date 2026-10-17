@@ -42,6 +42,8 @@ ResultGuarantees completionGuarantees(const CompletionRegion& completion)
     result.realization = RealizationOrder::CompletionCoverage;
     result.completionClasses = completion.transfer().summary.all.size();
     result.completedExit = completion.completesInvocation();
+    result.inlineChildren = completion.inlineChildren();
+    result.readinessCuts = completion.constructionWork().readinessCuts;
     const auto children = completion.childContracts();
     result.eventFreeChildren = children.eventFree;
     result.completedChildren = children.completedExit;
@@ -124,6 +126,11 @@ DictionaryAttr encodeResultGuarantees(MLIRContext* context, const ResultGuarante
         completion.set("protocol", b.getStringAttr("qualified-a3-all-barrier"));
         completion.set("storage_classes", b.getI64IntegerAttr(value.completionClasses));
         completion.set("parent_event_ids", b.getI64IntegerAttr(0));
+        completion.set("storage_model", b.getStringAttr("proved-spaces-and-reservations-with-may-alias"));
+        completion.set("inline_children", b.getI64IntegerAttr(value.inlineChildren));
+        completion.set("scalar_readiness_cuts", b.getI64IntegerAttr(value.readinessCuts));
+        completion.set("scalar_readiness", b.getStringAttr("qualified-same-block-first-use"));
+        completion.set("child_payload_completion", b.getStringAttr("independent-of-matching-closure"));
         completion.set("event_free_children", b.getI64IntegerAttr(value.eventFreeChildren));
         completion.set("completed_exit_children", b.getI64IntegerAttr(value.completedChildren));
         completion.set("closed_descendant_children", b.getI64IntegerAttr(value.descendantClosedChildren));
