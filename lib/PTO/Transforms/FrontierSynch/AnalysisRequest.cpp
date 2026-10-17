@@ -9,6 +9,7 @@
 // export checks; detached command fragments always have fresh ownership.
 #include "AnalysisSessionInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
+#include "Shared/CompletionInlineChild.h"
 #include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "Shared/SequenceAnalysisInternal.h"
 #include "WholeInvocationIdentity.h"
@@ -448,6 +449,69 @@ std::vector<AnalysisBackend> FrontierAnalysis::exactAttemptFamilies(
     }
     return result;
 }
+std::shared_ptr<const CompletionRegion> FrontierAnalysis::completionRegion(std::size_t region, std::string& error)
+{
+    auto& cached = sessionState->completions[region];
+    if (cached.attempted) { error = cached.error; return cached.owner; }
+    cached.attempted = true;
+    SmallVector<Operation*> roots;
+    const auto& node = program->nodes[region];
+    if (node.kind == StructureKind::ExplicitRun) { roots = node.operations; }
+    else if (node.kind == StructureKind::Sequence && node.region && node.region->hasOneBlock()) {
+        for (auto& op : node.region->front().without_terminator()) { roots.push_back(&op); }
+    } else if (node.kind == StructureKind::Loop || node.kind == StructureKind::Conditional ||
+               (node.anchor && isa<scf::WhileOp>(node.anchor))) {
+        roots.push_back(node.anchor);
+    } else if (region) {
+        cached.error = error = "completion request has no supported contiguous original scope"; return {};
+    }
+    SmallVector<std::shared_ptr<const CompletionInlineChild>> children;
+    SmallVector<std::size_t> pending(node.children.rbegin(), node.children.rend());
+    while (!pending.empty()) {
+        const auto id = pending.pop_back_val();
+        const auto& childNode = program->nodes[id];
+        std::shared_ptr<const CompletionInlineChild> child;
+        // Import retained mathematics first. Only finite implementations have
+        // an event-free inline exporter; other exact owners remain retained.
+        if (auto found = sessionState->attempts.find(id); found != sessionState->attempts.end()) {
+            for (const auto& attempt : found->second) {
+                const auto& math = attempt.second.mathematical;
+                if (!math) { continue; }
+                auto finite = math->finiteDemands;
+                if (!finite && childNode.kind == StructureKind::ExplicitRun && math->sequenceDemands) {
+                    finite = finiteSequenceChild(*math->sequenceDemands);
+                }
+                child = CompletionInlineChild::qualify(std::move(finite));
+                if (child) { break; }
+            }
+        }
+        if (!child) {
+            auto found = sessionState->completions.find(id);
+            if (found != sessionState->completions.end()) {
+                child = CompletionInlineChild::qualify(found->second.owner);
+            }
+        }
+        if (!child && childNode.kind == StructureKind::ExplicitRun) {
+            AnalysisRequest request; request.region = id;
+            auto answer = requestBackend(AnalysisBackend::Sequence, request);
+            if (answer.mathematical && answer.mathematical->sequenceDemands) {
+                child = CompletionInlineChild::qualify(finiteSequenceChild(*answer.mathematical->sequenceDemands));
+            }
+        }
+        if (child) { children.push_back(std::move(child)); }
+        else { pending.append(childNode.children.rbegin(), childNode.children.rend()); }
+    }
+    if (!sessionState->completionSource) {
+        sessionState->completionSource =
+            CompletionRegion::captureSource(function, storage, *structuralIndex, cached.error);
+        if (!sessionState->completionSource) { error = cached.error; return {}; }
+    }
+    cached.owner = region ? CompletionRegion::buildRegion(function, storage, *structuralIndex, roots, children,
+        cached.error, sessionState->completionSource) : CompletionRegion::buildWithChildren(
+        function, storage, *structuralIndex, children, cached.error, sessionState->completionSource);
+    error = cached.error;
+    return cached.owner;
+}
 AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
 {
     if (!sessionState) { sessionState = std::make_shared<AnalysisSessionState>(); }
@@ -621,20 +685,17 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
     }
     exhaustedWalk = true;
     // A missing export can never authorize weakening an exact whole-region order.
-    if (!result.mathematical && request.mode == AnalysisMode::Fallback && request.region == 0) {
+    if (!result.mathematical && request.mode == AnalysisMode::Fallback) {
         auto conservative = requestBackend(AnalysisBackend::CompactBounding, request);
         llvm::append_range(conservative.obligations, result.obligations);
         conservative.ledger = sessionState->ledger;
         conservative.requestId = profile.requestId();
         if (conservative.status == AnalysisStatus::Ready) { return finish(std::move(conservative)); }
-        if (!sessionState->completionAttempted) {
-            sessionState->completionAttempted = true;
-            sessionState->completion = CompletionRegion::build(function, storage, *structuralIndex,
-                                                               sessionState->completionError);
-        }
-        if (sessionState->completion) {
+        std::string completionError;
+        auto owner = completionRegion(request.region, completionError);
+        if (owner) {
             AnalysisOutcome completion;
-            completion.completion = sessionState->completion;
+            completion.completion = owner;
             completion.available.synchronization = true;
             completion.available.allocation = true; // Barrier-only, no event IDs.
             completion.status = request.needs.queries || request.needs.selectors ?
@@ -649,7 +710,7 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
             completion.requestId = profile.requestId();
             return finish(std::move(completion));
         }
-        conservative.obligations.push_back({AnalysisStage::Synchronization, sessionState->completionError});
+        conservative.obligations.push_back({AnalysisStage::Synchronization, completionError});
         return finish(std::move(conservative));
     }
     return finish(std::move(result));
@@ -690,10 +751,11 @@ void retainFamilyTemplate(BackendAttempt& attempt, const PreparedLogicalPlan& pl
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical(const AnalysisOutcome& result)
 {
     if (result.completion) {
-        if (result.mathematical || !sessionState || result.completion != sessionState->completion ||
-            result.completion->inputOwner() != storage || hasWholeFunctionMinimumDemands()) { return failure(); }
+        if (result.mathematical || !sessionState || !sessionState->ownsCompletion(result.completion) ||
+            result.completion->inputOwner() != storage ||
+            (result.completion->completesInvocation() && hasWholeFunctionMinimumDemands())) { return failure(); }
         auto plan = std::make_unique<PreparedLogicalPlan>(0);
-        plan->completeInvocation = true;
+        plan->completeInvocation = result.completion->completesInvocation();
         plan->completionOwner = result.completion;
         return plan;
     }
@@ -853,7 +915,7 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
         if (id < 0 || id > 5 || !uniqueIds.insert(id).second) { return failure(); }
     }
     if (result.completion) {
-        return success(!result.mathematical && sessionState && result.completion == sessionState->completion &&
+        return success(!result.mathematical && sessionState && sessionState->ownsCompletion(result.completion) &&
                        plan.completionOwner == result.completion && result.completion->inputOwner() == storage);
     }
     // Private invocation prefixes require their own lifetime export. Never reuse

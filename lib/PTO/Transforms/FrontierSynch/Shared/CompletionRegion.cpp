@@ -13,6 +13,7 @@
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "RecognitionInternal.h"
 #include "ClosedCompletionChild.h"
+#include "CompletionInlineChild.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Verifier.h"
@@ -36,9 +37,12 @@ std::vector<Operation*> operations(func::FuncOp function)
 class GraphBuilder {
 public:
     GraphBuilder(
-        const PhaseIndex& index, const DenseMap<Operation*, std::shared_ptr<const ClosedCompletionChild>>& children)
+        const PhaseIndex& index, const DenseMap<Operation*, std::shared_ptr<const ClosedCompletionChild>>& children,
+        ArrayRef<std::shared_ptr<const CompletionInlineChild>> inlinePlans)
         : index(index), children(children)
-    {}
+    {
+        for (const auto& child : inlinePlans) { inlineEnds[child->roots().back()] = child.get(); }
+    }
     std::vector<CompletionVertex> graph;
     std::vector<Operation*> anchors;
     std::size_t vertex(Operation* anchor)
@@ -64,10 +68,27 @@ public:
     }
     std::size_t block(Block& block, std::size_t continuation, bool skipTerminator = false)
     {
+        SmallVector<Operation*> roots;
+        for (Operation& operation : block) {
+            if (!skipTerminator || &operation != block.getTerminator()) { roots.push_back(&operation); }
+        }
+        return sequence(roots, continuation);
+    }
+    std::size_t sequence(ArrayRef<Operation*> roots, std::size_t continuation)
+    {
         auto next = continuation;
-        for (Operation& operation : llvm::reverse(block)) {
-            auto* op = &operation;
-            if (skipTerminator && op == block.getTerminator()) { continue; }
+        std::size_t at = roots.size();
+        while (at) {
+            auto* op = roots[--at];
+            if (auto child = inlineEnds.find(op); child != inlineEnds.end()) {
+                const auto* imported = child->second;
+                at -= imported->roots().size() - 1;
+                auto id = vertex(imported->roots().front());
+                graph[id].summary = imported->summary();
+                graph[id].successors = {next};
+                next = id;
+                continue;
+            }
             auto id = vertex(op);
             if (auto branch = dyn_cast<scf::IfOp>(op)) {
                 auto yes = this->block(branch.getThenRegion().front(), next);
@@ -92,10 +113,115 @@ public:
         return next;
     }
 private:
+    DenseMap<Operation*, const CompletionInlineChild*> inlineEnds;
     const PhaseIndex& index;
     const DenseMap<Operation*, std::shared_ptr<const ClosedCompletionChild>>& children;
 };
+bool contains(const DenseSet<Operation*>& roots, Operation* operation)
+{
+    for (auto* op = operation; op; op = op->getParentOp()) {
+        if (roots.contains(op)) { return true; }
+    }
+    return false;
+}
+bool adjacent(func::FuncOp function, ArrayRef<Operation*> roots)
+{
+    Operation* previous = nullptr;
+    for (auto* root : roots) {
+        if (!root || !function->isProperAncestor(root) || root->hasTrait<OpTrait::IsTerminator>() ||
+            (previous && previous->getNextNode() != root)) { return false; }
+        previous = root;
+    }
+    return true;
+}
+bool validChildren(func::FuncOp function, const SyncInput* input, ArrayRef<Operation*> roots,
+    ArrayRef<std::shared_ptr<const CompletionInlineChild>> children)
+{
+    DenseSet<Operation*> scope(roots.begin(), roots.end()), used;
+    for (const auto& child : children) {
+        if (!child || child->input() != input || child->roots().empty() || !adjacent(function, child->roots())) {
+            return false;
+        }
+        for (auto* root : child->roots()) {
+            if (!contains(scope, root) || !used.insert(root).second) { return false; }
+        }
+    }
+    for (auto* root : used) {
+        if (contains(used, root->getParentOp())) { return false; }
+    }
+    return true;
+}
 } // namespace
+// A source seal belongs to the immutable analysis session, not to each scope.
+class CompletionSourceSnapshot {
+public:
+    func::FuncOp function;
+    std::shared_ptr<const SyncInput> input;
+    // Construction-time identity: source facts must remain unchanged. Never
+    // dereferenced after capture; the snapshot does not retain the index.
+    const PhaseIndex* index = nullptr;
+    std::shared_ptr<const PhaseSourceFacts> facts;
+    std::string body;
+    std::vector<Operation*> inventory;
+    Operation* originalModule = nullptr;
+    DictionaryAttr moduleAttributes;
+    bool unchanged() const
+    {
+        return function->getParentOp() == originalModule && text(function) == body &&
+            operations(function) == inventory &&
+            function->getParentOp()->getAttrDictionary() == moduleAttributes;
+    }
+};
+std::shared_ptr<const CompletionSourceSnapshot> CompletionRegion::captureSource(func::FuncOp function,
+    std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error)
+{
+    error.clear();
+    if (!function || !input || function.isDeclaration() || !function.getBody().hasOneBlock() ||
+        !isa<ModuleOp>(function->getParentOp()) || failed(verify(function))) {
+        error = "completion fallback requires one verified original structured function"; return {};
+    }
+    DenseSet<const CompoundInstanceElement*> remaining;
+    for (const auto* phase : input->instructions()) {
+        if (!phase || !phase->elementOp || !function->isProperAncestor(phase->elementOp) ||
+            !remaining.insert(phase).second) {
+            error = "completion input has mismatched original phases"; return {};
+        }
+    }
+    function.walk([&](Operation* op) {
+        for (const auto* phase : index.phasesFor(op)) {
+            if (!remaining.erase(phase)) { error = "completion index belongs to different source facts"; }
+        }
+    });
+    if (!remaining.empty() || !error.empty()) {
+        error = "completion index does not cover the exact shared input"; return {};
+    }
+    auto source = std::make_shared<CompletionSourceSnapshot>();
+    source->function = function; source->input = std::move(input); source->index = &index;
+    source->facts = index.sourceFacts();
+    source->body = text(function); source->inventory = operations(function);
+    source->originalModule = function->getParentOp();
+    source->moduleAttributes = source->originalModule->getAttrDictionary();
+    return source;
+}
+std::shared_ptr<const CompletionRegion> CompletionRegion::buildRegion(func::FuncOp function,
+    std::shared_ptr<const SyncInput> input, const PhaseIndex& index, ArrayRef<Operation*> roots,
+    ArrayRef<std::shared_ptr<const CompletionInlineChild>> children, std::string& error,
+    std::shared_ptr<const CompletionSourceSnapshot> source)
+{
+    ClosedCompletionImportContext context;
+    context.active.insert(function);
+    return buildImpl(function, std::move(input), index, error, false, context,
+        roots, children, false, std::move(source));
+}
+std::shared_ptr<const CompletionRegion> CompletionRegion::buildWithChildren(func::FuncOp function,
+    std::shared_ptr<const SyncInput> input, const PhaseIndex& index,
+    ArrayRef<std::shared_ptr<const CompletionInlineChild>> children, std::string& error,
+    std::shared_ptr<const CompletionSourceSnapshot> source)
+{
+    ClosedCompletionImportContext context;
+    context.active.insert(function);
+    return buildImpl(function, std::move(input), index, error, false, context, {}, children, true, std::move(source));
+}
 std::shared_ptr<const CompletionRegion> CompletionRegion::buildCoarse(
     func::FuncOp function, GMAliasPolicy policy, std::string& error)
 {
@@ -151,28 +277,24 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::qualifyExistingChild(f
 }
 std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp function,
     std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error, bool existingOnly,
-    ClosedCompletionImportContext& context)
+    ClosedCompletionImportContext& context, ArrayRef<Operation*> requestedRoots,
+    ArrayRef<std::shared_ptr<const CompletionInlineChild>> inlinePlans, bool wholeInvocation,
+    std::shared_ptr<const CompletionSourceSnapshot> source)
 {
     error.clear();
-    const bool valid = function && input && !function.isDeclaration() &&
-        function.getBody().hasOneBlock() && isa<ModuleOp>(function->getParentOp());
-    if (!valid || failed(verify(function))) {
-        error = "completion fallback requires one verified original structured function"; return {};
+    if (!source) { source = captureSource(function, input, index, error); }
+    if (!source || source->function != function || source->input != input || source->index != &index ||
+        source->facts != index.sourceFacts()) {
+        if (error.empty()) { error = "completion scope has a foreign source snapshot"; }
+        return {};
     }
-    DenseSet<const CompoundInstanceElement*> remaining;
-    for (const auto* phase : input->instructions()) {
-        if (!phase || !phase->elementOp || !function->isProperAncestor(phase->elementOp) ||
-            !remaining.insert(phase).second) {
-            error = "completion input has mismatched original phases"; return {};
-        }
+    SmallVector<Operation*> roots(requestedRoots);
+    if (wholeInvocation) {
+        if (!roots.empty()) { error = "whole invocation cannot supply a partial scope"; return {}; }
+        for (auto& op : function.front().without_terminator()) { roots.push_back(&op); }
     }
-    function.walk([&](Operation* op) {
-        for (const auto* phase : index.phasesFor(op)) {
-            if (!remaining.erase(phase)) { error = "completion index belongs to different source facts"; }
-        }
-    });
-    if (!remaining.empty() || !error.empty()) {
-        error = "completion index does not cover the exact shared input"; return {};
+    if (!adjacent(function, roots) || !validChildren(function, input.get(), roots, inlinePlans)) {
+        error = "completion scope or retained children are foreign, overlapping or noncontiguous"; return {};
     }
     auto core = recoverSyncPhysicalCore(function);
     // A2/A3 PipeBarrier contract: ALL completes prior interfaces on every
@@ -182,10 +304,13 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
         (core != SyncPhysicalCore::AIC && core != SyncPhysicalCore::AIV)) {
         error = "completion fallback lacks a qualified single-core A3 protocol"; return {};
     }
+    ConstructionWork work;
     RecognitionResult leaves;
     DenseMap<Operation*, std::shared_ptr<const ClosedCompletionChild>> imports, byCallee;
-    function.walk([&](Operation* op) {
-        if (op == function.getOperation() || !error.empty()) { return; }
+    auto inspect = [&](Operation* op) {
+        ++work.scopedOperations;
+        work.scopedPhases += index.phasesFor(op).size();
+        if (!error.empty()) { return; }
         if (recoverSyncPhysicalCore(op) != core || isa<LogicalFamilyOp, LogicalSetOp, LogicalWaitOp>(op) ||
             (isPreservedSyncProtocol(op) && !isa<BarrierOp>(op))) {
             error = "completion child lacks closed same-core execution"; return;
@@ -223,16 +348,19 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
         if (llvm::any_of(index.prerequisitesFor(op), [](const auto& prerequisite) { return !prerequisite.native; })) {
             error = "completion fallback lacks a forward scalar prerequisite certificate";
         }
-    });
+    };
+    for (auto* root : roots) { root->walk(inspect); }
     if (!error.empty()) { return {}; }
     if (leaves.state != RecognitionState::Applicable) {
         error = "completion fallback has unmodeled effects, macro matching or prerequisites"; return {};
     }
     auto owner = std::shared_ptr<CompletionRegion>(new CompletionRegion);
     owner->summaryOnly = existingOnly;
+    owner->wholeInvocation = wholeInvocation;
+    owner->roots = roots;
+    owner->inlinePlans.assign(inlinePlans.begin(), inlinePlans.end());
     owner->original = function; owner->input = std::move(input);
-    owner->originalText = text(function); owner->originalOperations = operations(function);
-    owner->moduleAttributes = function->getParentOp()->getAttrDictionary();
+    owner->source = std::move(source);
     for (const auto& child : byCallee) {
         owner->children.push_back(child.second);
         owner->childFunctions.push_back(cast<func::FuncOp>(child.first));
@@ -240,9 +368,11 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
     for (const auto& child : imports) {
         owner->importedCalls.insert(child.first);
     }
-    GraphBuilder builder(index, imports);
+    GraphBuilder builder(index, imports, inlinePlans);
     auto exit = builder.vertex(nullptr);
-    auto entry = builder.block(function.front(), exit);
+    auto entry = builder.sequence(roots, exit);
+    work.graphVertices = builder.graph.size();
+    owner->work = work;
     owner->result = buildCompletionTransfer(builder.graph, entry, exit, 1);
     if (!owner->result.error.empty()) { error = owner->result.error; return {}; }
     if (existingOnly) {
@@ -259,9 +389,11 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
         owner->cuts.push_back(builder.anchors[v]);
     }
     // The complete invocation drains after every child's work and before return.
-    owner->cuts.push_back(function.front().getTerminator());
-    owner->result.summary.suffix.assign(1, 0);
-    owner->result.summary.transparent = false;
+    if (wholeInvocation) {
+        owner->cuts.push_back(function.front().getTerminator());
+        owner->result.summary.suffix.assign(1, 0);
+        owner->result.summary.transparent = false;
+    }
     return owner;
 }
 bool CompletionRegion::ownsClosedCall(Operation* call) const { return importedCalls.contains(call); }
@@ -286,27 +418,52 @@ bool CompletionRegion::validateClosedChildren(DenseSet<const ClosedCompletionChi
 {
     return llvm::all_of(children, [&](const auto& child) { return child->unchanged(checked); });
 }
+LogicalResult CompletionRegion::append(PreparedLogicalPlan& destination, IRMapping& mapping,
+    SmallVectorImpl<Operation*>& completionCuts, DenseSet<const CompletionSourceSnapshot*>& checkedSources,
+    DenseSet<const ClosedCompletionChild*>& checkedCalls) const
+{
+    if (!validateClosedChildren(checkedCalls) ||
+        (checkedSources.insert(source.get()).second && !source->unchanged())) { return failure(); }
+    for (const auto& child : inlinePlans) {
+        if (failed(child->append(destination, mapping, completionCuts, checkedSources, checkedCalls))) {
+            return failure();
+        }
+    }
+    for (auto* cut : cuts) {
+        auto* mapped = mapping.lookupOrNull(cut);
+        if (!mapped) { return failure(); }
+        completionCuts.push_back(mapped);
+    }
+    return success();
+}
 LogicalResult CompletionRegion::insert(func::FuncOp function, PreparedLogicalPlan& plan) const
 {
-    const bool clean = !summaryOnly && function == original && plan.completionOwner.get() == this &&
-                       plan.completeInvocation &&
+    const bool clean = !summaryOnly && wholeInvocation && function == original && plan.completionOwner.get() == this &&
+                       plan.completeInvocation == wholeInvocation &&
                        !plan.mathematicalOwner && !plan.privateState && !plan.compactBoundingOwner &&
                        !plan.regionalAllocation && !plan.allocationCertificate && !plan.allocationPreparation &&
                        !plan.familyRecipe && !plan.familyProtocol && !plan.physicalOutput && plan.preparation.empty() &&
                        plan.endpoints.empty() && plan.families.empty() && !plan.groupedFamilies &&
                        !plan.nestedIdentities && !plan.independentPieces;
-    if (!clean || !validateClosedChildren() || text(function) != originalText ||
-        operations(function) != originalOperations ||
-        function->getParentOp()->getAttrDictionary() != moduleAttributes) {
+    DenseSet<const CompletionSourceSnapshot*> checkedSources;
+    DenseSet<const ClosedCompletionChild*> checkedCalls;
+    if (!clean || !validateClosedChildren(checkedCalls) || !source->unchanged()) {
         return function.emitError("completion plan no longer owns its unchanged original invocation");
     }
+    checkedSources.insert(source.get());
     IRMapping mapping;
     OwningOpRef<ModuleOp> staged = cast<ModuleOp>(function->getParentOp()->clone(mapping));
     auto clone = cast<func::FuncOp>(mapping.lookup(function.getOperation()));
+    PreparedLogicalPlan retained(plan.planId);
+    SmallVector<Operation*> completionCuts;
+    if (failed(append(retained, mapping, completionCuts, checkedSources, checkedCalls))) {
+        return function.emitError("completion child no longer has a qualified event-free recipe");
+    }
+    if (!inlinePlans.empty() && failed(insertLogicalSynchronization(clone, retained))) {
+        return function.emitError("completion child failed shared staged insertion");
+    }
     auto all = PipeAttr::get(function.getContext(), PIPE::PIPE_ALL);
-    for (auto* cut : cuts) {
-        auto* mapped = mapping.lookupOrNull(cut);
-        if (!mapped) { return function.emitError("completion plan lost an original command cut"); }
+    for (auto* mapped : completionCuts) {
         auto previous = dyn_cast_or_null<BarrierOp>(mapped->getPrevNode());
         if (previous && previous.getPipe() == all) { continue; }
         OpBuilder builder(mapped);

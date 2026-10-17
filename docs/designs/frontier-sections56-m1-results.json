@@ -1,0 +1,243 @@
+{
+  "milestone": "M1 regional completion ownership and retained children",
+  "status": "accepted",
+  "baseline_revision": "4710959d9adf17a3277145e9f662229f99cbe14e",
+  "scope": {
+    "inline_children": "retained finite no-notification/barrier-only recipes and proper completion fragments",
+    "call_children": [
+      "Empty",
+      "CompletedExit",
+      "ClosedDescendants"
+    ],
+    "proper_regions": "append-only pending fragments; no implicit exit drain",
+    "not_included": [
+      "multiple storage classes",
+      "forward scalar readiness integration",
+      "new eventful inline resources",
+      "device qualification"
+    ]
+  },
+  "source_sha256": {
+    "include/PTO/Transforms/FrontierSynch/FrontierAnalysis.h": "f2693cb5c4a48f4deae7d15e51b99c813e9bbe51cfb1274174dff7254acd5f86",
+    "include/PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h": "03a996497f31c76e2a3ad1dcf9bf426bc8441cee539035e4646938297d56a69b",
+    "include/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h": "dd59d172b9da4cba2bf5500d698b253df66c59c4760f8b8084e30c2ccc00e817",
+    "lib/PTO/Transforms/CMakeLists.txt": "224f53c901f34b6476d0c48624725cc3f84fe4e45f470e196e434d3c72e54384",
+    "lib/PTO/Transforms/FrontierSynch/AnalysisRequest.cpp": "d2cc690a8b0e1b9095763b3b6a2e7c1534eb0910ad533df06fce5a7d516ff43f",
+    "lib/PTO/Transforms/FrontierSynch/AnalysisSessionInternal.h": "6e31fcf9f12cf91ba3f3411d7767e8aa48b90b5d750383002b98f5561156e0f7",
+    "lib/PTO/Transforms/FrontierSynch/Shared/CompletionRegion.cpp": "6065fb70e8e9c7e8eff7851139536e76acf621d8948e0e205d663861b4ad29c6",
+    "lib/PTO/Transforms/FrontierSynch/Shared/SequenceStorage.cpp": "da93ff063359f01c26ea13658f62de4dec0c56cad0b24fffee20172efb402e89",
+    "tools/pto-test-opt/CompletionRegionChecks.cpp": "77518256c66667dd3d9fb7e948215581dea3e00a7104c3ca36b4aa5f485c57a2",
+    "lib/PTO/Transforms/FrontierSynch/Shared/CompletionInlineChild.cpp": "ee19d91682dba89f8ce3b87984eac72261eb3ab7d64859cda9dd3f9b0ed6a067",
+    "lib/PTO/Transforms/FrontierSynch/Shared/CompletionInlineChild.h": "a35276f0f1ff700fc44882bbfb0266e6ef472c412cda086fdfccfc21172f4e3f",
+    "test/lit/pto/Inputs/check_completion_regional.py": "43c309804c3d0ff830e2e0251f9454d2ac40aad1f46f11642cea9231947d5a98",
+    "test/lit/pto/sync_completion_scoped.pto": "f495d45cc8d174c45c52d8fd4f791b07ad92419c37cc8d5b8a32bd6013918712"
+  },
+  "validation": {
+    "incremental_build": "pto-test-opt and pto-sync-input-test; --parallel 2; final build passed without warnings",
+    "focused_tests": [
+      {
+        "name": "PTOIR :: pto/sync_allocation_module_ownership.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/frontier_closed_callees.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_scoped.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_result_guarantees.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_public.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_transfer.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_children.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_closed_completion.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_retained_demand_requests.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_region.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_capabilities.pto",
+        "status": "PASS"
+      }
+    ],
+    "scoped_tests": [
+      "pending suffix",
+      "empty and zero-trip transparency",
+      "final false while condition",
+      "read/ALL versus ALL/write",
+      "optional completion",
+      "exact local barrier retention",
+      "unqualified eventful candidate refusal",
+      "noncontiguous and overlapping roots",
+      "stale accepted child rollback",
+      "module relocation refusal",
+      "request order",
+      "owner lifetime after session destruction"
+    ],
+    "scaling": {
+      "children": [
+        8,
+        32,
+        128,
+        512
+      ],
+      "scoped_operation_visits": "N",
+      "scoped_phase_visits": "N",
+      "graph_vertices": "2N",
+      "shared_source": "same snapshot across proper scopes and parent; checked once during staging"
+    },
+    "threading": "four-function public analysis/allocation; serial and three threaded outputs identical; Linux affinity limits LLVM pool to two workers",
+    "full_suite": "not rerun for M1; final qualification remains after all milestones",
+    "device": "not run"
+  },
+  "timings": {
+    "baseline_revision": "4710959d9adf17a3277145e9f662229f99cbe14e",
+    "scope": "Three serial interleaved wall-time pairs; changed fallback protocol preserves qualified child code; no device measurement",
+    "tools": {
+      "baseline": "7deb282f0100846b6a58be37427e3266e6a0c24f580652bcfb962cdff0602b38",
+      "candidate": "4268d59d4dac1fb12c94c07aaab175b78fa62387b45c6a1dc12c7df5680b4b9c"
+    },
+    "cases": [
+      {
+        "name": "mixed-parent-eight",
+        "input_sha256": "42eb60cd21cfa529a245d9d094502b7219de7cb839a3fc1a496d85e4daf15b61",
+        "runs": [
+          {
+            "pair": 0,
+            "version": "baseline",
+            "seconds": 0.11989494599401951,
+            "local_barriers": 0,
+            "all_barriers": 16,
+            "sha256": "4764e5e2c0b577c27c9626d59d05e858945eb44ba27baaf281fad45e2ee1ca3f"
+          },
+          {
+            "pair": 0,
+            "version": "candidate",
+            "seconds": 0.12193059595301747,
+            "local_barriers": 8,
+            "all_barriers": 8,
+            "sha256": "9c4ff8f95cdf00c8375785178b0e69d69ed1029975d3b3b9c5a34fb0d6e12683"
+          },
+          {
+            "pair": 1,
+            "version": "baseline",
+            "seconds": 0.12012378592044115,
+            "local_barriers": 0,
+            "all_barriers": 16,
+            "sha256": "4764e5e2c0b577c27c9626d59d05e858945eb44ba27baaf281fad45e2ee1ca3f"
+          },
+          {
+            "pair": 1,
+            "version": "candidate",
+            "seconds": 0.12149661406874657,
+            "local_barriers": 8,
+            "all_barriers": 8,
+            "sha256": "9c4ff8f95cdf00c8375785178b0e69d69ed1029975d3b3b9c5a34fb0d6e12683"
+          },
+          {
+            "pair": 2,
+            "version": "baseline",
+            "seconds": 0.12007005279883742,
+            "local_barriers": 0,
+            "all_barriers": 16,
+            "sha256": "4764e5e2c0b577c27c9626d59d05e858945eb44ba27baaf281fad45e2ee1ca3f"
+          },
+          {
+            "pair": 2,
+            "version": "candidate",
+            "seconds": 0.11989705823361874,
+            "local_barriers": 8,
+            "all_barriers": 8,
+            "sha256": "9c4ff8f95cdf00c8375785178b0e69d69ed1029975d3b3b9c5a34fb0d6e12683"
+          }
+        ]
+      },
+      {
+        "name": "while-control",
+        "input_sha256": "46997f1739fc778ed5adb576b9ad7a3a07c9413ccbc1c028fa37e960f805bb88",
+        "runs": [
+          {
+            "pair": 0,
+            "version": "baseline",
+            "seconds": 0.1153709189966321,
+            "local_barriers": 0,
+            "all_barriers": 3,
+            "sha256": "04458dc2a855c3a888dc66e6af31c0d92819fc7457284f584bd662dbed2bec27"
+          },
+          {
+            "pair": 0,
+            "version": "candidate",
+            "seconds": 0.11587818386033177,
+            "local_barriers": 0,
+            "all_barriers": 3,
+            "sha256": "2cdf9e6dc6893f8d3c30210b000cd23d49a64b058fb52cd9009aab75ba09ba45"
+          },
+          {
+            "pair": 1,
+            "version": "baseline",
+            "seconds": 0.1178905381821096,
+            "local_barriers": 0,
+            "all_barriers": 3,
+            "sha256": "04458dc2a855c3a888dc66e6af31c0d92819fc7457284f584bd662dbed2bec27"
+          },
+          {
+            "pair": 1,
+            "version": "candidate",
+            "seconds": 0.11620290204882622,
+            "local_barriers": 0,
+            "all_barriers": 3,
+            "sha256": "2cdf9e6dc6893f8d3c30210b000cd23d49a64b058fb52cd9009aab75ba09ba45"
+          },
+          {
+            "pair": 2,
+            "version": "baseline",
+            "seconds": 0.11671952810138464,
+            "local_barriers": 0,
+            "all_barriers": 3,
+            "sha256": "04458dc2a855c3a888dc66e6af31c0d92819fc7457284f584bd662dbed2bec27"
+          },
+          {
+            "pair": 2,
+            "version": "candidate",
+            "seconds": 0.11803399119526148,
+            "local_barriers": 0,
+            "all_barriers": 3,
+            "sha256": "2cdf9e6dc6893f8d3c30210b000cd23d49a64b058fb52cd9009aab75ba09ba45"
+          }
+        ]
+      }
+    ]
+  },
+  "reviews": {
+    "architecture": "accepted after 11/11 focused gate; scope recorded",
+    "compiler_correctness": "accepted after 11/11 focused gate; no remaining scoped blocker"
+  },
+  "compliance": {
+    "raw_findings": 36,
+    "brace_regex_false_positives": 34,
+    "python_harness_findings": 2,
+    "python_disposition": "Reviewed scoped lit framework use: resolved executables, argument vectors, no shell, timeout and checked status; generated geometric cases and serial/threaded comparisons.",
+    "unresolved": 0,
+    "external_analyzers": "EChecker/SecK not run"
+  }
+}

@@ -19,6 +19,11 @@
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch {
+std::shared_ptr<FiniteAnalysis> finiteSequenceChild(const SequenceAnalysis& analysis)
+{
+    if (!analysis.error.empty() || !analysis.state || analysis.state->children.size() != 1) { return {}; }
+    return analysis.state->children.front().finite;
+}
 std::optional<int64_t> sequenceInteger(Value value)
 {
     APInt number;

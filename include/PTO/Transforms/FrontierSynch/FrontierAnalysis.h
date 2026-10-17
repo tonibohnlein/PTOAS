@@ -153,6 +153,7 @@ public:
         return program ? &*program : nullptr;
     }
 private:
+    std::shared_ptr<const CompletionRegion> completionRegion(std::size_t region, std::string& error);
     LogicalResult produceExplicitFunction();
     SequenceAnalysis* produceSequenceFunction();
     LogicalResult produceArithmeticFunction();
