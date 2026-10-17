@@ -31,6 +31,7 @@ struct ResultGuarantees {
     bool completion = false;
     std::size_t completionClasses = 0;
     uint64_t eventFreeChildren = 0, completedChildren = 0, descendantClosedChildren = 0;
+    uint64_t inlineChildren = 0, readinessCuts = 0;
 };
 // Mathematical evidence survives a failed executable/allocation export.
 ResultGuarantees describeResultGuarantees(const AnalysisOutcome& outcome);

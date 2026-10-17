@@ -14,12 +14,14 @@
 #include "mlir/IR/IRMapping.h"
 namespace mlir::pto::frontiersynch {
 class CompletionSourceSnapshot;
+class CompletionStorage;
 class ClosedCompletionChild;
 class CompletionInlineChild {
 public:
     static std::shared_ptr<const CompletionInlineChild> qualify(std::shared_ptr<FiniteAnalysis> finite);
     static std::shared_ptr<const CompletionInlineChild> qualify(std::shared_ptr<const CompletionRegion> completion);
     const CompletionSummary& summary() const { return effects; }
+    CompletionSummary classifiedSummary(const CompletionStorage& storage, const PhaseIndex& index) const;
     ArrayRef<Operation*> roots() const;
     const SyncInput* input() const;
     LogicalResult append(PreparedLogicalPlan& destination, IRMapping& mapping,

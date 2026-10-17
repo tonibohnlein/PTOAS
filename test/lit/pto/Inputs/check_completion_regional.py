@@ -25,6 +25,26 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
 SUFFIX = "  return\n  }\n}\n"
 
 
+def storage_scaling(optimizer):
+    for count in (8, 32, 128, 512):
+        header = PREFIX[:PREFIX.index("  func.func")] + "  func.func @classes(%unknown: i64) {\n"
+        body = "    %one = arith.constant 1.0 : f32\n"
+        for index in range(count):
+            body += f"    %addr{index} = arith.constant {index * 64} : i64\n"
+            body += f"    %tile{index} = pto.alloc_tile addr = %addr{index} : !tile\n"
+            body += f"    pto.texpands ins(%one : f32) outs(%tile{index} : !tile)\n"
+        flags = ("--pto-frontier-analysis=completion-only=true",)
+        known = run(optimizer, header + body + SUFFIX, *flags)
+        if f"storage_classes = {count}" not in known or known.count("pto.barrier <PIPE_ALL>") != 1:
+            raise RuntimeError("disjoint reservation scaling lost storage classes or added a conflict")
+        body += "    %any = pto.alloc_tile addr = %unknown : !tile\n"
+        body += "    pto.texpands ins(%one : f32) outs(%any : !tile)\n"
+        wildcard = run(optimizer, header + body + SUFFIX, *flags)
+        if f"storage_classes = {count}" not in wildcard or wildcard.count("pto.barrier <PIPE_ALL>") != 2:
+            raise RuntimeError("unknown reservation failed to conflict with existing classes")
+    print("completion classes: 8/32/128/512 disjoint and wildcard public pipelines passed")
+
+
 def main():
     tools = [shutil.which(name) for name in sys.argv[1:3]]
     if len(tools) != 2 or not all(tools):
@@ -39,6 +59,7 @@ def main():
         expected = f"regional scaling: children={count} scoped-visits={count} phase-visits={count} vertices={2 * count}"
         if result.returncode or expected not in result.stdout:
             raise RuntimeError(result.stderr + result.stdout)
+    storage_scaling(optimizer)
     source = PREFIX.replace("test.many_completion", "test.production_parent") + """
     pto.texpands ins(%one : f32) outs(%tile : !tile)
     pto.tadds ins(%tile, %one : !tile, f32) outs(%tile : !tile)

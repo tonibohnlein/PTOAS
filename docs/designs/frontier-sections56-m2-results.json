@@ -1,0 +1,280 @@
+{
+  "milestone": "M2 completion inputs and guarantees",
+  "status": "accepted",
+  "baseline_revision": "776aa90af94b2f5c45af7839da790f20f614968f",
+  "scope": {
+    "storage": "Shared proved address spaces and checked local reservation components; GM/calls remain coarse; unknown memberships are compact ranges.",
+    "readiness": "Qualified same-block same-visit first scalar use; unsupported control, carried, escaping, external and hidden atomic-child cuts refuse.",
+    "resources": "Existing Empty, CompletedExit, ClosedDescendants; zero parent event IDs.",
+    "loss_bound": "Optional quantitative realized loss bound remains unavailable, never zero.",
+    "cost": "Snapshot partition construction is shared. Dense completion facts cost O(vertices * storage classes). Readiness operation/use visits are separately counted."
+  },
+  "source_sha256": {
+    "include/PTO/Transforms/FrontierSynch/ResultGuarantees.h": "c9b7ced3368b4d23978c266528a9724dedba1c28b8be8667f440b3082f0e6655",
+    "include/PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h": "78b1a7286ae1e61c5697bfc5a0cca7e49b73eddcf5f239968f64dada4eb8d68a",
+    "lib/PTO/Transforms/CMakeLists.txt": "f943c61e684f94a01e27d9f31d2648cc9816771e0ab29c2a66139c51751d3605",
+    "lib/PTO/Transforms/FrontierSynch/ResultGuarantees.cpp": "9302f530dcc32dd870915c1827d5ab1fb030ae49522d38397e04da8e5e256f3a",
+    "lib/PTO/Transforms/FrontierSynch/Shared/ClosedCompletionChild.cpp": "70198a270104e9296b55e64e229222885a5fe6f951d075ab98a828e83f674587",
+    "lib/PTO/Transforms/FrontierSynch/Shared/CompletionInlineChild.cpp": "49b6d1f279bea65bb28c527912cbe2e642ee1c1895f869d62896a6d7cfe030a2",
+    "lib/PTO/Transforms/FrontierSynch/Shared/CompletionInlineChild.h": "7cf6dbc81f28be9fd7fdb18e45ab81beb7799d6aa6e08e13112f0174a56758be",
+    "lib/PTO/Transforms/FrontierSynch/Shared/CompletionReadiness.cpp": "a08760b38c5d117cc5942d6415a272335bcd90455f0eb67f88339f34252d4594",
+    "lib/PTO/Transforms/FrontierSynch/Shared/CompletionReadiness.h": "b8ae87f64278a54dd0da6ef3952f599702e1ed170c80292b5a61f116cf9bc926",
+    "lib/PTO/Transforms/FrontierSynch/Shared/CompletionRegion.cpp": "c0e5f17c3bf55d2e6288940b80fab6f08cb1e6bd8ce90b02aaae24bd6dc6b9fe",
+    "lib/PTO/Transforms/FrontierSynch/Shared/CompletionStorage.cpp": "de26a841a98588fa4347dcf323e980ded45cb477d98f31927c2852df6f77ab0e",
+    "lib/PTO/Transforms/FrontierSynch/Shared/CompletionStorage.h": "636bef0559873cb7cfc11d11d567549ee8de7be4a838d362db3786e7e4de48f1",
+    "test/lit/pto/Inputs/check_completion_regional.py": "ebdac60d8814edd08c2a681ab833c71c28c6a2006470607fe8551170588648a1",
+    "test/lit/pto/sync_completion_inputs.pto": "cffdcc37b92a224a36906d8f727ff0ecfa8386e41a7d8d0eb8b18417a6744607",
+    "test/lit/pto/sync_completion_public.pto": "749f1b425fbba457bb2fb98ecb6126630e80548eb9f0f2942b00b4681f35a40f",
+    "tools/pto-test-opt/CMakeLists.txt": "fc8c5f161366465427cf8d43c4255617ccee15318d7df2e94fe3415804974a3e",
+    "tools/pto-test-opt/CompletionInputChecks.cpp": "390fffcd4cdbeaf57d81aa1e767ba1bdc0d8f385714ec934638952b7d555f4d7",
+    "tools/pto-test-opt/CompletionRegionChecks.cpp": "83ad820130c687d0db8f1dd634b83af5ab24f579219f5c985ce449e78eb81ab1"
+  },
+  "validation": {
+    "incremental_build": "pto-test-opt and pto-sync-input-test --parallel 2; passed without warnings",
+    "tests": [
+      {
+        "name": "PTOIR :: pto/sync_allocation_module_ownership.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/frontier_closed_callees.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_scoped.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_public.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_result_guarantees.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_transfer.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_children.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_inputs.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_closed_completion.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_retained_demand_requests.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_region.pto",
+        "status": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_capabilities.pto",
+        "status": "PASS"
+      }
+    ],
+    "storage_oracle": "400000 independent overlap/space comparisons, alternative slots, adjacent/transitive overlap, unknown range/space, zero and overflowing extents, nonempty call-only universe, separate A/E/S lifting.",
+    "readiness_oracle": "Test-owned imported phase contracts model two asynchronous producers and multiple scalar uses; full build and insertion put ALL before arith.addf. Production tgetval semantics remain synchronous. Unsupported control/external scope and hidden scalar-only exact child refuse.",
+    "scaling": "Public completion-only pipeline at 8/32/128/512 disjoint reservations: one invocation drain; with an unknown reservation: one conflict completion plus drain. Proper scopes share class numbering across independent snapshots. Singleton scopes report three readiness operation visits and zero use visits.",
+    "threading": "Existing four-function serial versus three threaded public runs passed with affinity limited to two workers.",
+    "full_suite": "Not rerun for M2; final qualification remains after M5.",
+    "device": "No device compiler or execution requested/run."
+  },
+  "timing": {
+    "baseline_revision": "776aa90af94b2f5c45af7839da790f20f614968f",
+    "flags": [
+      "--mlir-disable-threading",
+      "--pto-frontier-analysis=completion-only=true",
+      "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5"
+    ],
+    "tools": {
+      "baseline": "4268d59d4dac1fb12c94c07aaab175b78fa62387b45c6a1dc12c7df5680b4b9c",
+      "candidate": "4a8cef5ef48aa968694e1c4972dfa998fab6538d4476262d450102d4e71dc7fa"
+    },
+    "cases": [
+      {
+        "name": "disjoint-256",
+        "input_sha256": "543159c5e8d7ecc61b4a93f63b79a9b90a653528be3a0f84412a4bfe2370ebe9",
+        "runs": [
+          {
+            "pair": 0,
+            "version": "baseline",
+            "seconds": 0.12338653998449445,
+            "all_barriers": 256,
+            "output_sha256": "68e1f2fee0cd2f4abc5df2805984cf7937f6380116aac5ac14f619f312c4cf8f"
+          },
+          {
+            "pair": 0,
+            "version": "candidate",
+            "seconds": 0.12491735722869635,
+            "all_barriers": 1,
+            "output_sha256": "18ecbdcf4efc2f175497e676b5bb5ac54f2581573e6aa9520a4674fb2885c3c7"
+          },
+          {
+            "pair": 1,
+            "version": "baseline",
+            "seconds": 0.12282400811091065,
+            "all_barriers": 256,
+            "output_sha256": "68e1f2fee0cd2f4abc5df2805984cf7937f6380116aac5ac14f619f312c4cf8f"
+          },
+          {
+            "pair": 1,
+            "version": "candidate",
+            "seconds": 0.12437235098332167,
+            "all_barriers": 1,
+            "output_sha256": "18ecbdcf4efc2f175497e676b5bb5ac54f2581573e6aa9520a4674fb2885c3c7"
+          },
+          {
+            "pair": 2,
+            "version": "baseline",
+            "seconds": 0.12253626296296716,
+            "all_barriers": 256,
+            "output_sha256": "68e1f2fee0cd2f4abc5df2805984cf7937f6380116aac5ac14f619f312c4cf8f"
+          },
+          {
+            "pair": 2,
+            "version": "candidate",
+            "seconds": 0.12340164929628372,
+            "all_barriers": 1,
+            "output_sha256": "18ecbdcf4efc2f175497e676b5bb5ac54f2581573e6aa9520a4674fb2885c3c7"
+          }
+        ],
+        "medians_seconds": {
+          "baseline": 0.12282400811091065,
+          "candidate": 0.12437235098332167
+        },
+        "candidate_baseline_ratio": 1.0126061907295263
+      },
+      {
+        "name": "wildcard-256",
+        "input_sha256": "932690c1c7344dce876d4c90c994c906ebfce086055b2bf6968220f6c2433652",
+        "runs": [
+          {
+            "pair": 0,
+            "version": "baseline",
+            "seconds": 0.12286230409517884,
+            "all_barriers": 257,
+            "output_sha256": "f4618cf3d30ee5d5bbf629855b7d844062de835a1e58f6e7332a0c80660ee7a1"
+          },
+          {
+            "pair": 0,
+            "version": "candidate",
+            "seconds": 0.1252295272424817,
+            "all_barriers": 2,
+            "output_sha256": "bb182c15b6ad39e91c812c2c956a18acd917527e4c750a9dadc71e83f66e7da3"
+          },
+          {
+            "pair": 1,
+            "version": "baseline",
+            "seconds": 0.12331983493641019,
+            "all_barriers": 257,
+            "output_sha256": "f4618cf3d30ee5d5bbf629855b7d844062de835a1e58f6e7332a0c80660ee7a1"
+          },
+          {
+            "pair": 1,
+            "version": "candidate",
+            "seconds": 0.12438949290663004,
+            "all_barriers": 2,
+            "output_sha256": "bb182c15b6ad39e91c812c2c956a18acd917527e4c750a9dadc71e83f66e7da3"
+          },
+          {
+            "pair": 2,
+            "version": "baseline",
+            "seconds": 0.12273704027757049,
+            "all_barriers": 257,
+            "output_sha256": "f4618cf3d30ee5d5bbf629855b7d844062de835a1e58f6e7332a0c80660ee7a1"
+          },
+          {
+            "pair": 2,
+            "version": "candidate",
+            "seconds": 0.12639405112713575,
+            "all_barriers": 2,
+            "output_sha256": "bb182c15b6ad39e91c812c2c956a18acd917527e4c750a9dadc71e83f66e7da3"
+          }
+        ],
+        "medians_seconds": {
+          "baseline": 0.12286230409517884,
+          "candidate": 0.1252295272424817
+        },
+        "candidate_baseline_ratio": 1.0192672859648557
+      },
+      {
+        "name": "while-control",
+        "input_sha256": "749f1b425fbba457bb2fb98ecb6126630e80548eb9f0f2942b00b4681f35a40f",
+        "runs": [
+          {
+            "pair": 0,
+            "version": "baseline",
+            "seconds": 0.11547860596328974,
+            "all_barriers": 3,
+            "output_sha256": "c14196b2a7b00a97c056bfd517f8a4cbeff04c9900998e2a0585619f15b16e8b"
+          },
+          {
+            "pair": 0,
+            "version": "candidate",
+            "seconds": 0.11625517532229424,
+            "all_barriers": 3,
+            "output_sha256": "8420d17a732b2282dccaa1bf5c5643351f40286bc414ed64a046fc2b28b2ba47"
+          },
+          {
+            "pair": 1,
+            "version": "baseline",
+            "seconds": 0.11588383000344038,
+            "all_barriers": 3,
+            "output_sha256": "c14196b2a7b00a97c056bfd517f8a4cbeff04c9900998e2a0585619f15b16e8b"
+          },
+          {
+            "pair": 1,
+            "version": "candidate",
+            "seconds": 0.11484522884711623,
+            "all_barriers": 3,
+            "output_sha256": "8420d17a732b2282dccaa1bf5c5643351f40286bc414ed64a046fc2b28b2ba47"
+          },
+          {
+            "pair": 2,
+            "version": "baseline",
+            "seconds": 0.11465663695707917,
+            "all_barriers": 3,
+            "output_sha256": "c14196b2a7b00a97c056bfd517f8a4cbeff04c9900998e2a0585619f15b16e8b"
+          },
+          {
+            "pair": 2,
+            "version": "candidate",
+            "seconds": 0.11524699721485376,
+            "all_barriers": 3,
+            "output_sha256": "8420d17a732b2282dccaa1bf5c5643351f40286bc414ed64a046fc2b28b2ba47"
+          }
+        ],
+        "medians_seconds": {
+          "baseline": 0.11547860596328974,
+          "candidate": 0.11524699721485376
+        },
+        "candidate_baseline_ratio": 0.9979943579461844
+      }
+    ]
+  },
+  "interpretation": "Neutral compiler wall-time evidence. Disjoint256 reduces ALL count256 to1; wildcard256 reduces257 to2. This refines conservative completion order, not fixed-protocol relabeling or a device-speed claim.",
+  "review": {
+    "architecture": "Accepted by architecture_m1 after source review.",
+    "correctness": "Accepted by compiler_expert after scoped source review and focused checks."
+  },
+  "compliance": {
+    "checker": "12 braced-control regex false positives, all inspected. One long line fixed. No suppressions.",
+    "scope": "C++17 ownership/bounds/checked unsigned extents, scoped CMake sources, test-only Python subprocess helper. No new process API.",
+    "analyzers": "EChecker/SecK not run; no claim of complete static-analysis compliance."
+  },
+  "local_receipts": [
+    ".local/sections56-regional/m2-focused-final.json",
+    ".local/sections56-regional/m2-timings.json",
+    ".local/sections56-regional/m2-compliance-reviewed.json",
+    ".local/sections56-regional/build-m2-format.out"
+  ]
+}

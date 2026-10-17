@@ -10,6 +10,7 @@
 // Children without local events may retain pending effects. Their resources
 // are empty or owned by closed descendants, independently of payload completion.
 #include "ClosedCompletionChild.h"
+#include "CompletionStorage.h"
 #include "ProtocolSeal.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
@@ -101,7 +102,7 @@ std::optional<CompletionSummary> closedCompletionSummary(const PreparedLogicalPl
     }
     uint8_t all = 0;
     if (plan.completionOwner) {
-        all = plan.completionOwner->transfer().summary.all[0];
+        all = collapseCompletionSummary(plan.completionOwner->transfer().summary).all[0];
     } else if (
         plan.mathematicalOwner && plan.mathematicalOwner->input &&
         plan.mathematicalOwner->input->memory().gmPolicy() == GMAliasPolicy::MayAlias) {
@@ -201,7 +202,7 @@ std::shared_ptr<const ClosedCompletionChild> ClosedCompletionChild::import(
         }
         owner->qualification = CompletionRegion::qualifyExistingChild(callee, input, index, error, context);
         if (!owner->qualification) { return {}; }
-        owner->effects = owner->qualification->transfer().summary;
+        owner->effects = collapseCompletionSummary(owner->qualification->transfer().summary);
         if (!owner->qualification->importedFunctions().empty()) {
             owner->resources = ResourceClosure::ClosedDescendants;
         }

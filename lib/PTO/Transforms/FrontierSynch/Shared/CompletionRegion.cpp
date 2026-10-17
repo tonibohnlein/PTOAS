@@ -14,6 +14,8 @@
 #include "RecognitionInternal.h"
 #include "ClosedCompletionChild.h"
 #include "CompletionInlineChild.h"
+#include "CompletionStorage.h"
+#include "CompletionReadiness.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Verifier.h"
@@ -38,8 +40,9 @@ class GraphBuilder {
 public:
     GraphBuilder(
         const PhaseIndex& index, const DenseMap<Operation*, std::shared_ptr<const ClosedCompletionChild>>& children,
-        ArrayRef<std::shared_ptr<const CompletionInlineChild>> inlinePlans)
-        : index(index), children(children)
+        ArrayRef<std::shared_ptr<const CompletionInlineChild>> inlinePlans, const CompletionStorage& storage,
+        const CompletionReadiness& readiness)
+        : index(index), storage(storage), readiness(readiness), children(children)
     {
         for (const auto& child : inlinePlans) { inlineEnds[child->roots().back()] = child.get(); }
     }
@@ -48,19 +51,17 @@ public:
     std::size_t vertex(Operation* anchor)
     {
         auto id = graph.size();
-        graph.push_back({{{0}, {0}, {0}, true}, {}, false});
+        auto empty = CompletionFacts(storage.size(), 0);
+        graph.push_back({{empty, empty, empty, true}, {}, false});
         anchors.push_back(anchor);
         if (!anchor) { return id; }
+        graph[id].requiresEntryCompletion = readiness.protects(anchor);
         if (auto child = children.find(anchor); child != children.end()) {
-            graph[id].summary = child->second->summary();
+            graph[id].summary = storage.liftCoarse(child->second->summary());
             return id;
         }
-        uint8_t modes = 0;
-        for (const auto* phase : index.phasesFor(anchor)) {
-            if (!phase->useVec.empty()) { modes |= 1; }
-            if (!phase->defVec.empty()) { modes |= 2; }
-        }
-        graph[id].summary = {{modes}, {modes}, {modes}, true};
+        auto modes = storage.effects(index.phasesFor(anchor));
+        graph[id].summary = {modes, modes, modes, true};
         if (auto barrier = dyn_cast<BarrierOp>(anchor); barrier && barrier.getPipe().getPipe() == PIPE::PIPE_ALL) {
             graph[id].summary.transparent = false;
         }
@@ -84,7 +85,7 @@ public:
                 const auto* imported = child->second;
                 at -= imported->roots().size() - 1;
                 auto id = vertex(imported->roots().front());
-                graph[id].summary = imported->summary();
+                graph[id].summary = imported->classifiedSummary(storage, index);
                 graph[id].successors = {next};
                 next = id;
                 continue;
@@ -115,6 +116,8 @@ public:
 private:
     DenseMap<Operation*, const CompletionInlineChild*> inlineEnds;
     const PhaseIndex& index;
+    const CompletionStorage& storage;
+    const CompletionReadiness& readiness;
     const DenseMap<Operation*, std::shared_ptr<const ClosedCompletionChild>>& children;
 };
 bool contains(const DenseSet<Operation*>& roots, Operation* operation)
@@ -161,6 +164,7 @@ public:
     // dereferenced after capture; the snapshot does not retain the index.
     const PhaseIndex* index = nullptr;
     std::shared_ptr<const PhaseSourceFacts> facts;
+    std::unique_ptr<const CompletionStorage> storage;
     std::string body;
     std::vector<Operation*> inventory;
     Operation* originalModule = nullptr;
@@ -198,6 +202,7 @@ std::shared_ptr<const CompletionSourceSnapshot> CompletionRegion::captureSource(
     auto source = std::make_shared<CompletionSourceSnapshot>();
     source->function = function; source->input = std::move(input); source->index = &index;
     source->facts = index.sourceFacts();
+    source->storage = std::make_unique<CompletionStorage>(source->input->instructions());
     source->body = text(function); source->inventory = operations(function);
     source->originalModule = function->getParentOp();
     source->moduleAttributes = source->originalModule->getAttrDictionary();
@@ -304,6 +309,19 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
         (core != SyncPhysicalCore::AIC && core != SyncPhysicalCore::AIV)) {
         error = "completion fallback lacks a qualified single-core A3 protocol"; return {};
     }
+    auto readiness = CompletionReadiness::qualify(roots, index);
+    if (failed(readiness)) {
+        error = "completion fallback lacks a forward scalar prerequisite certificate"; return {};
+    }
+    for (const auto& child : inlinePlans) {
+        bool hiddenCut = false;
+        for (auto* root : child->roots()) {
+            root->walk([&](Operation* op) { hiddenCut |= readiness->protects(op); });
+        }
+        if (hiddenCut) {
+            error = "completion child hides a required scalar readiness cut"; return {};
+        }
+    }
     ConstructionWork work;
     RecognitionResult leaves;
     DenseMap<Operation*, std::shared_ptr<const ClosedCompletionChild>> imports, byCallee;
@@ -314,10 +332,6 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
         if (recoverSyncPhysicalCore(op) != core || isa<LogicalFamilyOp, LogicalSetOp, LogicalWaitOp>(op) ||
             (isPreservedSyncProtocol(op) && !isa<BarrierOp>(op))) {
             error = "completion child lacks closed same-core execution"; return;
-        }
-        if (index.needsValuePrerequisite(op) ||
-            llvm::any_of(index.prerequisitesFor(op), [](const auto& prerequisite) { return !prerequisite.native; })) {
-            error = "completion fallback lacks a forward scalar prerequisite certificate"; return;
         }
         if (auto call = dyn_cast<func::CallOp>(op)) {
             auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(call, call.getCalleeAttr());
@@ -340,13 +354,9 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
         detail::inspectLeaf(*op, index, leaves);
         for (const auto* phase : index.phasesFor(op)) {
             auto present = getSyncPipelinePresence("a3", core, static_cast<PIPE>(phase->kPipeValue));
-            if (present != std::optional<bool>(true) ||
-                llvm::any_of(op->getResults(), [&](Value value) {
-                    return resultAvailability(*phase, value) == SyncResultAvailability::RequiresCompletion;
-                })) { error = "completion child requires an unavailable pipe or scalar readiness protocol"; }
-        }
-        if (llvm::any_of(index.prerequisitesFor(op), [](const auto& prerequisite) { return !prerequisite.native; })) {
-            error = "completion fallback lacks a forward scalar prerequisite certificate";
+            if (present != std::optional<bool>(true)) {
+                error = "completion child requires an unavailable pipe";
+            }
         }
     };
     for (auto* root : roots) { root->walk(inspect); }
@@ -368,12 +378,15 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
     for (const auto& child : imports) {
         owner->importedCalls.insert(child.first);
     }
-    GraphBuilder builder(index, imports, inlinePlans);
+    GraphBuilder builder(index, imports, inlinePlans, *owner->source->storage, *readiness);
     auto exit = builder.vertex(nullptr);
     auto entry = builder.sequence(roots, exit);
     work.graphVertices = builder.graph.size();
+    work.readinessCuts = readiness->size();
+    work.readinessOperationVisits = readiness->operationVisits();
+    work.readinessUseVisits = readiness->useVisits();
     owner->work = work;
-    owner->result = buildCompletionTransfer(builder.graph, entry, exit, 1);
+    owner->result = buildCompletionTransfer(builder.graph, entry, exit, owner->source->storage->size());
     if (!owner->result.error.empty()) { error = owner->result.error; return {}; }
     if (existingOnly) {
         if (llvm::any_of(owner->result.protectEntry, [](bool protect) { return protect; })) {
@@ -391,7 +404,7 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
     // The complete invocation drains after every child's work and before return.
     if (wholeInvocation) {
         owner->cuts.push_back(function.front().getTerminator());
-        owner->result.summary.suffix.assign(1, 0);
+        owner->result.summary.suffix.assign(owner->source->storage->size(), 0);
         owner->result.summary.transparent = false;
     }
     return owner;
@@ -471,7 +484,8 @@ LogicalResult CompletionRegion::insert(func::FuncOp function, PreparedLogicalPla
         barrier->setAttr("pto.completion_boundary", builder.getUnitAttr());
     }
     Builder attributes(function.getContext());
-    clone->setAttr("pto.completion_protocol", attributes.getStringAttr("a3-single-core-all; coarse-memory-class"));
+    clone->setAttr("pto.completion_protocol",
+        attributes.getStringAttr("a3-single-core-all; conservative-storage-classes"));
     // Preserve the ordinary empty logical-plan contract for the physical pass.
     // No notification exists, so it has no event-ID assignment to construct.
     clone->setAttr("pto.endpoint_families", attributes.getDictionaryAttr({
