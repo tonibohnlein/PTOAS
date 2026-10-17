@@ -75,11 +75,12 @@ def profiles(stderr, prefix="frontier-control-profile "):
     return result
 
 
-def compile_route(optimizer, source, route):
+def compile_route(optimizer, source, route, instrument=True):
     command = [optimizer, "--mlir-disable-threading"]
     option = " deferred-output=true" if route == "saved" else " physical-output=true"
     start = time.perf_counter()
-    first = invoke([*command, "--pto-frontier-analysis=" + FLAGS + option, "-"], source)
+    flags = FLAGS if instrument else FLAGS.replace("profile-stages=true", "profile-stages=false")
+    first = invoke([*command, "--pto-frontier-analysis=" + flags + option, "-"], source)
     first_seconds = time.perf_counter() - start
     if route == "saved":
         middle = time.perf_counter()
@@ -195,7 +196,9 @@ def qualify(args, source, form, size, effects, folder):
             logical_trace = trace(args.trace_tool, logical, values)
             validate({"accepted": True, "trace": logical_trace}, labels_for(form, size, g, h), effects)
             signatures[name].append(signature(logical_trace["events"]))
-            work = {"binding": list(values), "source_arithmetic": original["arithmetic_visits"], "routes": {}}
+            work = {"binding": list(values), "source_arithmetic": original["arithmetic_visits"],
+                    "logical_control": logical_trace["control"],
+                    "logical_arithmetic_visits": logical_trace["arithmetic_visits"], "routes": {}}
             regional_trace = trace(args.trace_tool, regional_logical, values) if regional_logical else None
             if regional_trace:
                 validate({"accepted": True, "trace": regional_trace}, labels_for(form, size, g, h), effects)
@@ -208,6 +211,7 @@ def qualify(args, source, form, size, effects, folder):
                                 "physical": actual}, set(range(6)))
                 counts = {key: actual[key] for key in ("arithmetic_visits", "select_visits", "guard_visits")}
                 counts["added_arithmetic_visits"] = actual["arithmetic_visits"] - original["arithmetic_visits"]
+                counts["control"] = actual["control"]
                 work["routes"][route] = counts
             executions.append(work)
         variants[name] = {"routes": metrics, "executions": executions}
@@ -216,19 +220,101 @@ def qualify(args, source, form, size, effects, folder):
     return variants
 
 
+def construction_count(route):
+    # Each snapshot is cumulative. Never add preparation to the family count:
+    # materialized preparation can contain those same generated operations.
+    scalars = ("preparation_scalars", "mapping_scalars", "compaction_scalars", "barrier_scalars")
+    return max((max(sum(p.get("family_materialization", {}).get(k, 0) for k in scalars),
+                    p.get("preparation", {}).get("arithmetic", 0))
+                for p in route["profiles"] + route.get("allocation_profiles", [])), default=0)
+
+
+def check_scaling(item, distinct_baseline):
+    n, form = item["size"], item["form"]
+    linear = form in ("concrete", "guarded")
+    # Fixed two-pipe fixtures: at most quadratic writer-related pairs and
+    # original cuts. These are regression envelopes for the named templates,
+    # not a bound for arbitrary guarded programs or arbitrary partitions.
+    scalar_limit = 10 * n + 8 if linear else 4 * n * n + 16 * n + 16
+    math_limit = 16 * n + 16 if linear else 16 * n * n + 64 * n + 32
+    guard_limit = 1 if form == "concrete" else 6 * n + 4
+    variants = item["variants"]
+    candidate, baseline = variants["candidate"], variants["baseline"]
+    measured = {}
+    for route in ("saved", "combined"):
+        value = candidate["routes"][route]
+        constructed = construction_count(value)
+        if not constructed or max(constructed, value["arithmetic_added"]) > scalar_limit:
+            raise RuntimeError(f"finite scalar construction/live envelope exceeded: {form}/{n}/{route}")
+        if value["sets"] + value["waits"] > 8 * n + 8:
+            raise RuntimeError("finite command-site envelope exceeded")
+        measured[route] = {"constructed_scalars": constructed, "scalar_limit": scalar_limit,
+                           "largest_guard_limit": guard_limit}
+        for execution, old in zip(candidate["executions"], baseline["executions"]):
+            actual, prior = execution["routes"][route], old["routes"][route]
+            control = actual["control"]
+            accounted = control["evaluated_union"] + control["unattributed_arithmetic_evaluations"]
+            if accounted != actual["arithmetic_visits"]:
+                raise RuntimeError("evaluated control accounting does not partition executed arithmetic")
+            if sum(role["evaluations"] for role in control["evaluated_roles"]) != control["evaluated_union"]:
+                raise RuntimeError("evaluated role overlaps do not partition control")
+            if actual["added_arithmetic_visits"] > min(scalar_limit, prior["added_arithmetic_visits"]):
+                raise RuntimeError(f"evaluated control regressed: {form}/{n}/{route}/{execution['binding']}")
+            roots = control["static"]
+            if roots["scratch_node_words"] != roots["topology_nodes"]:
+                raise RuntimeError("root profiler scratch is not linear in discovered topology")
+            if roots["categories"][0]["largest_root"] > guard_limit:
+                raise RuntimeError(f"largest guard envelope exceeded: {form}/{n}/{route}")
+            if sum(part["nodes"] for part in roots["overlaps"]) != roots["union_nodes"]:
+                raise RuntimeError("static role overlaps do not partition control")
+            if control["inactive_test_dependency_evaluations"] > control["evaluated_union"]:
+                raise RuntimeError("inactive tests count unexecuted dependency work")
+    if "mathematics" in item:
+        math = item["mathematics"]
+        work = math["fixed_thresholds"]
+        if math["expressions"] > math_limit or math["pair_visits"] > 2 * math["W"]:
+            raise RuntimeError("finite mathematical construction envelope exceeded")
+        if work["visits"] > 8 * (work["descriptions"] + work["requests"] + 1):
+            raise RuntimeError("fixed-threshold traversal budget exceeded")
+        if work["entries"] > work["visits"] + work["requests"]:
+            raise RuntimeError("fixed-threshold memo envelope exceeded")
+        if form in ("guarded", "writers") and work["requests"]:
+            raise RuntimeError("independently changing pipe presence entered optional projection")
+    if distinct_baseline and form == "composed":
+        new, old = candidate["routes"]["combined"], baseline["routes"]["combined"]
+        if new["arithmetic_added"] >= old["arithmetic_added"] or construction_count(new) >= construction_count(old):
+            raise RuntimeError("composed production construction and live control must both improve")
+    combined = candidate["routes"]["combined"]
+    records = max(p["record_members"] for p in combined["profiles"])
+    events = [event for profile in combined["stage_profiles"] for event in profile.get("stages", [])]
+    allocation = {event["stage"]: event.get("aggregate_calls", 0) for event in events
+                  if event["stage"].startswith("allocation-") and "aggregate_calls" in event}
+    member_pairs = allocation.get("allocation-group-member-pairs-aggregate", 0)
+    if member_pairs > 2 * records * records:
+        raise RuntimeError("fixed-record allocation pair envelope exceeded")
+    shared_arena = max((root["arena_nodes"] for p in combined["profiles"]
+                        for root in p.get("recipe_control_roots", [])), default=0)
+    item["allocation_construction"] = {
+        "scope": "unchanged fixed-record allocator; not covered by the compact-control n-quadratic bound",
+        "record_members": records, "work": allocation, "member_pair_limit": 2 * records * records,
+        "largest_shared_arena_nodes_after_allocation": shared_arena}
+    item["scaling_bounds"] = {"scope": "fixed template control construction, two pipes, supplied input size n",
+                              "mathematical_nodes_limit": math_limit, "routes": measured}
+
+
 def timed_pairs(args, source):
     result = {}
     for route in ("saved", "combined"):
         # One unrecorded warm-up of each binary and complete route.
         for optimizer in (args.baseline, args.optimizer):
-            compile_route(optimizer, source, route)
+            compile_route(optimizer, source, route, instrument=False)
         pairs = []
         for pair in range(args.pairs):
             sample = {}
             order = ("baseline", "candidate") if pair % 2 == 0 else ("candidate", "baseline")
             for name in order:
                 optimizer = args.baseline if name == "baseline" else args.optimizer
-                _, measurement = compile_route(optimizer, source, route)
+                _, measurement = compile_route(optimizer, source, route, instrument=False)
                 sample[name] = measurement
             pairs.append(sample)
         result[route] = {"pairs": pairs, "median_candidate_over_baseline": statistics.median(
@@ -271,12 +357,19 @@ def main():
     (output / "results.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     for form, size in itertools.product(("concrete", "guarded", "writers", "composed"), sizes):
         body, effects = body_for(form, size)
-        source = render(template, body)
+        source = render(template, body).replace("test.trace_arguments =",
+            "test.trace_control_profile, test.trace_arguments =", 1)
         folder = output / f"{form}-{size}"
         folder.mkdir(exist_ok=True)
         (folder / "input.pto").write_text(source, encoding="utf-8")
         item = {"form": form, "size": size, "sha256": hashlib.sha256(source.encode()).hexdigest(),
                 "variants": qualify(args, source, form, size, effects, folder)}
+        if form != "concrete":
+            mathematical = source.replace("test.trace_arguments =",
+                'test.finite_qualification = "guarded", test.trace_arguments =', 1)
+            item["mathematics"] = json.loads(invoke([args.trace_tool, "--gm-alias=may-not-alias",
+                "--finite-guarded-analysis", "-"], mathematical).stdout)
+        check_scaling(item, receipt["binaries"]["baseline"]["sha256"] != receipt["binaries"]["candidate"]["sha256"])
         if args.pairs and size == args.timing_size:
             item["timings"] = timed_pairs(args, source)
         receipt["cases"].append(item)

@@ -25,7 +25,11 @@ struct GuardedRankEdge {
 // and reduction, but they are not executed-source ordinals for a protocol.
 // Executed labels retain the register/streaming rank contract.
 enum class GuardedRankLabels { Executed, Reference };
+struct GuardedRankProjectionWork {
+    uint64_t requests = 0, hits = 0, visits = 0, entries = 0, descriptions = 0, rangeFolds = 0;
+};
 struct GuardedRanks {
+    GuardedRankProjectionWork projectionWork;
     std::string error;
     std::vector<GuardedRankPayload> payloads;
     std::vector<uint32_t> columns;
@@ -64,9 +68,13 @@ GuardedRankStep advanceGuardedRank(RegionExpressions& expressions, GuardedRankFr
 // All edges are forward in the potential occurrence order. Guards imply
 // endpoint presence; the implementation conjoins presence as well. Duplicates
 // are ORed. Native prerequisites seed each start row before cover tests.
+// Fixed-threshold projection preserves the mathematical predicates. A producer
+// opting in must separately preserve publication/availability policy; the finite
+// caller restricts it to guards whose inputs are original function arguments.
 GuardedRanks reduceGuardedRanks(
     RegionExpressions& expressions, llvm::ArrayRef<GuardedRankPayload> payloads,
     llvm::ArrayRef<GuardedRankEdge> generators, llvm::ArrayRef<GuardedRankEdge> nativePrerequisites = {},
-    GuardedRankLabels labels = GuardedRankLabels::Executed, bool retainQueryGraph = false);
+    GuardedRankLabels labels = GuardedRankLabels::Executed, bool retainQueryGraph = false,
+    bool projectFixedThresholds = false);
 } // namespace mlir::pto::frontiersynch
 #endif

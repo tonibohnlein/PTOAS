@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/DeferredFamily.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "FamilyMaterialization.h"
+#include "ControlRootProfile.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "FamilyEndpointNormalization.h"
 #include "CountedCleanupSelection.h"
@@ -1348,6 +1349,80 @@ FailureOr<FamilyEndpointForms> familyEndpointForms(const FamilyEndpointRecipe& r
         result.numericalSites += numerical;
         result.contextualSites += leaf.pieces.size() - numerical;
         result.mixedLeaves += numerical && numerical < leaf.pieces.size();
+    }
+    return result;
+}
+llvm::json::Array profileFamilyControlRoots(const FamilyEndpointRecipe& recipe)
+{
+    SmallVector<FamilyPart> leaves;
+    SmallVector<FamilyContextPath> contexts;
+    if (failed(collectFamilyParts(recipe, leaves, contexts))) { return {}; }
+    struct Roots {
+        SmallVector<RegionExpressions::Id> guards, selectors;
+        std::set<std::pair<const FamilyEndpointRecipe*, std::size_t>> environments;
+        std::set<Operation*> cuts;
+        struct Origin { Operation* cut; EndpointKind kind; std::size_t context, piece; };
+        std::map<RegionExpressions::Id, Origin> origins;
+    };
+    std::map<const RegionExpressions*, Roots> groups;
+    for (const auto& part : leaves) {
+        const auto& leaf = *part.recipe;
+        if (!leaf.arena) { continue; }
+        auto& group = groups[leaf.arena.get()];
+        group.environments.emplace(&leaf, part.contextPath);
+        for (auto [index, binding] : llvm::enumerate(leaf.bindings)) {
+            const auto pieceIndex = index;
+            const auto& piece = leaf.pieces[index];
+            auto remember = [&](const auto& scalar) {
+                if (scalar) { group.origins.try_emplace(cutExpressionRoot(*scalar),
+                    Roots::Origin{piece.cut.before, piece.kind, part.contextPath, pieceIndex}); }
+            };
+            if (binding.activity) { group.guards.push_back(cutExpressionRoot(*binding.activity)); }
+            remember(binding.activity);
+            for (const auto* scalar : {&binding.ordinal, &binding.residueCoordinate}) {
+                if (*scalar) { group.selectors.push_back(cutExpressionRoot(**scalar)); remember(*scalar); }
+            }
+            for (const auto& scalar : binding.matchingCoordinates) {
+                if (scalar) { group.selectors.push_back(cutExpressionRoot(*scalar)); remember(scalar); }
+            }
+        }
+        for (const auto& cut : leaf.cuts) { group.cuts.insert(cut.cut.before); }
+    }
+    for (const auto& context : contexts) {
+        if (!context.recipe->arena) { continue; }
+        auto& group = groups[context.recipe->arena.get()];
+        for (const auto& entry : context.recipe->cuts) {
+            group.cuts.insert(entry.first);
+            auto& roots = context.recipe->kind == FamilyContextKind::Activity ? group.guards : group.selectors;
+            roots.push_back(cutExpressionRoot(*entry.second));
+        }
+    }
+    llvm::json::Array result;
+    for (const auto& [arena, group] : groups) {
+        auto report = detail::RegionConstructionAccess::profileRoots(*arena, group.guards, group.selectors);
+        report["arena_nodes"] = arena->size();
+        report["binding_environments"] = group.environments.size(); report["original_cuts"] = group.cuts.size();
+        report["scope"] = "structural-arena-sharing-not-placement";
+        llvm::json::Array origins;
+        if (auto* largest = report.getArray("largest_expression_ids")) {
+            for (const auto& entry : *largest) {
+                const auto id = entry.getAsInteger();
+                if (!id || !group.origins.count(*id)) { origins.push_back(nullptr); continue; }
+                const auto& origin = group.origins.at(*id);
+                std::string location;
+                llvm::raw_string_ostream stream(location);
+                if (origin.cut) { origin.cut->getLoc().print(stream); }
+                llvm::json::Object item{{"expression", *id}, {"location", stream.str()},
+                    {"cut_operation", origin.cut ? origin.cut->getName().getStringRef() : StringRef("block-end")},
+                    {"command_kind", origin.kind == EndpointKind::Set ? "set" :
+                        (origin.kind == EndpointKind::Wait ? "wait" : "barrier")},
+                    {"terminal_cut", origin.cut && isa<func::ReturnOp>(origin.cut)}, {"piece", origin.piece}};
+                if (origin.context != SIZE_MAX) { item["context_path"] = origin.context; }
+                origins.push_back(std::move(item));
+            }
+        }
+        report["largest_root_origins"] = std::move(origins);
+        result.push_back(std::move(report));
     }
     return result;
 }

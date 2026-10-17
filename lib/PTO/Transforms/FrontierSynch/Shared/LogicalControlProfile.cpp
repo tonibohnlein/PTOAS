@@ -12,6 +12,8 @@
 #include "PrivateStatePlan.h"
 #include "MixedFamilyInsertion.h"
 #include "PreparedControlLiveness.h"
+#include "ControlRootProfile.h"
+#include "ControlSSAProfile.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalExecutedCounters.h"
 #include "llvm/Support/JSON.h"
@@ -34,6 +36,18 @@ llvm::json::Object preparation(const PreparedLogicalPlan& plan)
     };
     return llvm::json::Object{{"arithmetic", total}, {"endpoint_reachable_arithmetic", count(false)},
                              {"required_arithmetic", count(true)}, {"blocks", plan.preparation.size()}};
+}
+llvm::json::Object endpointRoots(const PreparedLogicalPlan& plan)
+{
+    detail::ControlRootProfile<Value> roots;
+    for (const auto& endpoint : plan.endpoints) {
+        if (endpoint.guard) { roots.add(endpoint.guard, 0); }
+        if (endpoint.identity) { roots.add(endpoint.identity, 1); }
+        for (auto value : endpoint.memberCoordinates) { if (value) { roots.add(value, 1); } }
+    }
+    auto result = roots.report(detail::ControlSSAProfile::dependencies, detail::ControlSSAProfile::arithmetic);
+    result["scope"] = "prepared-endpoints-including-original-dependencies-physical-maps-remain-recipes";
+    return result;
 }
 llvm::json::Object familyForms(const PreparedLogicalPlan& plan)
 {
@@ -109,7 +123,10 @@ void profileLogicalControl(func::FuncOp function, const PreparedLogicalPlan& pla
                             {"endpoint_sites", plan.endpoints.size()},
                             {"recipe_sites", plan.familyRecipe ? familyEndpointPieceCount(*plan.familyRecipe) : 0},
                             {"preparation", preparation(plan)},
+                            {"prepared_control_roots", endpointRoots(plan)},
                             {"recipe_forms", familyForms(plan)},
+                            {"recipe_control_roots", plan.familyRecipe ? profileFamilyControlRoots(*plan.familyRecipe) :
+                                llvm::json::Array{}},
                             {"executed_output", executedInputs(plan)},
                             {"mapping_comparison", llvm::json::Object{
                                 {"candidates", plan.mappingWork.candidates},
@@ -138,7 +155,8 @@ void profileLogicalControl(func::FuncOp function, const PreparedLogicalPlan& pla
                                  {"mapping_scalars", plan.familyWork.mappingScalars},
                                  {"barrier_scalars", plan.familyWork.barrierScalars}}},
                             {"function_scope", staged ? "staged-invocation" : "original-or-inserted"},
-                            {"function_control", functionControl(staged ? staged : function)}})
+                            {"function_control", functionControl(staged ? staged : function)},
+                            {"ssa_control_roots", detail::ControlSSAProfile(staged ? staged : function).result}})
                  << "\n";
 }
 } // namespace mlir::pto::frontiersynch

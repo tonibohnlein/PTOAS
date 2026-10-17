@@ -16,6 +16,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/ModuloLaneSpan.h"
 #include "RestrictedIncomingChecks.h"
 #include "GuardedQueryProjectionChecks.h"
+#include "CompactFiniteControlChecks.h"
 #include <array>
 #include <set>
 namespace fs = mlir::pto::frontiersynch;
@@ -35,7 +36,7 @@ void close(Graph& graph)
     }
 }
 bool ranks(mlir::MLIRContext& context, unsigned pattern, fs::GuardedRankLabels labels,
-    std::array<uint64_t, 4>& acceptedProjection)
+    std::array<uint64_t, 4>& acceptedProjection, bool uniform = false)
 {
     constexpr unsigned n = 6;
     mlir::Block block;
@@ -47,10 +48,14 @@ bool ranks(mlir::MLIRContext& context, unsigned pattern, fs::GuardedRankLabels l
         predicates.push_back(dag.input(input));
         payloads.push_back({(i + pattern * (i / 2)) % 3, predicates.back()});
     }
+    if (uniform) {
+        for (auto& payload : payloads) { payload.present = predicates[payload.pipe]; }
+    }
     std::vector<fs::GuardedRankEdge> edges, native;
     for (unsigned a = 0; a < n; ++a) {
         for (unsigned b = a + 1; b < n; ++b) {
-            auto guard = predicates[(a + b + pattern) % n];
+            const auto index = (a + b + pattern) % n;
+            auto guard = predicates[uniform ? payloads[index].pipe : index];
             if ((a + 2 * b + pattern) % 3) {
                 edges.push_back({a, b, guard});
             }
@@ -61,11 +66,12 @@ bool ranks(mlir::MLIRContext& context, unsigned pattern, fs::GuardedRankLabels l
     }
     if (!edges.empty()) { edges.push_back(edges.front()); }
     if (!native.empty()) { native.push_back(native.front()); }
-    auto result = fs::reduceGuardedRanks(dag, payloads, edges, native, labels, true);
+    auto result = fs::reduceGuardedRanks(dag, payloads, edges, native, labels, true, true);
     if (!result.error.empty()) {
         llvm::errs() << result.error << "\n";
         return false;
     }
+    if (uniform && !result.projectionWork.requests) { return false; }
     std::vector<fs::RegionExpressions::Id> queries;
     std::vector<fs::RegionExpressions::Id> projected;
     for (unsigned a = 0; a < 2 * n; ++a) {
@@ -97,21 +103,22 @@ bool ranks(mlir::MLIRContext& context, unsigned pattern, fs::GuardedRankLabels l
         auto active = [&](fs::RegionExpressions::Id id) {
             return dag.constantValue(dag.substitute(id, substitution)) == 1;
         };
+        auto present = [&](unsigned site) { return bool(mask & (1U << (uniform ? payloads[site].pipe : site))); };
         Graph base(2 * n, std::vector<bool>(2 * n));
         for (unsigned a = 0; a < n; ++a) {
-            if (!(mask & (1U << a))) {
+            if (!present(a)) {
                 continue;
             }
             base[2 * a][2 * a] = base[2 * a + 1][2 * a + 1] = base[2 * a][2 * a + 1] = true;
             for (unsigned b = a + 1; b < n; ++b) {
-                if ((mask & (1U << b)) && payloads[a].pipe == payloads[b].pipe) {
+                if (present(b) && payloads[a].pipe == payloads[b].pipe) {
                     base[2 * a][2 * b] = base[2 * a + 1][2 * b + 1] = true;
                 }
             }
         }
         auto add = [&](Graph& graph, const auto& records) {
             for (auto edge : records) {
-                if ((mask & (1U << edge.source)) && (mask & (1U << edge.target)) && active(edge.guard)) {
+                if (present(edge.source) && present(edge.target) && active(edge.guard)) {
                     graph[2 * edge.source + 1][2 * edge.target] = true;
                 }
             }
@@ -463,7 +470,8 @@ bool storageScans()
 int runGuardedRankChecks()
 {
     mlir::MLIRContext context;
-    if (!moduloSpans() || !storageScans() || !referenceRankConstruction(context) || !activityOnlyRows(context) ||
+    if (!compactFiniteControlChecks::run(context) || !moduloSpans() || !storageScans() ||
+        !referenceRankConstruction(context) || !activityOnlyRows(context) ||
         !writerPairIndexChecks() || !restrictedIncomingScaling(context) ||
         !guardedQueryProjectionChecks::run(context)) {
         llvm::errs() << "guarded storage scan mismatch\n";
@@ -472,7 +480,8 @@ int runGuardedRankChecks()
     std::array<uint64_t, 4> acceptedProjection{};
     for (unsigned pattern = 0; pattern < 32; ++pattern) {
         if (!ranks(context, pattern, fs::GuardedRankLabels::Executed, acceptedProjection) ||
-            !ranks(context, pattern, fs::GuardedRankLabels::Reference, acceptedProjection)) {
+            !ranks(context, pattern, fs::GuardedRankLabels::Reference, acceptedProjection) ||
+            !ranks(context, pattern, fs::GuardedRankLabels::Reference, acceptedProjection, true)) {
             return 1;
         }
     }
@@ -484,7 +493,7 @@ int runGuardedRankChecks()
             return 1;
         }
     }
-    llvm::outs() << "guarded ranks: 4096 valuations and 960 anchored windows "
+    llvm::outs() << "guarded ranks: 6144 valuations and 960 anchored windows "
                     "(including protected writers/scalars/macros) passed\n";
     return 0;
 }

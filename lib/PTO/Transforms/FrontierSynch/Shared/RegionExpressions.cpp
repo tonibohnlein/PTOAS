@@ -12,6 +12,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include "RegionIntegerExpressionsInternal.h"
 #include "RegionSubstitutionTopology.h"
+#include "ControlRootProfile.h"
 #include "OriginalCutFacts.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -24,6 +25,27 @@
 #include <algorithm>
 namespace mlir::pto::frontiersynch {
 #include "RegionExpressionArchive.h"
+llvm::json::Object detail::RegionConstructionAccess::profileRoots(const RegionExpressions& arena,
+    ArrayRef<RegionExpressions::Id> guards, ArrayRef<RegionExpressions::Id> selectors)
+{
+    detail::ControlRootProfile<RegionExpressions::Id> profile;
+    for (auto id : guards) { if (arena.valid(id)) { profile.add(id, 0); } }
+    for (auto id : selectors) { if (arena.valid(id)) { profile.add(id, 1); } }
+    auto report = profile.report([&](auto id) {
+        SmallVector<RegionExpressions::Id> operands;
+        arena.appendOperands(arena.nodes[id], operands);
+        return operands;
+    }, [](auto) { return true; });
+    llvm::json::Array largest;
+    auto* categories = report.getArray("categories");
+    for (unsigned role = 0; role < profile.largestRoots.size(); ++role) {
+        if (categories && (*categories)[role].getAsObject()->getInteger("roots") != 0) {
+            largest.push_back(profile.largestRoots[role]);
+        } else { largest.push_back(nullptr); }
+    }
+    report["largest_expression_ids"] = std::move(largest);
+    return report;
+}
 RegionExpressions::Transaction::Transaction(RegionExpressions& arena)
     : arena(arena), count(arena.nodes.size()), evaluationCount(arena.evaluationInsertions.size()),
       alternativeCount(arena.alternativeInsertions.size()),
