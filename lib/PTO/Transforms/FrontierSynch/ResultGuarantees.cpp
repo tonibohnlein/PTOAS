@@ -43,6 +43,7 @@ ResultGuarantees completionGuarantees(const CompletionRegion& completion)
     result.completionClasses = completion.transfer().summary.all.size();
     result.completedExit = completion.completesInvocation();
     result.inlineChildren = completion.inlineChildren();
+    result.eventfulInlineChildren = completion.eventfulInlineChildren();
     result.readinessCuts = completion.constructionWork().readinessCuts;
     const auto children = completion.childContracts();
     result.eventFreeChildren = children.eventFree;
@@ -128,6 +129,7 @@ DictionaryAttr encodeResultGuarantees(MLIRContext* context, const ResultGuarante
         completion.set("parent_event_ids", b.getI64IntegerAttr(0));
         completion.set("storage_model", b.getStringAttr("proved-spaces-and-reservations-with-may-alias"));
         completion.set("inline_children", b.getI64IntegerAttr(value.inlineChildren));
+        completion.set("eventful_inline_children", b.getI64IntegerAttr(value.eventfulInlineChildren));
         completion.set("scalar_readiness_cuts", b.getI64IntegerAttr(value.readinessCuts));
         completion.set("scalar_readiness", b.getStringAttr("qualified-same-block-first-use"));
         completion.set("child_payload_completion", b.getStringAttr("independent-of-matching-closure"));

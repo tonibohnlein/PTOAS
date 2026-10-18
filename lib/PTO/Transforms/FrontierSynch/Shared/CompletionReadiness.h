@@ -12,8 +12,9 @@
 namespace mlir::pto::frontiersynch {
 class CompletionReadiness {
 public:
-    // Same-block, same-visit SSA only. The first direct use is protected before
-    // any intervening scalar computation can observe an unfinished result.
+    // Protect the same-block first direct scalar use before it can observe
+    // an unfinished result. Indirect branch prerequisites must be dominated
+    // by that cut; carried and escaping readiness remains unsupported.
     static FailureOr<CompletionReadiness> qualify(ArrayRef<Operation*> roots, const PhaseIndex& index);
     bool protects(Operation* op) const { return cuts.contains(op); }
     std::size_t size() const { return cuts.size(); }

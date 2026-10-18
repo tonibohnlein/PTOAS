@@ -78,6 +78,42 @@ func.func @parent(%a: !pto.ptr<f16, gm>, %take: i1, %n: index) {
   }
   return
 })mlir";
+bool pendingInlineBeforeCall(ModuleOp compiled)
+{
+    std::string text(eventful);
+    const auto begin = text.find("  func.func @child");
+    text.insert(begin, "  func.func private @child(!pto.ptr<f16, gm>)\n");
+    const auto name = text.find("func.func @child");
+    text.replace(name, std::string("func.func @child").size(), "func.func @pending_inline");
+    const std::string marker = " attributes {pto.export_closed_completion}";
+    text.erase(text.find(marker), marker.size());
+    text.insert(text.find("    pto.tload"),
+        "    %take = arith.constant true\n    scf.if %take {\n");
+    text.insert(text.find("    return"),
+        "    }\n    func.call @child(%a) : (!pto.ptr<f16, gm>) -> ()\n");
+    auto source = parseSourceString<ModuleOp>(text, compiled.getContext());
+    if (!source) { return failedAt(__LINE__); }
+    auto copy = cast<ModuleOp>(compiled->clone());
+    OwningOpRef<ModuleOp> owner(copy);
+    auto pending = source->lookupSymbol<func::FuncOp>("pending_inline");
+    pending->remove();
+    copy.getBody()->push_back(pending);
+    const auto oldChild = render(copy.lookupSymbol<func::FuncOp>("child"));
+    if (!compile(copy, false)) { return failedAt(__LINE__); }
+    pending = copy.lookupSymbol<func::FuncOp>("pending_inline");
+    unsigned sets = 0;
+    pending.walk([&](pto::LogicalSetOp) { ++sets; });
+    auto call = *pending.front().getOps<func::CallOp>().begin();
+    auto boundary = dyn_cast_or_null<pto::BarrierOp>(call->getPrevNode());
+    if (sets != 1 || !boundary || boundary.getPipe().getPipe() != pto::PIPE::PIPE_ALL ||
+        render(copy.lookupSymbol<func::FuncOp>("child")) != oldChild) {
+        llvm::errs() << render(pending) << "\nsets=" << sets << "\n";
+        return failedAt(__LINE__);
+    }
+    if (failed(fs::allocatePhysicalEventIds(pending, {2, 5}))) { return failedAt(__LINE__); }
+    llvm::outs() << "closed call: pending inline notifications complete before existing child resources\n";
+    return true;
+}
 bool eventfulImport(MLIRContext& context)
 {
     auto module = parseSourceString<ModuleOp>(eventful, &context);
@@ -109,6 +145,7 @@ bool eventfulImport(MLIRContext& context)
     if (failed(fs::allocatePhysicalEventIds(child, {0, 1, 2, 3, 4, 5}))) {
         return failedAt(__LINE__);
     }
+    if (!pendingInlineBeforeCall(*module)) { return false; }
     auto imported = fs::ClosedCompletionChild::import(first, error);
     if (!imported || imported->summary().all != fs::CompletionFacts{3} ||
         imported->summary().suffix != fs::CompletionFacts{0} || imported->summary().transparent ||

@@ -1,0 +1,284 @@
+{
+  "baseline": "a9ac99b52",
+  "flags": [
+    "--mlir-disable-threading",
+    "--pto-frontier-analysis",
+    "--pto-frontier-allocate=eligible-ids=2,5"
+  ],
+  "tool_hashes": {
+    "baseline": "ca24d9cfdc1f81b5463e2c4100fab02da719879fa9da2b67065a0bad9c82cb5f",
+    "candidate": "7dca89c03ee41efa11e83ea72f2e261e7cb44ea62050a2c057b9f65d2c86f0f0"
+  },
+  "cases": {
+    "nested": {
+      "input_sha256": "7f361f9a57e1c55cd3e1a166802cff2f7120277f4d74cb81d8a528da83d73ab2",
+      "runs": {
+        "baseline": [
+          {
+            "seconds": 0.11988738924264908,
+            "sha256": "5dff2e0f2b036331316c40bbf8b3e151d5fcc543feecf5205d7d6bd6631057db",
+            "barriers": 6,
+            "sets": 0,
+            "arithmetic": 6
+          },
+          {
+            "seconds": 0.1178323202766478,
+            "sha256": "5dff2e0f2b036331316c40bbf8b3e151d5fcc543feecf5205d7d6bd6631057db",
+            "barriers": 6,
+            "sets": 0,
+            "arithmetic": 6
+          },
+          {
+            "seconds": 0.1178162731230259,
+            "sha256": "5dff2e0f2b036331316c40bbf8b3e151d5fcc543feecf5205d7d6bd6631057db",
+            "barriers": 6,
+            "sets": 0,
+            "arithmetic": 6
+          }
+        ],
+        "candidate": [
+          {
+            "seconds": 0.12076780200004578,
+            "sha256": "1a4c4537a8a330b282fe927be1560419d6373a53e85063324af0e882b5c54267",
+            "barriers": 4,
+            "sets": 3,
+            "arithmetic": 16
+          },
+          {
+            "seconds": 0.11895363219082355,
+            "sha256": "1a4c4537a8a330b282fe927be1560419d6373a53e85063324af0e882b5c54267",
+            "barriers": 4,
+            "sets": 3,
+            "arithmetic": 16
+          },
+          {
+            "seconds": 0.11860883608460426,
+            "sha256": "1a4c4537a8a330b282fe927be1560419d6373a53e85063324af0e882b5c54267",
+            "barriers": 4,
+            "sets": 3,
+            "arithmetic": 16
+          }
+        ]
+      },
+      "median_candidate_over_baseline": 1.0073436644417602
+    },
+    "children8": {
+      "input_sha256": "1ecaaed8946656291f5dbc66acbfe2f1845de3a5f317393f81cc0b237098b746",
+      "runs": {
+        "baseline": [
+          {
+            "seconds": 0.11668144073337317,
+            "sha256": "9917c8851cce5137951b0f70e48da682491edb009ad82ea1c17b5c890d128db8",
+            "barriers": 16,
+            "sets": 0,
+            "arithmetic": 6
+          },
+          {
+            "seconds": 0.11820401297882199,
+            "sha256": "9917c8851cce5137951b0f70e48da682491edb009ad82ea1c17b5c890d128db8",
+            "barriers": 16,
+            "sets": 0,
+            "arithmetic": 6
+          },
+          {
+            "seconds": 0.11719492729753256,
+            "sha256": "9917c8851cce5137951b0f70e48da682491edb009ad82ea1c17b5c890d128db8",
+            "barriers": 16,
+            "sets": 0,
+            "arithmetic": 6
+          }
+        ],
+        "candidate": [
+          {
+            "seconds": 0.11910288501530886,
+            "sha256": "83e87ef0e07e23ab0a21ff2aebf432c79362d157306b335ac989b82354c5a8ca",
+            "barriers": 9,
+            "sets": 8,
+            "arithmetic": 24
+          },
+          {
+            "seconds": 0.11967621790245175,
+            "sha256": "83e87ef0e07e23ab0a21ff2aebf432c79362d157306b335ac989b82354c5a8ca",
+            "barriers": 9,
+            "sets": 8,
+            "arithmetic": 24
+          },
+          {
+            "seconds": 0.11824962217360735,
+            "sha256": "83e87ef0e07e23ab0a21ff2aebf432c79362d157306b335ac989b82354c5a8ca",
+            "barriers": 9,
+            "sets": 8,
+            "arithmetic": 24
+          }
+        ]
+      },
+      "median_candidate_over_baseline": 1.01245477955045
+    },
+    "children32": {
+      "input_sha256": "02ec7b924559f438729bf5ec40ff4af6e00cde8ab4366f0cb7b59be6d1941d15",
+      "runs": {
+        "baseline": [
+          {
+            "seconds": 0.12613229174166918,
+            "sha256": "7201da1de2038dc76383810a90f85d07fcb7cccf3aee4de2dbaba10cb3bba87d",
+            "barriers": 64,
+            "sets": 0,
+            "arithmetic": 6
+          },
+          {
+            "seconds": 0.12602656008675694,
+            "sha256": "7201da1de2038dc76383810a90f85d07fcb7cccf3aee4de2dbaba10cb3bba87d",
+            "barriers": 64,
+            "sets": 0,
+            "arithmetic": 6
+          },
+          {
+            "seconds": 0.12431630911305547,
+            "sha256": "7201da1de2038dc76383810a90f85d07fcb7cccf3aee4de2dbaba10cb3bba87d",
+            "barriers": 64,
+            "sets": 0,
+            "arithmetic": 6
+          }
+        ],
+        "candidate": [
+          {
+            "seconds": 0.127137987408787,
+            "sha256": "d828a2fa2d499b664d0c8fe683ad58c2dfedbcd5a6f77452ce970c23dfd538a4",
+            "barriers": 33,
+            "sets": 32,
+            "arithmetic": 72
+          },
+          {
+            "seconds": 0.12691968213766813,
+            "sha256": "d828a2fa2d499b664d0c8fe683ad58c2dfedbcd5a6f77452ce970c23dfd538a4",
+            "barriers": 33,
+            "sets": 32,
+            "arithmetic": 72
+          },
+          {
+            "seconds": 0.12730845110490918,
+            "sha256": "d828a2fa2d499b664d0c8fe683ad58c2dfedbcd5a6f77452ce970c23dfd538a4",
+            "barriers": 33,
+            "sets": 32,
+            "arithmetic": 72
+          }
+        ]
+      },
+      "median_candidate_over_baseline": 1.0079733401592164
+    },
+    "children128": {
+      "input_sha256": "6a6be366200537c76c045ce98842ed897b161ca66fa39d71099916e812785c39",
+      "runs": {
+        "baseline": [
+          {
+            "seconds": 0.18559289164841175,
+            "sha256": "d4c39eca4e0dea34657a897c09aeb8509de34e41086d5da8c19fe54de817a1bb",
+            "barriers": 256,
+            "sets": 0,
+            "arithmetic": 6
+          },
+          {
+            "seconds": 0.1852531642653048,
+            "sha256": "d4c39eca4e0dea34657a897c09aeb8509de34e41086d5da8c19fe54de817a1bb",
+            "barriers": 256,
+            "sets": 0,
+            "arithmetic": 6
+          },
+          {
+            "seconds": 0.18322786688804626,
+            "sha256": "d4c39eca4e0dea34657a897c09aeb8509de34e41086d5da8c19fe54de817a1bb",
+            "barriers": 256,
+            "sets": 0,
+            "arithmetic": 6
+          }
+        ],
+        "candidate": [
+          {
+            "seconds": 0.1925156656652689,
+            "sha256": "1a8331d77ac61db713f70a8179ecaa3ae10907a8ebb2fd2d4217d875c9c29936",
+            "barriers": 129,
+            "sets": 128,
+            "arithmetic": 264
+          },
+          {
+            "seconds": 0.19322703313082457,
+            "sha256": "1a8331d77ac61db713f70a8179ecaa3ae10907a8ebb2fd2d4217d875c9c29936",
+            "barriers": 129,
+            "sets": 128,
+            "arithmetic": 264
+          },
+          {
+            "seconds": 0.19087564619258046,
+            "sha256": "1a8331d77ac61db713f70a8179ecaa3ae10907a8ebb2fd2d4217d875c9c29936",
+            "barriers": 129,
+            "sets": 128,
+            "arithmetic": 264
+          }
+        ]
+      },
+      "median_candidate_over_baseline": 1.0417391711993627
+    }
+  },
+  "focused_gate": {
+    "elapsed": 5.971039056777954,
+    "tests": [
+      {
+        "name": "PTOIR :: pto/sync_allocation_module_ownership.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_finite_allocation.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_eventful.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_scoped.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_result_guarantees.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_public.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_transfer.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_children.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_inputs.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_closed_completion.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_region.pto",
+        "code": "PASS"
+      }
+    ]
+  },
+  "scope": "Qualified concrete eventful inline children; existing ALL cuts only; saved/ordinary physical route; no device claim",
+  "reviews": {
+    "architecture": "accepted source; final11/11 gate required and passed",
+    "correctness": "accepted source; final11/11 gate required and passed"
+  },
+  "independent_traces": 12,
+  "combined_completion_output": "explicitly unavailable",
+  "resource_negatives": [
+    "no ALL cut",
+    "bypass ALL cut",
+    "insufficient requested pool"
+  ],
+  "local_artifacts": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/sections56-path-completion"
+}

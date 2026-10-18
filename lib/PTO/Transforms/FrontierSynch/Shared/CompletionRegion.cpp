@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/IR/PTO.h"
@@ -48,16 +49,20 @@ public:
     }
     std::vector<CompletionVertex> graph;
     std::vector<Operation*> anchors;
+    std::vector<bool> eventUse, pendingEvents;
     std::size_t vertex(Operation* anchor)
     {
         auto id = graph.size();
         auto empty = CompletionFacts(storage.size(), 0);
         graph.push_back({{empty, empty, empty, true}, {}, false});
         anchors.push_back(anchor);
+        eventUse.push_back(false);
+        pendingEvents.push_back(false);
         if (!anchor) { return id; }
         graph[id].requiresEntryCompletion = readiness.protects(anchor);
         if (auto child = children.find(anchor); child != children.end()) {
             graph[id].summary = storage.liftCoarse(child->second->summary());
+            eventUse[id] = child->second->resourceClosure() != ClosedCompletionChild::ResourceClosure::Empty;
             return id;
         }
         auto modes = storage.effects(index.phasesFor(anchor));
@@ -86,6 +91,8 @@ public:
                 at -= imported->roots().size() - 1;
                 auto id = vertex(imported->roots().front());
                 graph[id].summary = imported->classifiedSummary(storage, index);
+                eventUse[id] = imported->usesEvents();
+                pendingEvents[id] = imported->returnsPendingEvents();
                 graph[id].successors = {next};
                 next = id;
                 continue;
@@ -401,13 +408,73 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
         if (!builder.anchors[v]) { error = "completion placement lacks an original command cut"; return {}; }
         owner->cuts.push_back(builder.anchors[v]);
     }
+    // Closed matching proves issuance, not consumption. Propagate pending
+    // notification use over the original CFG and the ALREADY selected common
+    // completions. Never add a resource-driven completion here. Existing calls
+    // with completed resources may share the pool only after the same cut check.
+    std::vector<unsigned> resourceStates(builder.graph.size(), 0);
+    SmallVector<std::pair<std::size_t, bool>> resourceWork{{entry, false}};
+    bool resourceConflict = false;
+    while (!resourceWork.empty()) {
+        auto [v, pending] = resourceWork.pop_back_val();
+        const unsigned state = pending ? 2 : 1;
+        if (resourceStates[v] & state) { continue; }
+        resourceStates[v] |= state;
+        ++owner->work.resourceStateVisits;
+        auto all = dyn_cast_or_null<BarrierOp>(builder.anchors[v]);
+        if (owner->result.protectEntry[v] || (all && all.getPipe().getPipe() == PIPE::PIPE_ALL)) {
+            pending = false;
+        }
+        if (builder.eventUse[v]) {
+            if (pending) { resourceConflict = true; break; }
+            pending = builder.pendingEvents[v];
+        }
+        if (v == exit) { owner->pendingEvents |= pending; }
+        for (auto next : builder.graph[v].successors) { resourceWork.push_back({next, pending}); }
+    }
+    if (resourceConflict) {
+        // These eventful exports were provisional until the parent supplied
+        // resource separation. Preserve the prior event-free composition route
+        // when that additional capability is absent; do not modify child code
+        // or install a barrier merely to qualify its physical resources.
+        SmallVector<std::shared_ptr<const CompletionInlineChild>> qualified;
+        for (const auto& child : inlinePlans) {
+            if (!child->usesEvents()) { qualified.push_back(child); }
+        }
+        if (qualified.size() == inlinePlans.size()) {
+            error = "completion children lack consumption-before-republication evidence";
+            return {};
+        }
+        auto retry = buildImpl(function, owner->input, index, error, existingOnly, context, requestedRoots,
+                               qualified, wholeInvocation, owner->source);
+        if (!retry) { return {}; }
+        auto retained = std::shared_ptr<CompletionRegion>(new CompletionRegion(*retry));
+        retained->work.resourceStateVisits += owner->work.resourceStateVisits;
+        retained->work.provisionalGraphVertices += owner->work.graphVertices;
+        retained->work.provisionalScopeVisits += owner->work.scopedOperations;
+        retained->work.provisionalReadinessVisits +=
+            owner->work.readinessOperationVisits + owner->work.readinessUseVisits;
+        return retained;
+    }
     // The complete invocation drains after every child's work and before return.
     if (wholeInvocation) {
+        owner->pendingEvents = false;
         owner->cuts.push_back(function.front().getTerminator());
         owner->result.summary.suffix.assign(owner->source->storage->size(), 0);
         owner->result.summary.transparent = false;
     }
     return owner;
+}
+bool CompletionRegion::usesEventResources() const
+{
+    return llvm::any_of(inlinePlans, [](const auto& child) { return child->usesEvents(); }) ||
+        llvm::any_of(children, [](const auto& child) {
+            return child->resourceClosure() != ClosedCompletionChild::ResourceClosure::Empty;
+        });
+}
+uint64_t CompletionRegion::eventfulInlineChildren() const
+{
+    return llvm::count_if(inlinePlans, [](const auto& child) { return child->usesEvents(); });
 }
 bool CompletionRegion::ownsClosedCall(Operation* call) const { return importedCalls.contains(call); }
 CompletionRegion::ChildContracts CompletionRegion::childContracts() const
@@ -433,12 +500,12 @@ bool CompletionRegion::validateClosedChildren(DenseSet<const ClosedCompletionChi
 }
 LogicalResult CompletionRegion::append(PreparedLogicalPlan& destination, IRMapping& mapping,
     SmallVectorImpl<Operation*>& completionCuts, DenseSet<const CompletionSourceSnapshot*>& checkedSources,
-    DenseSet<const ClosedCompletionChild*>& checkedCalls) const
+    DenseSet<const ClosedCompletionChild*>& checkedCalls, CompletionChildAssembly& assembly) const
 {
     if (!validateClosedChildren(checkedCalls) ||
         (checkedSources.insert(source.get()).second && !source->unchanged())) { return failure(); }
     for (const auto& child : inlinePlans) {
-        if (failed(child->append(destination, mapping, completionCuts, checkedSources, checkedCalls))) {
+        if (failed(child->append(destination, mapping, completionCuts, checkedSources, checkedCalls, assembly))) {
             return failure();
         }
     }
@@ -469,8 +536,20 @@ LogicalResult CompletionRegion::insert(func::FuncOp function, PreparedLogicalPla
     auto clone = cast<func::FuncOp>(mapping.lookup(function.getOperation()));
     PreparedLogicalPlan retained(plan.planId);
     SmallVector<Operation*> completionCuts;
-    if (failed(append(retained, mapping, completionCuts, checkedSources, checkedCalls))) {
-        return function.emitError("completion child no longer has a qualified event-free recipe");
+    CompletionChildAssembly assembly;
+    if (failed(append(retained, mapping, completionCuts, checkedSources, checkedCalls, assembly))) {
+        return function.emitError("completion child no longer has a qualified retained recipe");
+    }
+    auto namespaces = familyRecordNamespaces(retained.families);
+    for (auto& endpoint : retained.endpoints) { endpoint.record = namespaces.at(endpoint.records.front()); }
+    if (!assembly.allocationGroups.empty()) {
+        Builder b(function.getContext());
+        retained.allocationCertificate = b.getDictionaryAttr({
+            b.getNamedAttr("version", b.getI64IntegerAttr(2)),
+            b.getNamedAttr("kind", b.getStringAttr("finite")),
+            b.getNamedAttr("strategy", b.getStringAttr("regional-palettes")),
+            b.getNamedAttr("plan", b.getI64IntegerAttr(plan.planId)),
+            b.getNamedAttr("groups", b.getArrayAttr(assembly.allocationGroups))});
     }
     if (!inlinePlans.empty() && failed(insertLogicalSynchronization(clone, retained))) {
         return function.emitError("completion child failed shared staged insertion");
@@ -486,17 +565,22 @@ LogicalResult CompletionRegion::insert(func::FuncOp function, PreparedLogicalPla
     Builder attributes(function.getContext());
     clone->setAttr("pto.completion_protocol",
         attributes.getStringAttr("a3-single-core-all; conservative-storage-classes"));
-    // Preserve the ordinary empty logical-plan contract for the physical pass.
-    // No notification exists, so it has no event-ID assignment to construct.
-    clone->setAttr("pto.endpoint_families", attributes.getDictionaryAttr({
+    // Eventful children keep their actual families and supplied allocation
+    // proof. Only the notification-free case uses the ordinary empty contract.
+    if (!retained.allocationCertificate) {
+        clone->setAttr("pto.endpoint_families", attributes.getDictionaryAttr({
         attributes.getNamedAttr("version", attributes.getI64IntegerAttr(1)),
         attributes.getNamedAttr("plan", attributes.getI64IntegerAttr(plan.planId)),
         attributes.getNamedAttr("families", attributes.getArrayAttr({})),
         attributes.getNamedAttr("pieces", attributes.getArrayAttr({}))}));
+    }
     if (failed(verify(*staged))) { return function.emitError("completion plan failed staged verification"); }
     function.getBody().takeBody(clone.getBody());
     function->setAttr("pto.endpoint_families", clone->getAttr("pto.endpoint_families"));
     function->setAttr("pto.completion_protocol", clone->getAttr("pto.completion_protocol"));
+    if (retained.allocationCertificate) {
+        function->setAttr("pto.finite_allocation", retained.allocationCertificate);
+    }
     if (plan.recognitionReport) { function->setAttr("pto.frontier_recognition", plan.recognitionReport); }
     return success();
 }

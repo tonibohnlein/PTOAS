@@ -5,36 +5,46 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Retained finite implementations with no notification resources. This is a
-// trusted producer capability; mathematical exactness alone cannot import events.
+// Retained finite implementations with separately qualified notification
+// resources. Mathematical exactness alone cannot import eventful children.
 #ifndef PTO_COMPLETION_INLINE_CHILD_H
 #define PTO_COMPLETION_INLINE_CHILD_H
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionTransfer.h"
 #include "mlir/IR/IRMapping.h"
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalFamilyFragment.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 namespace mlir::pto::frontiersynch {
 struct SequenceAnalysis;
 class CompletionSourceSnapshot;
 class CompletionStorage;
 class ClosedCompletionChild;
+struct CompletionChildAssembly {
+    uint64_t nextRecord = 0;
+    SmallVector<Attribute> allocationGroups;
+};
 class CompletionInlineChild {
 public:
     static std::shared_ptr<const CompletionInlineChild> qualify(std::shared_ptr<FiniteAnalysis> finite);
     static std::shared_ptr<const CompletionInlineChild> qualify(std::shared_ptr<const CompletionRegion> completion);
     const CompletionSummary& summary() const { return effects; }
+    bool usesEvents() const;
+    bool returnsPendingEvents() const;
     CompletionSummary classifiedSummary(const CompletionStorage& storage, const PhaseIndex& index) const;
     ArrayRef<Operation*> roots() const;
     const SyncInput* input() const;
     LogicalResult append(PreparedLogicalPlan& destination, IRMapping& mapping,
                          SmallVectorImpl<Operation*>& completionCuts,
                          DenseSet<const CompletionSourceSnapshot*>& checkedSources,
-                         DenseSet<const ClosedCompletionChild*>& checkedCalls) const;
+                         DenseSet<const ClosedCompletionChild*>& checkedCalls, CompletionChildAssembly& assembly) const;
 private:
     std::shared_ptr<FiniteAnalysis> finite;
     std::shared_ptr<const CompletionRegion> completion;
     CompletionSummary effects;
     std::shared_ptr<const LogicalFamilyFragment> fragment;
+    // Within-visit assignment only. Parent CFG must certify completion between
+    // eventful visits; matching closure alone does not establish consumption.
+    std::optional<PhysicalAllocationPlan> eventAssignment;
 };
 // A failed qualification is specific to this immutable mathematical owner.
 // Upgraded representations publish their own export and never mutate this one.

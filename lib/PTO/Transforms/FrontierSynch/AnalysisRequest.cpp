@@ -725,7 +725,7 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
             AnalysisOutcome completion;
             completion.completion = owner;
             completion.available.synchronization = true;
-            completion.available.allocation = true; // Barrier-only, no event IDs.
+            completion.available.allocation = true; // Closed child palettes remain subject to the requested pool.
             completion.status = request.needs.queries || request.needs.selectors ?
                 AnalysisStatus::UnmetObligation : AnalysisStatus::Ready;
             completion.stage = AnalysisStage::Synchronization;

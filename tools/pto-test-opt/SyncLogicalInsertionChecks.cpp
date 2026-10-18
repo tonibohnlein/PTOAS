@@ -69,6 +69,7 @@ private:
     bool block(Block& body, SmallVectorImpl<Attribute>& yielded, unsigned depth);
     bool operation(Operation& op, unsigned depth);
     bool loop(scf::ForOp op, unsigned depth);
+    bool loop(scf::WhileOp op, unsigned depth);
     bool branch(scf::IfOp op, unsigned depth);
     bool payload(Operation& op, ArrayRef<uint32_t> candidates);
     bool command(Operation& op);
@@ -119,7 +120,7 @@ bool Interpreter::block(Block& body, SmallVectorImpl<Attribute>& yielded, unsign
         arithmeticVisits += op.getName().getDialectNamespace() == "arith";
         selectVisits += isa<arith::SelectOp>(op);
         guardVisits += isa<scf::IfOp>(op);
-        if (isa<scf::YieldOp, func::ReturnOp>(op)) {
+        if (isa<scf::YieldOp, scf::ConditionOp, func::ReturnOp>(op)) {
             if (control) { control->yielded = control->inputs(op.getOperands()); }
             for (auto operand : op.getOperands()) {
                 yielded.push_back(lookup(operand));
@@ -172,6 +173,41 @@ bool Interpreter::loop(scf::ForOp op, unsigned depth)
     bind(op.getResults(), state);
     if (control) { control->loopResults(op, stateEvaluations); }
     return true;
+}
+bool Interpreter::loop(scf::WhileOp op, unsigned depth)
+{
+    if (control) { return fail("while control profiling is not supported by this trace oracle"); }
+    SmallVector<Attribute> state;
+    for (auto value : op.getInits()) { state.push_back(lookup(value)); }
+    int64_t visit = 0;
+    for (;;) {
+        bind(op.getBeforeArguments(), state);
+        SmallVector<Attribute> condition;
+        coordinates.push_back(visit);
+        const bool evaluated = block(op.getBefore().front(), condition, depth + 1);
+        coordinates.pop_back();
+        if (!evaluated || condition.size() != op.getAfterArguments().size() + 1) {
+            return fail(error.empty() ? "trace while condition arity mismatch" : StringRef(error));
+        }
+        auto active = dyn_cast_or_null<IntegerAttr>(condition.front());
+        if (!active) { return fail("trace while condition is unknown"); }
+        state.assign(condition.begin() + 1, condition.end());
+        if (active.getValue().isZero()) {
+            if (state.size() != op.getNumResults()) { return fail("trace while result arity mismatch"); }
+            bind(op.getResults(), state);
+            return true;
+        }
+        bind(op.getAfterArguments(), state);
+        state.clear();
+        coordinates.push_back(visit);
+        const bool executed = block(op.getAfter().front(), state, depth + 1);
+        coordinates.pop_back();
+        if (!executed || state.size() != op.getBeforeArguments().size()) {
+            return fail(error.empty() ? "trace while yield arity mismatch" : StringRef(error));
+        }
+        // The existing statement budget bounds visits, including empty bodies.
+        ++visit;
+    }
 }
 bool Interpreter::branch(scf::IfOp op, unsigned depth)
 {
@@ -352,6 +388,9 @@ bool Interpreter::operation(Operation& op, unsigned depth)
 {
     if (auto counted = dyn_cast<scf::ForOp>(op)) {
         return loop(counted, depth);
+    }
+    if (auto repeated = dyn_cast<scf::WhileOp>(op)) {
+        return loop(repeated, depth);
     }
     if (auto conditional = dyn_cast<scf::IfOp>(op)) {
         return branch(conditional, depth);

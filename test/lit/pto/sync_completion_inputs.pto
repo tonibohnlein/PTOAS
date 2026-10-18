@@ -8,7 +8,7 @@
 // RUN: pto-sync-input-test --completion-region-checks %s | FileCheck %s
 // CHECK: completion storage: 400000 overlap checks and wildcard/call contracts passed
 // CHECK: completion readiness: scalar_chain checked
-// CHECK: completion readiness: control_refused checked
+// CHECK: completion readiness: control_ready checked
 // CHECK: completion readiness: external_refused checked
 // CHECK: completion region: disjoint cuts=1 payload-control-preserved
 // CHECK: completion region: overlap cuts=2 payload-control-preserved
@@ -24,9 +24,9 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
     pto.texpands ins(%other : f32) outs(%tile : !tile)
     return
   }
-  func.func @control_refused(%tile: !tile, %zero: index, %one: f32) attributes {test.readiness, test.readiness_refuse} {
+  func.func @control_ready(%tile: !tile, %zero: index, %one: f32) attributes {test.readiness} {
     %read = "pto.tgetval"(%tile, %zero) {test.async} : (!tile, index) -> f32
-    %positive = arith.cmpf ogt, %read, %one : f32
+    %positive = arith.cmpf ogt, %read, %one {test.first_use} : f32
     scf.if %positive { pto.texpands ins(%one : f32) outs(%tile : !tile) }
     return
   }

@@ -6,6 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "CompletionReadiness.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Dominance.h"
 namespace mlir::pto::frontiersynch {
 FailureOr<CompletionReadiness> CompletionReadiness::qualify(ArrayRef<Operation*> roots, const PhaseIndex& index)
 {
@@ -14,7 +16,8 @@ FailureOr<CompletionReadiness> CompletionReadiness::qualify(ArrayRef<Operation*>
     for (auto* root : roots) {
         root->walk([&](Operation* op) { ++result.inspectedOperations; scope.insert(op); });
     }
-    DenseSet<const CompoundInstanceElement*> producers;
+    DenseMap<const CompoundInstanceElement*, Operation*> producers;
+    DominanceInfo dominance;
     for (auto* op : scope) {
         ++result.inspectedOperations;
         for (const auto* phase : index.phasesFor(op)) {
@@ -24,24 +27,35 @@ FailureOr<CompletionReadiness> CompletionReadiness::qualify(ArrayRef<Operation*>
                 for (Operation* user : value.getUsers()) {
                     ++result.inspectedUses;
                     if (!scope.contains(user) || user->getBlock() != op->getBlock() ||
-                        !op->isBeforeInBlock(user) || user->getNumRegions() ||
+                        !op->isBeforeInBlock(user) || (user->getNumRegions() && !isa<scf::IfOp>(user)) ||
                         user->hasTrait<OpTrait::IsTerminator>()) { return failure(); }
                     if (!first || user->isBeforeInBlock(first)) { first = user; }
                 }
                 if (first) { result.cuts.insert(first); }
-                producers.insert(phase);
+                if (first) {
+                    auto inserted = producers.try_emplace(phase, first);
+                    if (!inserted.second && first->isBeforeInBlock(inserted.first->second)) {
+                        inserted.first->second = first;
+                    }
+                }
             }
         }
     }
     for (auto* op : scope) {
         ++result.inspectedOperations;
-        // Unmapped control, carried and interface obligations remain unavailable.
-        if (index.needsValuePrerequisite(op)) { return failure(); }
-        for (const auto& prerequisite : index.prerequisitesFor(op)) {
+        // An indirect branch condition is ready once its actual scalar first
+        // use is protected. Carried/interface obligations without such explicit
+        // prerequisite provenance remain unavailable.
+        auto prerequisites = index.prerequisitesFor(op);
+        if (index.needsValuePrerequisite(op) && (!isa<scf::IfOp>(op) || prerequisites.empty())) {
+            return failure();
+        }
+        for (const auto& prerequisite : prerequisites) {
             if (prerequisite.native) { continue; }
             auto* source = prerequisite.producer ? prerequisite.producer->elementOp : nullptr;
-            if (!producers.contains(prerequisite.producer) || !prerequisite.directSSA || !source ||
-                source->getBlock() != op->getBlock() || !source->isBeforeInBlock(op)) { return failure(); }
+            auto found = producers.find(prerequisite.producer);
+            if (!source || found == producers.end() ||
+                (found->second != op && !dominance.properlyDominates(found->second, op))) { return failure(); }
         }
     }
     return result;

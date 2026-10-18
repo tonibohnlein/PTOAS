@@ -568,7 +568,8 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
                 ((*prepared)->privateState ? "invocation-prefix" : "direct-endpoints")));
         allocationReport.set("allocation_support", StringAttr::get(function.getContext(),
             !prepareAllocation ? "not-requested" :
-                ((*prepared)->completionOwner ? "not-needed" :
+                ((*prepared)->completionOwner ?
+                    ((*prepared)->completionOwner->eventfulInlineChildren() ? "closed-child-palettes" : "not-needed") :
                     ((*prepared)->allocationCertificate ? "available" : "unavailable"))));
         (*prepared)->recognitionReport = allocationReport.getDictionary(function.getContext());
         frontiersynch::attachResultGuarantees(**prepared, function.getContext());

@@ -20,6 +20,7 @@ struct ClosedCompletionImportContext;
 struct PreparedLogicalPlan;
 class FiniteAnalysis;
 class CompletionInlineChild;
+struct CompletionChildAssembly;
 class CompletionSourceSnapshot;
 
 class CompletionRegion {
@@ -29,7 +30,7 @@ public:
     static std::shared_ptr<const CompletionSourceSnapshot> captureSource(func::FuncOp function,
         std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error);
     // Proper scopes are adjacent original roots; no implicit invocation drain.
-    // Inline children retain exact event-free implementations, not just demands.
+    // Inline children retain qualified implementations and their resource contracts.
     static std::shared_ptr<const CompletionRegion> buildRegion(func::FuncOp function,
         std::shared_ptr<const SyncInput> input, const PhaseIndex& index, ArrayRef<Operation*> roots,
         ArrayRef<std::shared_ptr<const CompletionInlineChild>> children, std::string& error,
@@ -61,16 +62,21 @@ public:
     struct ConstructionWork {
         uint64_t scopedOperations = 0, scopedPhases = 0, graphVertices = 0, readinessCuts = 0;
         uint64_t readinessOperationVisits = 0, readinessUseVisits = 0;
+        uint64_t resourceStateVisits = 0, provisionalGraphVertices = 0;
+        uint64_t provisionalScopeVisits = 0, provisionalReadinessVisits = 0;
     };
     const ConstructionWork& constructionWork() const { return work; }
     std::shared_ptr<const CompletionSourceSnapshot> sourceOwner() const { return source; }
     uint64_t inlineChildren() const { return inlinePlans.size(); }
+    bool usesEventResources() const;
+    bool returnsPendingEvents() const { return pendingEvents; }
+    uint64_t eventfulInlineChildren() const;
     ArrayRef<Operation*> originalRoots() const { return roots; }
     const CompletionTransferResult& transfer() const { return result; }
     std::shared_ptr<const SyncInput> inputOwner() const { return input; }
     // Proper owners are append-only fragments, never independently inserted.
-    // The parent publishes no events. Imported children own their closed IDs;
-    // the parent needs no additional physical assignment.
+    // The completion protocol publishes no events. Imported inline children
+    // retain their palette evidence for ordinary physical assignment.
     LogicalResult insert(func::FuncOp function, PreparedLogicalPlan& plan) const;
     bool ownsClosedCall(Operation* call) const;
     bool validateClosedChildren() const;
@@ -82,13 +88,14 @@ private:
     LogicalResult append(PreparedLogicalPlan& destination, IRMapping& mapping,
                          SmallVectorImpl<Operation*>& completionCuts,
                          DenseSet<const CompletionSourceSnapshot*>& checkedSources,
-                         DenseSet<const ClosedCompletionChild*>& checkedCalls) const;
+                         DenseSet<const ClosedCompletionChild*>& checkedCalls, CompletionChildAssembly& assembly) const;
     static std::shared_ptr<const CompletionRegion> buildImpl(func::FuncOp function,
         std::shared_ptr<const SyncInput> input, const PhaseIndex& index, std::string& error, bool existingOnly,
         ClosedCompletionImportContext& context, ArrayRef<Operation*> roots = {},
         ArrayRef<std::shared_ptr<const CompletionInlineChild>> children = {}, bool wholeInvocation = true,
         std::shared_ptr<const CompletionSourceSnapshot> source = {});
     bool wholeInvocation = true;
+    bool pendingEvents = false;
     SmallVector<Operation*> roots;
     std::vector<std::shared_ptr<const CompletionInlineChild>> inlinePlans;
     bool summaryOnly = false;

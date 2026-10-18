@@ -16,7 +16,7 @@
 // CHECK: scoped completion: complete_then_write pending=2 transparent=0 children=0
 // CHECK: scoped completion: optional_completion pending=0 transparent=1 children=0
 // CHECK: scoped completion: retained pending=3 transparent=1 children=1
-// CHECK: scoped completion: eventful_candidate pending=1 transparent=0 children=0
+// CHECK: scoped completion: eventful_candidate pending=3 transparent=1 children=1
 // CHECK: regional production: mixed_parent retained-local=1 invocation-drain=1
 !tile = !pto.tile_buf<vec, 1x8xf32>
 module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -95,7 +95,7 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
     "pto.tadds"(%tile, %one, %tile) {test.region_root, test.exact_child} : (!tile, f32, !tile) -> ()
     return
   }
-  func.func @eventful_candidate() attributes {test.scoped_completion = array<i64: 3, 2, 1, 0>, test.reject_exact_child} {
+  func.func @eventful_candidate() attributes {test.scoped_completion = array<i64: 3, 3, 3, 1>, test.eventful_child} {
     %addr = arith.constant 0 : i64
     %one = arith.constant 1.0 : f32
     %zero = arith.constant 0 : index

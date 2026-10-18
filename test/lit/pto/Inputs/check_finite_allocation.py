@@ -30,7 +30,7 @@ def physical_check(report, eligible):
     for old, new in zip(logical["events"], physical["events"]):
         if old["kind"] in ("payload", "barrier"):
             assert old == new
-        if old["kind"] == "payload" or (old["kind"] == "barrier" and old["pipe"] == 6):
+        if old["kind"] == "payload":
             continue
         assert (old["kind"], old["gap"], old["pipe"]) == (new["kind"], new["gap"], new["pipe"])
         command = dict(old)

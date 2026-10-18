@@ -171,12 +171,11 @@ LogicalResult scopedChecks(func::FuncOp function)
         if (capability() != child || finite->work.recipeBuilds + finite->work.recipeHits != prepared) {
             return function.emitError("completion child capability repeated recipe qualification");
         }
-        if (function->hasAttr("test.reject_exact_child")) {
-            if (child) { return function.emitError("eventful inline child was called resource-empty"); }
-        } else {
-            if (!child) { return function.emitError("exact child did not qualify as event-free"); }
-            children.push_back(child);
+        if (!child) { return function.emitError("exact child did not qualify"); }
+        if (child->usesEvents() != function->hasAttr("test.eventful_child")) {
+            return function.emitError("notification resources were not classified separately");
         }
+        children.push_back(child);
     }
     std::string error;
     auto source = fs::CompletionRegion::captureSource(function, input, *index, error);
