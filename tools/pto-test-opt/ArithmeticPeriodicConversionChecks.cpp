@@ -363,7 +363,8 @@ int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pt
     auto reduced = fs::reduceGeneralArithmeticDemands(stage);
     const bool stable = &stage.analysis() == originalGenerators && reduced &&
         reduced == fs::reduceGeneralArithmeticDemands(stage) && !stage.analysis().exactMinimum &&
-        stage.analysis().cost.primitivePieces == generatorCost;
+        stage.analysis().cost.primitivePieces == generatorCost && !reduced->requiredOrderAvailable &&
+        reduced->requiredOrderContinuation && !reduced->requiredOrderContinuation->requested();
     if (!stable) { return 1; }
     auto afterReduction = fs::convertArithmeticPeriodicProgram(program, stage);
     if (afterReduction.conversion.status != converted.conversion.status ||
@@ -389,6 +390,8 @@ int runArithmeticPeriodicInputChecks(mlir::func::FuncOp function, const mlir::pt
         auto adapted = fs::convertArithmeticPeriodicProgram(program, native, {}, false);
         auto demand = fs::reduceDifferenceArithmeticDemands(native);
         if (!demand || !demand->exactMinimum || native.analysis().exactMinimum ||
+            demand->requiredOrderAvailable || !demand->requiredOrderContinuation ||
+            demand->requiredOrderContinuation->requested() ||
             demand != fs::reduceDifferenceArithmeticDemands(native) ||
             adapted.conversion.status != converted.conversion.status) {
             llvm::errs() << "native DBM periodic adapter: " << function.getSymName() << " "

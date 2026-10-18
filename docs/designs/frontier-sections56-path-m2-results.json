@@ -1,0 +1,3196 @@
+{
+  "baseline_revision": "8ceb19529b869f548538faa9f9b5d8685e507cb5",
+  "candidate": "working tree for M2; tool hashes below",
+  "workers": 1,
+  "address_space_limit_gib": 4,
+  "device_execution": false,
+  "public_other_route": {
+    "baseline_revision": "8ceb19529b869f548538faa9f9b5d8685e507cb5",
+    "flags": [
+      "--mlir-disable-threading",
+      "--pto-frontier-analysis=profile-stages=true",
+      "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5"
+    ],
+    "tools": {
+      "baseline": "228bb653c948f6038612e858afe951b0410aa9041d3f41f7de8f74eab4b17064",
+      "candidate": "7ec40dc3e66b811fca822848e41dcd9428be91db886869110643a0d4fac58603"
+    },
+    "cases": {
+      "1": {
+        "input_sha256": "6a7583db6e6214eebe9d779aa900a7ebf1be35901526cd78bacf5e3d29b19cd6",
+        "byte_identical": true,
+        "pairs": [
+          {
+            "baseline": 0.14042161172255874,
+            "candidate": 0.14358424535021186
+          },
+          {
+            "candidate": 0.14262993400916457,
+            "baseline": 0.144340880215168
+          },
+          {
+            "baseline": 0.146489885635674,
+            "candidate": 0.1460343007929623
+          }
+        ],
+        "median_candidate_over_baseline": 0.9968899911366936,
+        "arithmetic_profiles": {
+          "baseline": [
+            {
+              "function": "request_exports",
+              "stages": []
+            }
+          ],
+          "candidate": [
+            {
+              "function": "request_exports",
+              "stages": []
+            }
+          ]
+        }
+      },
+      "2": {
+        "input_sha256": "d453c220c271fdb1fd953b65478ace55b20425ea881da0b7db82b7b311c7a6ea",
+        "byte_identical": true,
+        "pairs": [
+          {
+            "baseline": 0.14340907521545887,
+            "candidate": 0.14306969894096255
+          },
+          {
+            "candidate": 0.14309290098026395,
+            "baseline": 0.1424836330115795
+          },
+          {
+            "baseline": 0.14215176785364747,
+            "candidate": 0.14367390098050237
+          }
+        ],
+        "median_candidate_over_baseline": 1.0042760558234427,
+        "arithmetic_profiles": {
+          "baseline": [
+            {
+              "function": "request_exports",
+              "stages": []
+            }
+          ],
+          "candidate": [
+            {
+              "function": "request_exports",
+              "stages": []
+            }
+          ]
+        }
+      },
+      "4": {
+        "input_sha256": "423bc506ac9aed293e6aa1b358234c298f8da32981cb5cdf2945a2da4e96b2f2",
+        "byte_identical": true,
+        "pairs": [
+          {
+            "baseline": 0.14709919784218073,
+            "candidate": 0.14372000936418772
+          },
+          {
+            "candidate": 0.14709369419142604,
+            "baseline": 0.1430073813535273
+          },
+          {
+            "baseline": 0.14255352411419153,
+            "candidate": 0.1467202389612794
+          }
+        ],
+        "median_candidate_over_baseline": 1.0285741393152077,
+        "arithmetic_profiles": {
+          "baseline": [
+            {
+              "function": "request_exports",
+              "stages": []
+            }
+          ],
+          "candidate": [
+            {
+              "function": "request_exports",
+              "stages": []
+            }
+          ]
+        }
+      }
+    }
+  },
+  "public_arithmetic_route": {
+    "baseline_revision": "8ceb19529b869f548538faa9f9b5d8685e507cb5",
+    "flags": [
+      "--mlir-disable-threading",
+      "--pto-frontier-analysis=profile-stages=true",
+      "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5"
+    ],
+    "tools": {
+      "baseline": "228bb653c948f6038612e858afe951b0410aa9041d3f41f7de8f74eab4b17064",
+      "candidate": "7ec40dc3e66b811fca822848e41dcd9428be91db886869110643a0d4fac58603"
+    },
+    "cases": {
+      "recurrence": {
+        "input_sha256": "fdfa3781f601b0ece123d4cb763a93bce6fb288f9aec917aa0b4ccffc92d2bff",
+        "byte_identical": true,
+        "pairs": [
+          {
+            "baseline": 0.17715122317895293,
+            "candidate": 0.1774341557174921
+          },
+          {
+            "candidate": 0.17532875388860703,
+            "baseline": 0.1765077067539096
+          },
+          {
+            "baseline": 0.17599214194342494,
+            "candidate": 0.18201254401355982
+          }
+        ],
+        "median_candidate_over_baseline": 1.0015971243859454,
+        "arithmetic_profiles": {
+          "baseline": [
+            {
+              "function": "recurrence",
+              "stages": [
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 953074,
+                  "exclusive_ns": 953074,
+                  "first_dispatches": 0,
+                  "id": 60,
+                  "method": "",
+                  "parent": 54,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-form"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 720289,
+                  "exclusive_ns": 720289,
+                  "first_dispatches": 0,
+                  "id": 61,
+                  "method": "",
+                  "parent": 54,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-generators"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 182873,
+                  "exclusive_ns": 12738,
+                  "first_dispatches": 0,
+                  "id": 62,
+                  "method": "",
+                  "parent": 54,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-reduction",
+                  "work": {
+                    "arrangement-axes": 5,
+                    "arrangement-output-pieces": 3,
+                    "arrangement-seeds": 3,
+                    "constructed-slices": 6,
+                    "difference-requests": 2,
+                    "skipped-axes": 0,
+                    "slice-feasibility-calls": 14,
+                    "slice-feasibility-candidates": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 402,
+                  "exclusive_ns": 402,
+                  "first_dispatches": 0,
+                  "id": 63,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-native-closure"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 41766,
+                  "exclusive_ns": 37098,
+                  "first_dispatches": 0,
+                  "id": 64,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-required-closure"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 3673,
+                  "exclusive_ns": 3673,
+                  "first_dispatches": 0,
+                  "id": 65,
+                  "method": "",
+                  "parent": 64,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 995,
+                  "exclusive_ns": 995,
+                  "first_dispatches": 0,
+                  "id": 66,
+                  "method": "",
+                  "parent": 64,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 96255,
+                  "exclusive_ns": 199,
+                  "first_dispatches": 0,
+                  "id": 67,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-required-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 96056,
+                  "exclusive_ns": 96056,
+                  "first_dispatches": 0,
+                  "id": 68,
+                  "method": "",
+                  "parent": 67,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 30374,
+                  "exclusive_ns": 23303,
+                  "first_dispatches": 0,
+                  "id": 69,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-cover-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 7071,
+                  "exclusive_ns": 7071,
+                  "first_dispatches": 0,
+                  "id": 70,
+                  "method": "",
+                  "parent": 69,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 1161,
+                  "exclusive_ns": 1132,
+                  "first_dispatches": 0,
+                  "id": 71,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-cover-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 29,
+                  "exclusive_ns": 29,
+                  "first_dispatches": 0,
+                  "id": 72,
+                  "method": "",
+                  "parent": 71,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 177,
+                  "exclusive_ns": 177,
+                  "first_dispatches": 0,
+                  "id": 73,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-adjacency"
+                },
+                {
+                  "aggregate_cache_hits": 0,
+                  "aggregate_cache_misses": 0,
+                  "aggregate_calls": 1,
+                  "cache_hits": 0,
+                  "constructions": null,
+                  "elapsed_ns": 395,
+                  "exclusive_ns": 395,
+                  "first_dispatches": 0,
+                  "id": 110,
+                  "method": "sequence",
+                  "parent": 97,
+                  "parent_request": 6,
+                  "region": 0,
+                  "request": 6,
+                  "stage": "allocation-arithmetic-selector-export-aggregate"
+                }
+              ]
+            }
+          ],
+          "candidate": [
+            {
+              "function": "recurrence",
+              "stages": [
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 1035702,
+                  "exclusive_ns": 1035702,
+                  "first_dispatches": 0,
+                  "id": 60,
+                  "method": "",
+                  "parent": 54,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-form"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 770204,
+                  "exclusive_ns": 770204,
+                  "first_dispatches": 0,
+                  "id": 61,
+                  "method": "",
+                  "parent": 54,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-generators"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 212574,
+                  "exclusive_ns": 13763,
+                  "first_dispatches": 0,
+                  "id": 62,
+                  "method": "",
+                  "parent": 54,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-reduction",
+                  "work": {
+                    "arrangement-axes": 5,
+                    "arrangement-output-pieces": 3,
+                    "arrangement-seeds": 3,
+                    "constructed-slices": 6,
+                    "difference-requests": 2,
+                    "skipped-axes": 0,
+                    "slice-feasibility-calls": 14,
+                    "slice-feasibility-candidates": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 431,
+                  "exclusive_ns": 431,
+                  "first_dispatches": 0,
+                  "id": 63,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-native-closure"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 41898,
+                  "exclusive_ns": 38006,
+                  "first_dispatches": 0,
+                  "id": 64,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-required-prefix"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 3892,
+                  "exclusive_ns": 3892,
+                  "first_dispatches": 0,
+                  "id": 65,
+                  "method": "",
+                  "parent": 64,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 156262,
+                  "exclusive_ns": 28924,
+                  "first_dispatches": 0,
+                  "id": 66,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-first-demand-alternatives"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 106706,
+                  "exclusive_ns": 106706,
+                  "first_dispatches": 0,
+                  "id": 67,
+                  "method": "",
+                  "parent": 66,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 13937,
+                  "exclusive_ns": 13937,
+                  "first_dispatches": 0,
+                  "id": 68,
+                  "method": "",
+                  "parent": 66,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 1180,
+                  "exclusive_ns": 1180,
+                  "first_dispatches": 0,
+                  "id": 69,
+                  "method": "",
+                  "parent": 66,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 3576,
+                  "exclusive_ns": 3576,
+                  "first_dispatches": 0,
+                  "id": 70,
+                  "method": "",
+                  "parent": 66,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 1939,
+                  "exclusive_ns": 1939,
+                  "first_dispatches": 0,
+                  "id": 71,
+                  "method": "",
+                  "parent": 66,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 177,
+                  "exclusive_ns": 140,
+                  "first_dispatches": 0,
+                  "id": 72,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-cover-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 37,
+                  "exclusive_ns": 37,
+                  "first_dispatches": 0,
+                  "id": 73,
+                  "method": "",
+                  "parent": 72,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 43,
+                  "exclusive_ns": 43,
+                  "first_dispatches": 0,
+                  "id": 74,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-adjacency"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 863,
+                  "exclusive_ns": 863,
+                  "first_dispatches": 0,
+                  "id": 76,
+                  "method": "",
+                  "parent": 75,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-difference-export",
+                  "work": {
+                    "atoms": 0,
+                    "coefficients": 0,
+                    "systems": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 173003,
+                  "exclusive_ns": 17728,
+                  "first_dispatches": 0,
+                  "id": 100,
+                  "method": "",
+                  "parent": 99,
+                  "parent_request": 6,
+                  "region": 2,
+                  "request": 6,
+                  "stage": "arithmetic-difference-export",
+                  "work": {
+                    "atoms": 0,
+                    "coefficients": 0,
+                    "systems": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 155275,
+                  "exclusive_ns": 399,
+                  "first_dispatches": 0,
+                  "id": 101,
+                  "method": "",
+                  "parent": 100,
+                  "parent_request": 6,
+                  "region": 2,
+                  "request": 6,
+                  "stage": "arithmetic-demand-required-export",
+                  "work": {
+                    "compositions": 1,
+                    "projections": 0,
+                    "rounds": 1
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 1092,
+                  "exclusive_ns": 1092,
+                  "first_dispatches": 0,
+                  "id": 102,
+                  "method": "",
+                  "parent": 101,
+                  "parent_request": 6,
+                  "region": 2,
+                  "request": 6,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 153784,
+                  "exclusive_ns": 153784,
+                  "first_dispatches": 0,
+                  "id": 103,
+                  "method": "",
+                  "parent": 101,
+                  "parent_request": 6,
+                  "region": 2,
+                  "request": 6,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "aggregate_cache_hits": 0,
+                  "aggregate_cache_misses": 0,
+                  "aggregate_calls": 1,
+                  "cache_hits": 0,
+                  "constructions": null,
+                  "elapsed_ns": 456,
+                  "exclusive_ns": 456,
+                  "first_dispatches": 0,
+                  "id": 116,
+                  "method": "sequence",
+                  "parent": 99,
+                  "parent_request": 6,
+                  "region": 0,
+                  "request": 6,
+                  "stage": "allocation-arithmetic-selector-export-aggregate"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "prefix_owned": {
+        "input_sha256": "204e0b13834f156115fe89e2e79f5bf0f06418eac6bf3d246a613f083e41d9ed",
+        "byte_identical": true,
+        "pairs": [
+          {
+            "baseline": 0.17952418699860573,
+            "candidate": 0.18425949336960912
+          },
+          {
+            "candidate": 0.18826134921982884,
+            "baseline": 0.18614212796092033
+          },
+          {
+            "baseline": 0.18800148274749517,
+            "candidate": 0.18951424211263657
+          }
+        ],
+        "median_candidate_over_baseline": 1.011384963103857,
+        "arithmetic_profiles": {
+          "baseline": [
+            {
+              "function": "prefix_owned",
+              "stages": [
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 683796,
+                  "exclusive_ns": 683796,
+                  "first_dispatches": 0,
+                  "id": 60,
+                  "method": "",
+                  "parent": 54,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-form"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 558517,
+                  "exclusive_ns": 558517,
+                  "first_dispatches": 0,
+                  "id": 61,
+                  "method": "",
+                  "parent": 54,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-generators"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 149393,
+                  "exclusive_ns": 12133,
+                  "first_dispatches": 0,
+                  "id": 62,
+                  "method": "",
+                  "parent": 54,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-reduction",
+                  "work": {
+                    "arrangement-axes": 4,
+                    "arrangement-output-pieces": 2,
+                    "arrangement-seeds": 2,
+                    "constructed-slices": 4,
+                    "difference-requests": 1,
+                    "skipped-axes": 0,
+                    "slice-feasibility-calls": 11,
+                    "slice-feasibility-candidates": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 245,
+                  "exclusive_ns": 245,
+                  "first_dispatches": 0,
+                  "id": 63,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-native-closure"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 27643,
+                  "exclusive_ns": 24384,
+                  "first_dispatches": 0,
+                  "id": 64,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-required-closure"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 2574,
+                  "exclusive_ns": 2574,
+                  "first_dispatches": 0,
+                  "id": 65,
+                  "method": "",
+                  "parent": 64,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 685,
+                  "exclusive_ns": 685,
+                  "first_dispatches": 0,
+                  "id": 66,
+                  "method": "",
+                  "parent": 64,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 89203,
+                  "exclusive_ns": 199,
+                  "first_dispatches": 0,
+                  "id": 67,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-required-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 89004,
+                  "exclusive_ns": 89004,
+                  "first_dispatches": 0,
+                  "id": 68,
+                  "method": "",
+                  "parent": 67,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 20014,
+                  "exclusive_ns": 16725,
+                  "first_dispatches": 0,
+                  "id": 69,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-cover-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 3289,
+                  "exclusive_ns": 3289,
+                  "first_dispatches": 0,
+                  "id": 70,
+                  "method": "",
+                  "parent": 69,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 115,
+                  "exclusive_ns": 85,
+                  "first_dispatches": 0,
+                  "id": 71,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-cover-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 30,
+                  "exclusive_ns": 30,
+                  "first_dispatches": 0,
+                  "id": 72,
+                  "method": "",
+                  "parent": 71,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 40,
+                  "exclusive_ns": 40,
+                  "first_dispatches": 0,
+                  "id": 73,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-adjacency"
+                },
+                {
+                  "aggregate_cache_hits": 0,
+                  "aggregate_cache_misses": 0,
+                  "aggregate_calls": 1,
+                  "cache_hits": 0,
+                  "constructions": null,
+                  "elapsed_ns": 295,
+                  "exclusive_ns": 295,
+                  "first_dispatches": 0,
+                  "id": 110,
+                  "method": "sequence",
+                  "parent": 97,
+                  "parent_request": 6,
+                  "region": 0,
+                  "request": 6,
+                  "stage": "allocation-arithmetic-selector-export-aggregate"
+                }
+              ]
+            }
+          ],
+          "candidate": [
+            {
+              "function": "prefix_owned",
+              "stages": [
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 670931,
+                  "exclusive_ns": 670931,
+                  "first_dispatches": 0,
+                  "id": 60,
+                  "method": "",
+                  "parent": 54,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-form"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 546100,
+                  "exclusive_ns": 546100,
+                  "first_dispatches": 0,
+                  "id": 61,
+                  "method": "",
+                  "parent": 54,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-generators"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 142078,
+                  "exclusive_ns": 8894,
+                  "first_dispatches": 0,
+                  "id": 62,
+                  "method": "",
+                  "parent": 54,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-reduction",
+                  "work": {
+                    "arrangement-axes": 4,
+                    "arrangement-output-pieces": 2,
+                    "arrangement-seeds": 2,
+                    "constructed-slices": 4,
+                    "difference-requests": 1,
+                    "skipped-axes": 0,
+                    "slice-feasibility-calls": 11,
+                    "slice-feasibility-candidates": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 240,
+                  "exclusive_ns": 240,
+                  "first_dispatches": 0,
+                  "id": 63,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-native-closure"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 24039,
+                  "exclusive_ns": 21383,
+                  "first_dispatches": 0,
+                  "id": 64,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-required-prefix"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 2656,
+                  "exclusive_ns": 2656,
+                  "first_dispatches": 0,
+                  "id": 65,
+                  "method": "",
+                  "parent": 64,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 108716,
+                  "exclusive_ns": 14919,
+                  "first_dispatches": 0,
+                  "id": 66,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-first-demand-alternatives"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 84761,
+                  "exclusive_ns": 84761,
+                  "first_dispatches": 0,
+                  "id": 67,
+                  "method": "",
+                  "parent": 66,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 6385,
+                  "exclusive_ns": 6385,
+                  "first_dispatches": 0,
+                  "id": 68,
+                  "method": "",
+                  "parent": 66,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 569,
+                  "exclusive_ns": 569,
+                  "first_dispatches": 0,
+                  "id": 69,
+                  "method": "",
+                  "parent": 66,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 1189,
+                  "exclusive_ns": 1189,
+                  "first_dispatches": 0,
+                  "id": 70,
+                  "method": "",
+                  "parent": 66,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 893,
+                  "exclusive_ns": 893,
+                  "first_dispatches": 0,
+                  "id": 71,
+                  "method": "",
+                  "parent": 66,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 151,
+                  "exclusive_ns": 114,
+                  "first_dispatches": 0,
+                  "id": 72,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-cover-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 37,
+                  "exclusive_ns": 37,
+                  "first_dispatches": 0,
+                  "id": 73,
+                  "method": "",
+                  "parent": 72,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 38,
+                  "exclusive_ns": 38,
+                  "first_dispatches": 0,
+                  "id": 74,
+                  "method": "",
+                  "parent": 62,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-demand-adjacency"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 783,
+                  "exclusive_ns": 783,
+                  "first_dispatches": 0,
+                  "id": 76,
+                  "method": "",
+                  "parent": 75,
+                  "parent_request": 3,
+                  "region": 2,
+                  "request": 3,
+                  "stage": "arithmetic-difference-export",
+                  "work": {
+                    "atoms": 0,
+                    "coefficients": 0,
+                    "systems": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 147430,
+                  "exclusive_ns": 9903,
+                  "first_dispatches": 0,
+                  "id": 100,
+                  "method": "",
+                  "parent": 99,
+                  "parent_request": 6,
+                  "region": 2,
+                  "request": 6,
+                  "stage": "arithmetic-difference-export",
+                  "work": {
+                    "atoms": 0,
+                    "coefficients": 0,
+                    "systems": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 137527,
+                  "exclusive_ns": 779,
+                  "first_dispatches": 0,
+                  "id": 101,
+                  "method": "",
+                  "parent": 100,
+                  "parent_request": 6,
+                  "region": 2,
+                  "request": 6,
+                  "stage": "arithmetic-demand-required-export",
+                  "work": {
+                    "compositions": 1,
+                    "projections": 0,
+                    "rounds": 1
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 1236,
+                  "exclusive_ns": 1236,
+                  "first_dispatches": 0,
+                  "id": 102,
+                  "method": "",
+                  "parent": 101,
+                  "parent_request": 6,
+                  "region": 2,
+                  "request": 6,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 135512,
+                  "exclusive_ns": 135512,
+                  "first_dispatches": 0,
+                  "id": 103,
+                  "method": "",
+                  "parent": 101,
+                  "parent_request": 6,
+                  "region": 2,
+                  "request": 6,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "aggregate_cache_hits": 0,
+                  "aggregate_cache_misses": 0,
+                  "aggregate_calls": 1,
+                  "cache_hits": 0,
+                  "constructions": null,
+                  "elapsed_ns": 213,
+                  "exclusive_ns": 213,
+                  "first_dispatches": 0,
+                  "id": 116,
+                  "method": "sequence",
+                  "parent": 99,
+                  "parent_request": 6,
+                  "region": 0,
+                  "request": 6,
+                  "stage": "allocation-arithmetic-selector-export-aggregate"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "persistent": {
+        "input_sha256": "dee24df8dbe2abd1baa01584075a502e38f80cdfd850ee23f31a3d0e0bccbfb5",
+        "byte_identical": true,
+        "pairs": [
+          {
+            "baseline": 0.1784533429890871,
+            "candidate": 0.17786391312256455
+          },
+          {
+            "candidate": 0.17872370267286897,
+            "baseline": 0.1816284190863371
+          },
+          {
+            "baseline": 0.18095755483955145,
+            "candidate": 0.17764879623427987
+          }
+        ],
+        "median_candidate_over_baseline": 0.9840073682957766,
+        "arithmetic_profiles": {
+          "baseline": [
+            {
+              "function": "persistent",
+              "stages": [
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 347800,
+                  "exclusive_ns": 347800,
+                  "first_dispatches": 0,
+                  "id": 111,
+                  "method": "",
+                  "parent": 105,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-form"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 233430,
+                  "exclusive_ns": 233430,
+                  "first_dispatches": 0,
+                  "id": 112,
+                  "method": "",
+                  "parent": 105,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-generators"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 71207,
+                  "exclusive_ns": 10754,
+                  "first_dispatches": 0,
+                  "id": 113,
+                  "method": "",
+                  "parent": 105,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-reduction",
+                  "work": {
+                    "arrangement-axes": 1,
+                    "arrangement-output-pieces": 1,
+                    "arrangement-seeds": 1,
+                    "constructed-slices": 2,
+                    "difference-requests": 1,
+                    "skipped-axes": 0,
+                    "slice-feasibility-calls": 3,
+                    "slice-feasibility-candidates": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 282,
+                  "exclusive_ns": 282,
+                  "first_dispatches": 0,
+                  "id": 114,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-native-closure"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 23333,
+                  "exclusive_ns": 18844,
+                  "first_dispatches": 0,
+                  "id": 115,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-required-closure"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 3898,
+                  "exclusive_ns": 3898,
+                  "first_dispatches": 0,
+                  "id": 116,
+                  "method": "",
+                  "parent": 115,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 591,
+                  "exclusive_ns": 591,
+                  "first_dispatches": 0,
+                  "id": 117,
+                  "method": "",
+                  "parent": 115,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 24456,
+                  "exclusive_ns": 197,
+                  "first_dispatches": 0,
+                  "id": 118,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-required-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 24259,
+                  "exclusive_ns": 24259,
+                  "first_dispatches": 0,
+                  "id": 119,
+                  "method": "",
+                  "parent": 118,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 12118,
+                  "exclusive_ns": 8752,
+                  "first_dispatches": 0,
+                  "id": 120,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-cover-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 3366,
+                  "exclusive_ns": 3366,
+                  "first_dispatches": 0,
+                  "id": 121,
+                  "method": "",
+                  "parent": 120,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 220,
+                  "exclusive_ns": 187,
+                  "first_dispatches": 0,
+                  "id": 122,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-cover-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 33,
+                  "exclusive_ns": 33,
+                  "first_dispatches": 0,
+                  "id": 123,
+                  "method": "",
+                  "parent": 122,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 44,
+                  "exclusive_ns": 44,
+                  "first_dispatches": 0,
+                  "id": 124,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-adjacency"
+                },
+                {
+                  "aggregate_cache_hits": 0,
+                  "aggregate_cache_misses": 0,
+                  "aggregate_calls": 1,
+                  "cache_hits": 0,
+                  "constructions": null,
+                  "elapsed_ns": 238,
+                  "exclusive_ns": 238,
+                  "first_dispatches": 0,
+                  "id": 174,
+                  "method": "sequence",
+                  "parent": 160,
+                  "parent_request": 8,
+                  "region": 0,
+                  "request": 8,
+                  "stage": "allocation-arithmetic-selector-export-aggregate"
+                }
+              ]
+            }
+          ],
+          "candidate": [
+            {
+              "function": "persistent",
+              "stages": [
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 350805,
+                  "exclusive_ns": 350805,
+                  "first_dispatches": 0,
+                  "id": 111,
+                  "method": "",
+                  "parent": 105,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-form"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 253633,
+                  "exclusive_ns": 253633,
+                  "first_dispatches": 0,
+                  "id": 112,
+                  "method": "",
+                  "parent": 105,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-generators"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 71546,
+                  "exclusive_ns": 10452,
+                  "first_dispatches": 0,
+                  "id": 113,
+                  "method": "",
+                  "parent": 105,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-reduction",
+                  "work": {
+                    "arrangement-axes": 1,
+                    "arrangement-output-pieces": 1,
+                    "arrangement-seeds": 1,
+                    "constructed-slices": 2,
+                    "difference-requests": 1,
+                    "skipped-axes": 0,
+                    "slice-feasibility-calls": 3,
+                    "slice-feasibility-candidates": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 263,
+                  "exclusive_ns": 263,
+                  "first_dispatches": 0,
+                  "id": 114,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-native-closure"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 21905,
+                  "exclusive_ns": 18944,
+                  "first_dispatches": 0,
+                  "id": 115,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-required-prefix"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 2961,
+                  "exclusive_ns": 2961,
+                  "first_dispatches": 0,
+                  "id": 116,
+                  "method": "",
+                  "parent": 115,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 38760,
+                  "exclusive_ns": 9925,
+                  "first_dispatches": 0,
+                  "id": 117,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-first-demand-alternatives"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 22358,
+                  "exclusive_ns": 22358,
+                  "first_dispatches": 0,
+                  "id": 118,
+                  "method": "",
+                  "parent": 117,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 3760,
+                  "exclusive_ns": 3760,
+                  "first_dispatches": 0,
+                  "id": 119,
+                  "method": "",
+                  "parent": 117,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 651,
+                  "exclusive_ns": 651,
+                  "first_dispatches": 0,
+                  "id": 120,
+                  "method": "",
+                  "parent": 117,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 1193,
+                  "exclusive_ns": 1193,
+                  "first_dispatches": 0,
+                  "id": 121,
+                  "method": "",
+                  "parent": 117,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 873,
+                  "exclusive_ns": 873,
+                  "first_dispatches": 0,
+                  "id": 122,
+                  "method": "",
+                  "parent": 117,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 127,
+                  "exclusive_ns": 89,
+                  "first_dispatches": 0,
+                  "id": 123,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-cover-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 38,
+                  "exclusive_ns": 38,
+                  "first_dispatches": 0,
+                  "id": 124,
+                  "method": "",
+                  "parent": 123,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 39,
+                  "exclusive_ns": 39,
+                  "first_dispatches": 0,
+                  "id": 125,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-adjacency"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 916,
+                  "exclusive_ns": 916,
+                  "first_dispatches": 0,
+                  "id": 127,
+                  "method": "",
+                  "parent": 126,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-difference-export",
+                  "work": {
+                    "atoms": 0,
+                    "coefficients": 0,
+                    "systems": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 38085,
+                  "exclusive_ns": 8145,
+                  "first_dispatches": 0,
+                  "id": 163,
+                  "method": "",
+                  "parent": 162,
+                  "parent_request": 8,
+                  "region": 5,
+                  "request": 8,
+                  "stage": "arithmetic-difference-export",
+                  "work": {
+                    "atoms": 0,
+                    "coefficients": 0,
+                    "systems": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 29940,
+                  "exclusive_ns": 484,
+                  "first_dispatches": 0,
+                  "id": 164,
+                  "method": "",
+                  "parent": 163,
+                  "parent_request": 8,
+                  "region": 5,
+                  "request": 8,
+                  "stage": "arithmetic-demand-required-export",
+                  "work": {
+                    "compositions": 1,
+                    "projections": 0,
+                    "rounds": 1
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 807,
+                  "exclusive_ns": 807,
+                  "first_dispatches": 0,
+                  "id": 165,
+                  "method": "",
+                  "parent": 164,
+                  "parent_request": 8,
+                  "region": 5,
+                  "request": 8,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 28649,
+                  "exclusive_ns": 28649,
+                  "first_dispatches": 0,
+                  "id": 166,
+                  "method": "",
+                  "parent": 164,
+                  "parent_request": 8,
+                  "region": 5,
+                  "request": 8,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "aggregate_cache_hits": 0,
+                  "aggregate_cache_misses": 0,
+                  "aggregate_calls": 1,
+                  "cache_hits": 0,
+                  "constructions": null,
+                  "elapsed_ns": 215,
+                  "exclusive_ns": 215,
+                  "first_dispatches": 0,
+                  "id": 180,
+                  "method": "sequence",
+                  "parent": 162,
+                  "parent_request": 8,
+                  "region": 0,
+                  "request": 8,
+                  "stage": "allocation-arithmetic-selector-export-aggregate"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "overlapping_widths": {
+        "input_sha256": "9a62b353795adfe7bf66434754d89ca9e349261400a33aedba30a1d0f0892c13",
+        "byte_identical": true,
+        "pairs": [
+          {
+            "baseline": 0.18580713821575046,
+            "candidate": 0.18131942301988602
+          },
+          {
+            "candidate": 0.18454501032829285,
+            "baseline": 0.18031592201441526
+          },
+          {
+            "baseline": 0.18174696201458573,
+            "candidate": 0.18544334592297673
+          }
+        ],
+        "median_candidate_over_baseline": 1.0203380781027545,
+        "arithmetic_profiles": {
+          "baseline": [
+            {
+              "function": "overlapping_widths",
+              "stages": [
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 345488,
+                  "exclusive_ns": 345488,
+                  "first_dispatches": 0,
+                  "id": 111,
+                  "method": "",
+                  "parent": 105,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-form"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 233553,
+                  "exclusive_ns": 233553,
+                  "first_dispatches": 0,
+                  "id": 112,
+                  "method": "",
+                  "parent": 105,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-generators"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 60014,
+                  "exclusive_ns": 8462,
+                  "first_dispatches": 0,
+                  "id": 113,
+                  "method": "",
+                  "parent": 105,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-reduction",
+                  "work": {
+                    "arrangement-axes": 1,
+                    "arrangement-output-pieces": 1,
+                    "arrangement-seeds": 1,
+                    "constructed-slices": 2,
+                    "difference-requests": 1,
+                    "skipped-axes": 0,
+                    "slice-feasibility-calls": 3,
+                    "slice-feasibility-candidates": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 253,
+                  "exclusive_ns": 253,
+                  "first_dispatches": 0,
+                  "id": 114,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-native-closure"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 18484,
+                  "exclusive_ns": 15363,
+                  "first_dispatches": 0,
+                  "id": 115,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-required-closure"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 2594,
+                  "exclusive_ns": 2594,
+                  "first_dispatches": 0,
+                  "id": 116,
+                  "method": "",
+                  "parent": 115,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 527,
+                  "exclusive_ns": 527,
+                  "first_dispatches": 0,
+                  "id": 117,
+                  "method": "",
+                  "parent": 115,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 22258,
+                  "exclusive_ns": 201,
+                  "first_dispatches": 0,
+                  "id": 118,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-required-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 22057,
+                  "exclusive_ns": 22057,
+                  "first_dispatches": 0,
+                  "id": 119,
+                  "method": "",
+                  "parent": 118,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 10324,
+                  "exclusive_ns": 7433,
+                  "first_dispatches": 0,
+                  "id": 120,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-cover-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 2891,
+                  "exclusive_ns": 2891,
+                  "first_dispatches": 0,
+                  "id": 121,
+                  "method": "",
+                  "parent": 120,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 94,
+                  "exclusive_ns": 69,
+                  "first_dispatches": 0,
+                  "id": 122,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-cover-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 25,
+                  "exclusive_ns": 25,
+                  "first_dispatches": 0,
+                  "id": 123,
+                  "method": "",
+                  "parent": 122,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 139,
+                  "exclusive_ns": 139,
+                  "first_dispatches": 0,
+                  "id": 124,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-adjacency"
+                },
+                {
+                  "aggregate_cache_hits": 0,
+                  "aggregate_cache_misses": 0,
+                  "aggregate_calls": 1,
+                  "cache_hits": 0,
+                  "constructions": null,
+                  "elapsed_ns": 314,
+                  "exclusive_ns": 314,
+                  "first_dispatches": 0,
+                  "id": 174,
+                  "method": "sequence",
+                  "parent": 160,
+                  "parent_request": 8,
+                  "region": 0,
+                  "request": 8,
+                  "stage": "allocation-arithmetic-selector-export-aggregate"
+                }
+              ]
+            }
+          ],
+          "candidate": [
+            {
+              "function": "overlapping_widths",
+              "stages": [
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 381209,
+                  "exclusive_ns": 381209,
+                  "first_dispatches": 0,
+                  "id": 111,
+                  "method": "",
+                  "parent": 105,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-form"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 236089,
+                  "exclusive_ns": 236089,
+                  "first_dispatches": 0,
+                  "id": 112,
+                  "method": "",
+                  "parent": 105,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-generators"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 61918,
+                  "exclusive_ns": 7985,
+                  "first_dispatches": 0,
+                  "id": 113,
+                  "method": "",
+                  "parent": 105,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-reduction",
+                  "work": {
+                    "arrangement-axes": 1,
+                    "arrangement-output-pieces": 1,
+                    "arrangement-seeds": 1,
+                    "constructed-slices": 2,
+                    "difference-requests": 1,
+                    "skipped-axes": 0,
+                    "slice-feasibility-calls": 3,
+                    "slice-feasibility-candidates": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 244,
+                  "exclusive_ns": 244,
+                  "first_dispatches": 0,
+                  "id": 114,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-native-closure"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 17206,
+                  "exclusive_ns": 14442,
+                  "first_dispatches": 0,
+                  "id": 115,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-required-prefix"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 2764,
+                  "exclusive_ns": 2764,
+                  "first_dispatches": 0,
+                  "id": 116,
+                  "method": "",
+                  "parent": 115,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 36341,
+                  "exclusive_ns": 9331,
+                  "first_dispatches": 0,
+                  "id": 117,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-first-demand-alternatives"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 21258,
+                  "exclusive_ns": 21258,
+                  "first_dispatches": 0,
+                  "id": 118,
+                  "method": "",
+                  "parent": 117,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 3069,
+                  "exclusive_ns": 3069,
+                  "first_dispatches": 0,
+                  "id": 119,
+                  "method": "",
+                  "parent": 117,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 555,
+                  "exclusive_ns": 555,
+                  "first_dispatches": 0,
+                  "id": 120,
+                  "method": "",
+                  "parent": 117,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 1208,
+                  "exclusive_ns": 1208,
+                  "first_dispatches": 0,
+                  "id": 121,
+                  "method": "",
+                  "parent": 117,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 920,
+                  "exclusive_ns": 920,
+                  "first_dispatches": 0,
+                  "id": 122,
+                  "method": "",
+                  "parent": 117,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 104,
+                  "exclusive_ns": 75,
+                  "first_dispatches": 0,
+                  "id": 123,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-cover-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 29,
+                  "exclusive_ns": 29,
+                  "first_dispatches": 0,
+                  "id": 124,
+                  "method": "",
+                  "parent": 123,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 38,
+                  "exclusive_ns": 38,
+                  "first_dispatches": 0,
+                  "id": 125,
+                  "method": "",
+                  "parent": 113,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-demand-adjacency"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 889,
+                  "exclusive_ns": 889,
+                  "first_dispatches": 0,
+                  "id": 127,
+                  "method": "",
+                  "parent": 126,
+                  "parent_request": 5,
+                  "region": 5,
+                  "request": 5,
+                  "stage": "arithmetic-difference-export",
+                  "work": {
+                    "atoms": 0,
+                    "coefficients": 0,
+                    "systems": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 41943,
+                  "exclusive_ns": 8537,
+                  "first_dispatches": 0,
+                  "id": 163,
+                  "method": "",
+                  "parent": 162,
+                  "parent_request": 8,
+                  "region": 5,
+                  "request": 8,
+                  "stage": "arithmetic-difference-export",
+                  "work": {
+                    "atoms": 0,
+                    "coefficients": 0,
+                    "systems": 0
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 33406,
+                  "exclusive_ns": 558,
+                  "first_dispatches": 0,
+                  "id": 164,
+                  "method": "",
+                  "parent": 163,
+                  "parent_request": 8,
+                  "region": 5,
+                  "request": 8,
+                  "stage": "arithmetic-demand-required-export",
+                  "work": {
+                    "compositions": 1,
+                    "projections": 0,
+                    "rounds": 1
+                  }
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 810,
+                  "exclusive_ns": 810,
+                  "first_dispatches": 0,
+                  "id": 165,
+                  "method": "",
+                  "parent": 164,
+                  "parent_request": 8,
+                  "region": 5,
+                  "request": 8,
+                  "stage": "arithmetic-demand-composition"
+                },
+                {
+                  "cache_hits": 0,
+                  "constructions": 1,
+                  "elapsed_ns": 32038,
+                  "exclusive_ns": 32038,
+                  "first_dispatches": 0,
+                  "id": 166,
+                  "method": "",
+                  "parent": 164,
+                  "parent_request": 8,
+                  "region": 5,
+                  "request": 8,
+                  "stage": "arithmetic-demand-difference"
+                },
+                {
+                  "aggregate_cache_hits": 0,
+                  "aggregate_cache_misses": 0,
+                  "aggregate_calls": 1,
+                  "cache_hits": 0,
+                  "constructions": null,
+                  "elapsed_ns": 204,
+                  "exclusive_ns": 204,
+                  "first_dispatches": 0,
+                  "id": 180,
+                  "method": "sequence",
+                  "parent": 162,
+                  "parent_request": 8,
+                  "region": 0,
+                  "request": 8,
+                  "stage": "allocation-arithmetic-selector-export-aggregate"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "request_diagnostics": {
+    "baseline": [
+      {
+        "allocation_exports": 0,
+        "canonical_arithmetic_generator_constructions": 1,
+        "canonical_arithmetic_region_constructions": 2,
+        "function": "moving_origin",
+        "guarded_expression_import_work": 0,
+        "logical_preparations": 0,
+        "mathematical_attempts": 47,
+        "normalization_constructions": 2,
+        "numerical_region_constructions": 0,
+        "regions": [
+          {
+            "arithmetic_selector_cost": {},
+            "class": "restricted-arithmetic",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 0,
+            "obligations": [],
+            "queries": false,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": false,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "finite-occurrences",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 1,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "restricted-arithmetic",
+            "exact_demands": true,
+            "implication_cost": {
+              "arrangement_axes": 0,
+              "arrangement_output_pieces": 0,
+              "arrangement_seeds": 0,
+              "arrangement_skipped_axes": 0,
+              "arrangement_slices": 0,
+              "cache_hits": 0,
+              "configured_coefficient": 4096,
+              "configured_dimensions": 8,
+              "configured_period": 1,
+              "configured_pipes": 8,
+              "cover_subtractions": 2,
+              "difference_export_atoms": 1126,
+              "difference_export_coefficients": 5630,
+              "difference_export_systems": 74,
+              "difference_reductions": 1,
+              "difference_requests": 0,
+              "exact_checks": 0,
+              "import_query_builds": 0,
+              "import_query_hits": 0,
+              "import_query_requests": 0,
+              "integer_counterexamples": 0,
+              "integer_reductions": 0,
+              "lattice_builds": 0,
+              "lattice_empty_proofs": 0,
+              "lattice_hits": 0,
+              "lattice_proofs": 0,
+              "lattice_queries": 0,
+              "normalized_pieces": 43,
+              "observed_coefficient": 1,
+              "observed_dimensions": 5,
+              "physical_join_attempts": 0,
+              "physical_join_builds": 0,
+              "physical_join_empty_hits": 0,
+              "physical_join_hits": 0,
+              "physical_join_remaps": 0,
+              "primitive_pieces": 43,
+              "projections": 0,
+              "rational_proofs": 0,
+              "recognized_class": "differences",
+              "relation_compositions": 3,
+              "retained_difference_mathematics": true,
+              "slice_feasibility_calls": 0,
+              "slice_feasibility_candidates": 0,
+              "union_difference_attempts": 0,
+              "union_difference_builds": 0,
+              "union_difference_hits": 0,
+              "union_merge_attempts": 0,
+              "union_merge_builds": 0,
+              "union_merge_hits": 0
+            },
+            "node": 2,
+            "obligations": [],
+            "queries": false,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": false,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "regional-sequence",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 3,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "regional-repetition",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 4,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "regional-sequence",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 5,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "finite-occurrences",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 6,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          }
+        ],
+        "specialized_arithmetic_constructions": 0,
+        "specialized_guarded_constructions": 0,
+        "specialized_numeric_constructions": 0
+      },
+      {
+        "allocation_exports": 0,
+        "canonical_arithmetic_generator_constructions": 0,
+        "canonical_arithmetic_region_constructions": 0,
+        "function": "request_exports",
+        "guarded_expression_import_work": 4,
+        "logical_preparations": 0,
+        "mathematical_attempts": 41,
+        "normalization_constructions": 1,
+        "numerical_region_constructions": 0,
+        "regions": [
+          {
+            "arithmetic_selector_cost": {},
+            "class": "repeating-boundary-interface",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 0,
+            "obligations": [],
+            "queries": false,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": false,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "finite-occurrences",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 1,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "regional-repetition",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 2,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "regional-sequence",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 3,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "periodic-storage",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 4,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": false,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "regional-sequence",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 5,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "finite-occurrences",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 6,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          }
+        ],
+        "specialized_arithmetic_constructions": 0,
+        "specialized_guarded_constructions": 1,
+        "specialized_numeric_constructions": 0
+      }
+    ],
+    "candidate": [
+      {
+        "allocation_exports": 0,
+        "canonical_arithmetic_generator_constructions": 1,
+        "canonical_arithmetic_region_constructions": 2,
+        "function": "moving_origin",
+        "guarded_expression_import_work": 0,
+        "logical_preparations": 0,
+        "mathematical_attempts": 47,
+        "normalization_constructions": 2,
+        "numerical_region_constructions": 0,
+        "regions": [
+          {
+            "arithmetic_selector_cost": {},
+            "class": "restricted-arithmetic",
+            "exact_demands": true,
+            "implication_cost": {
+              "arrangement_axes": 0,
+              "arrangement_output_pieces": 0,
+              "arrangement_seeds": 0,
+              "arrangement_skipped_axes": 0,
+              "arrangement_slices": 0,
+              "cache_hits": 0,
+              "cover_alternative_pieces": 0,
+              "cover_demand_rounds": 0,
+              "cover_subtractions": 3,
+              "difference_export_atoms": 0,
+              "difference_export_coefficients": 0,
+              "difference_export_systems": 0,
+              "difference_reductions": 1,
+              "difference_requests": 0,
+              "exact_checks": 0,
+              "import_query_builds": 0,
+              "import_query_hits": 0,
+              "import_query_requests": 0,
+              "integer_counterexamples": 0,
+              "integer_reductions": 0,
+              "lattice_builds": 0,
+              "lattice_empty_proofs": 0,
+              "lattice_hits": 0,
+              "lattice_proofs": 0,
+              "lattice_queries": 0,
+              "physical_join_attempts": 0,
+              "physical_join_builds": 0,
+              "physical_join_empty_hits": 0,
+              "physical_join_hits": 0,
+              "physical_join_remaps": 0,
+              "primitive_pieces": 43,
+              "projections": 0,
+              "rational_proofs": 0,
+              "relation_compositions": 4,
+              "required_order_rounds": 0,
+              "slice_feasibility_calls": 0,
+              "slice_feasibility_candidates": 0,
+              "union_difference_attempts": 0,
+              "union_difference_builds": 0,
+              "union_difference_hits": 0,
+              "union_merge_attempts": 0,
+              "union_merge_builds": 0,
+              "union_merge_hits": 0
+            },
+            "node": 0,
+            "obligations": [],
+            "queries": false,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": false,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "finite-occurrences",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 1,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "restricted-arithmetic",
+            "exact_demands": true,
+            "implication_cost": {
+              "arrangement_axes": 0,
+              "arrangement_output_pieces": 0,
+              "arrangement_seeds": 0,
+              "arrangement_skipped_axes": 0,
+              "arrangement_slices": 0,
+              "cache_hits": 0,
+              "configured_coefficient": 4096,
+              "configured_dimensions": 8,
+              "configured_period": 1,
+              "configured_pipes": 8,
+              "cover_alternative_pieces": 0,
+              "cover_demand_rounds": 0,
+              "cover_subtractions": 3,
+              "difference_export_atoms": 0,
+              "difference_export_coefficients": 0,
+              "difference_export_systems": 0,
+              "difference_reductions": 1,
+              "difference_requests": 0,
+              "exact_checks": 0,
+              "import_query_builds": 0,
+              "import_query_hits": 0,
+              "import_query_requests": 0,
+              "integer_counterexamples": 0,
+              "integer_reductions": 0,
+              "lattice_builds": 0,
+              "lattice_empty_proofs": 0,
+              "lattice_hits": 0,
+              "lattice_proofs": 0,
+              "lattice_queries": 0,
+              "normalized_pieces": 43,
+              "observed_coefficient": 1,
+              "observed_dimensions": 5,
+              "physical_join_attempts": 0,
+              "physical_join_builds": 0,
+              "physical_join_empty_hits": 0,
+              "physical_join_hits": 0,
+              "physical_join_remaps": 0,
+              "primitive_pieces": 43,
+              "projections": 0,
+              "rational_proofs": 0,
+              "recognized_class": "differences",
+              "relation_compositions": 4,
+              "required_order_rounds": 0,
+              "retained_difference_mathematics": true,
+              "slice_feasibility_calls": 0,
+              "slice_feasibility_candidates": 0,
+              "union_difference_attempts": 0,
+              "union_difference_builds": 0,
+              "union_difference_hits": 0,
+              "union_merge_attempts": 0,
+              "union_merge_builds": 0,
+              "union_merge_hits": 0
+            },
+            "node": 2,
+            "obligations": [],
+            "queries": false,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": false,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "regional-sequence",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 3,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "regional-repetition",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 4,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "regional-sequence",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 5,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "finite-occurrences",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 6,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          }
+        ],
+        "specialized_arithmetic_constructions": 0,
+        "specialized_guarded_constructions": 0,
+        "specialized_numeric_constructions": 0
+      },
+      {
+        "allocation_exports": 0,
+        "canonical_arithmetic_generator_constructions": 0,
+        "canonical_arithmetic_region_constructions": 0,
+        "function": "request_exports",
+        "guarded_expression_import_work": 4,
+        "logical_preparations": 0,
+        "mathematical_attempts": 41,
+        "normalization_constructions": 1,
+        "numerical_region_constructions": 0,
+        "regions": [
+          {
+            "arithmetic_selector_cost": {},
+            "class": "repeating-boundary-interface",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 0,
+            "obligations": [],
+            "queries": false,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": false,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "finite-occurrences",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 1,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "regional-repetition",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 2,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "regional-sequence",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 3,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "periodic-storage",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 4,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": false,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "regional-sequence",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 5,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          },
+          {
+            "arithmetic_selector_cost": {},
+            "class": "finite-occurrences",
+            "exact_demands": true,
+            "implication_cost": {},
+            "node": 6,
+            "obligations": [],
+            "queries": true,
+            "relation_conversion_cost": {},
+            "representation": "original",
+            "selectors": true,
+            "status": "recognized"
+          }
+        ],
+        "specialized_arithmetic_constructions": 0,
+        "specialized_guarded_constructions": 1,
+        "specialized_numeric_constructions": 0
+      }
+    ]
+  },
+  "focused_gate": {
+    "tests": [
+      {
+        "code": "PASS",
+        "elapsed": 0.10138201713562012,
+        "name": "PTOIR :: pto/sync_arithmetic_export_retention.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 24.5408718585968,
+        "name": "PTOIR :: pto/sync_finite_family_pipeline.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 19.344037294387817,
+        "name": "PTOIR :: pto/sync_finite_emission_scaling.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 8.945454359054565,
+        "name": "PTOIR :: pto/sync_repeated_region.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 3.558831214904785,
+        "name": "PTOIR :: pto/sync_arithmetic_piecewise_bounds.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 2.0234286785125732,
+        "name": "PTOIR :: pto/sync_arithmetic_symbolic_siblings.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 1.6861717700958252,
+        "name": "PTOIR :: pto/sync_general_arithmetic_insertion.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 1.675478219985962,
+        "name": "PTOIR :: pto/sync_arithmetic_composition.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 1.5986204147338867,
+        "name": "PTOIR :: pto/sync_arithmetic_demands.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 1.5564868450164795,
+        "name": "PTOIR :: pto/sync_general_arithmetic_demands.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 1.5867080688476562,
+        "name": "PTOIR :: pto/sync_arithmetic_invariant_parameters.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.8332047462463379,
+        "name": "PTOIR :: pto/sync_stage_profile.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.7775418758392334,
+        "name": "PTOIR :: pto/sync_arithmetic_periodic_conversion.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.7198691368103027,
+        "name": "PTOIR :: pto/sync_arithmetic_insertion.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.5546002388000488,
+        "name": "PTOIR :: pto/sync_arithmetic_membership.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.2758781909942627,
+        "name": "PTOIR :: pto/sync_arithmetic_compaction.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.23613739013671875,
+        "name": "PTOIR :: pto/sync_arithmetic_declared_profile.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.24167251586914062,
+        "name": "PTOIR :: pto/sync_arithmetic_storage_selectors.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.1420574188232422,
+        "name": "PTOIR :: pto/sync_regional_arithmetic_context.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.13763642311096191,
+        "name": "PTOIR :: pto/sync_arithmetic_piecewise_access.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.11795282363891602,
+        "name": "PTOIR :: pto/sync_arithmetic_gm_discharge.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.08260750770568848,
+        "name": "PTOIR :: pto/sync_phase_capability_upgrade.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.07050395011901855,
+        "name": "PTOIR :: pto/sync_arithmetic_finite_fill.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.0699620246887207,
+        "name": "PTOIR :: pto/sync_arithmetic_scalar_ranges.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.058176517486572266,
+        "name": "PTOIR :: pto/sync_arithmetic_selectors.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.04116988182067871,
+        "name": "PTOIR :: pto/sync_arithmetic_dispatch.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.04525470733642578,
+        "name": "PTOIR :: pto/sync_arithmetic_entry_prerequisite.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.03904867172241211,
+        "name": "PTOIR :: pto/sync_arithmetic_access_first.pto"
+      },
+      {
+        "code": "PASS",
+        "elapsed": 0.03638720512390137,
+        "name": "PTOIR :: pto/sync_general_arithmetic_selectors.pto"
+      }
+    ],
+    "passed": 29,
+    "failed": 0,
+    "initial_gate": {
+      "passed": 28,
+      "failed": 1,
+      "reason": "Fault injection cleared a local map while retained provider still supplied the valid order. Replaced with a demand-only snapshot without optional providers; existing refusal/isolation assertions retained."
+    }
+  },
+  "compliance": {
+    "result": "22 inspected G.FMT.11-CPP regex false positives, all control bodies braced; no suppressions",
+    "log": ".local/sections56-path-completion/m2-compliance-final.log",
+    "full_static_analyzer_run": false
+  }
+}

@@ -7,6 +7,9 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent finite physical-conflict DAGs for the symbolic demand backend.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticSelectors.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticHandoffAllocation.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompactAllocation.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegionalConstruction.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisProfile.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
@@ -344,7 +347,8 @@ bool hazard(const Occurrence& a, const Occurrence& b)
     return false;
 }
 using Matrix = std::vector<std::vector<bool>>;
-Matrix closure(const std::vector<Occurrence>& occurrences, bool conflicts)
+Matrix closure(const std::vector<Occurrence>& occurrences, bool conflicts,
+    std::optional<std::pair<std::size_t, std::size_t>> omitted = std::nullopt)
 {
     const auto count = 2 * occurrences.size();
     Matrix result(count, std::vector<bool>(count, false));
@@ -355,7 +359,8 @@ Matrix closure(const std::vector<Occurrence>& occurrences, bool conflicts)
             if (occurrences[a].pipe == occurrences[b].pipe) {
                 result[2 * a][2 * b] = result[2 * a + 1][2 * b + 1] = true;
             }
-            if (conflicts && hazard(occurrences[a], occurrences[b])) { result[2 * a + 1][2 * b] = true; }
+            if (conflicts && hazard(occurrences[a], occurrences[b]) &&
+                (!omitted || *omitted != std::make_pair(a, b))) { result[2 * a + 1][2 * b] = true; }
         }
     }
     for (std::size_t via = 0; via < count; ++via) {
@@ -432,6 +437,7 @@ private:
         program.primitives.relations.push_back(std::move(relation));
         return entry->second;
     }
+public:
     void point(fs::PrimitiveKind kind, int source, int target, fs::ArithmeticEvent a, fs::ArithmeticEvent b,
                SmallVector<int64_t> values, int64_t n, int64_t g)
     {
@@ -450,6 +456,7 @@ private:
         relation.pieces.push_back({IntegerSet::get(relation.dimensions, 2, rows,
                                                   SmallVector<bool>(rows.size(), true)), residues});
     }
+private:
     void broadenFirstVisit(unsigned scene)
     {
         // Every first-visit tuple for trips=1 also occurs at trips=2/3.
@@ -640,6 +647,15 @@ bool checkCase(const fs::TypedArithmeticDemandAnalysis<System>& analysis,
     auto occurrences = execution(scene, n, g);
     auto native = closure(occurrences, false), reach = closure(occurrences, true);
     auto minimum = covers(occurrences, reach);
+    // Independent generator deletion checks the old strict-reachability square
+    // oracle, without using the new first-demand construction.
+    for (std::size_t a = 0; a < occurrences.size(); ++a) {
+        for (std::size_t b = a + 1; b < occurrences.size(); ++b) {
+            if (!hazard(occurrences[a], occurrences[b])) { continue; }
+            auto deleted = closure(occurrences, true, std::make_pair(a, b));
+            if (minimum[2 * a + 1][2 * b] == deleted[2 * a + 1][2 * b]) { return false; }
+        }
+    }
     std::map<std::pair<unsigned, int64_t>, std::size_t> positions;
     for (auto [i, occurrence] : llvm::enumerate(occurrences)) {
         positions[{occurrence.site, occurrence.iteration}] = i;
@@ -676,6 +692,142 @@ bool checkCase(const fs::TypedArithmeticDemandAnalysis<System>& analysis,
             }
         }
     }
+    return true;
+}
+template<class Analyze>
+bool checkFirstDemandContinuation(Analyze analyze)
+{
+    MLIRContext context;
+    context.disableMultithreading();
+    fs::StructuredProtection protection;
+    Bundle empty(context, 0, 1);
+    empty.program.sites.clear();
+    empty.program.primitives.pipeCount = 0;
+    for (auto& relation : empty.program.primitives.relations) { relation.pieces.clear(); }
+    empty.program.recognition = fs::recognizeArithmetic(empty.program.primitives, {3, 4, 1, 1});
+    auto zero = analyze(empty.program, protection, {}, fs::ArithmeticDemandOutputs::Demands);
+    if (!zero.error.empty() || !zero.exactMinimum || zero.cost.coverDemandRounds ||
+        !zero.minimumDemands.empty() || !zero.requiredOrderContinuation) { return false; }
+    const auto& zeroOrder = zero.requiredOrderContinuation->request();
+    if (!zeroOrder.error.empty() || zeroOrder.cost.requiredOrderRounds || !zeroOrder.relation.empty()) {
+        return false;
+    }
+    for (unsigned scene : {3u, 6u}) {
+        auto delayed = [&]() {
+            Bundle bundle(context, scene, 1);
+            return analyze(bundle.program, protection, {}, fs::ArithmeticDemandOutputs::Demands);
+        }(); // All original primitive/schema storage is gone before continuation.
+        if (!delayed.error.empty() || !delayed.exactMinimum || delayed.requiredOrderAvailable ||
+            !delayed.requiredOrderContinuation || delayed.requiredOrderContinuation->requested() ||
+            delayed.cost.coverDemandRounds != delayed.pipeCount - 1 || delayed.cost.requiredOrderRounds) {
+            return false;
+        }
+        auto copy = delayed;
+        const auto& order = copy.requiredOrderContinuation->request();
+        if (!order.error.empty() || &delayed.requiredOrderContinuation->request() != &order ||
+            order.cost.requiredOrderRounds != 1 || delayed.requiredOrderAvailable) { return false; }
+        auto changed = delayed;
+        changed.minimumDemands.clear(); // Different retained inventory, same required closure.
+        auto changedOrder = fs::requestArithmeticRequiredOrder(changed);
+        auto unchangedOrder = fs::requestArithmeticRequiredOrder(delayed);
+        if (!changedOrder->minimumDemands.empty() || unchangedOrder->minimumDemands.empty() ||
+            !unchangedOrder->requiredOrderAvailable || delayed.requiredOrderAvailable ||
+            &delayed.requiredOrderContinuation->request() != &order) { return false; }
+        copy.requiredOrder = order.relation; copy.requiredOrderAvailable = true;
+        copy.availableRelations |= uint8_t{2};
+        bool adjacent = true;
+        for (int64_t n = 0; n <= 3; ++n) {
+            for (int64_t g = 0; g <= 1; ++g) {
+                if (!checkCase(copy, scene, n, g, adjacent)) { return false; }
+            }
+        }
+    }
+    // A supplied hardware-native completion prerequisite is closed before the
+    // alternative test; it is removed by native subtraction, not by treating
+    // native completion order as completion-to-start order everywhere.
+    for (unsigned scene : {3u, 0u}) {
+        Bundle native(context, scene, 1);
+        const auto target = scene == 3 ? 1u : 2u;
+        native.point(fs::PrimitiveKind::Native, 0, target, fs::ArithmeticEvent::Completion,
+            fs::ArithmeticEvent::Start, {0, 0}, 1, 0);
+        native.program.recognition = fs::recognizeArithmetic(native.program.primitives, {3, 4, 1, 1});
+        auto actual = analyze(native.program, protection, {}, fs::ArithmeticDemandOutputs::Complete);
+        if (!actual.error.empty() || !actual.exactMinimum) { return false; }
+        auto occurrences = execution(scene, 1, 0);
+        auto required = closure(occurrences, true), n = closure(occurrences, false);
+        n[1][2 * target] = true; required[1][2 * target] = true;
+        for (unsigned via = 0; via < n.size(); ++via) {
+            for (unsigned a = 0; a < n.size(); ++a) {
+                for (unsigned b = 0; b < n.size(); ++b) {
+                    n[a][b] = n[a][b] || (n[a][via] && n[via][b]);
+                    required[a][b] = required[a][b] || (required[a][via] && required[via][b]);
+                }
+            }
+        }
+        auto minimum = covers(occurrences, required);
+        for (unsigned a = 0; a < occurrences.size(); ++a) {
+            for (unsigned b = 0; b < occurrences.size(); ++b) {
+                for (unsigned ea = 0; ea < 2; ++ea) {
+                    for (unsigned eb = 0; eb < 2; ++eb) {
+                        const auto x = 2 * a + ea, y = 2 * b + eb;
+                        if (member(actual.nativeOrder, 1, a, 0, ea, b, 0, eb, 1, 0) != n[x][y] ||
+                            member(actual.requiredOrder, 1, a, 0, ea, b, 0, eb, 1, 0) != (x != y && required[x][y]) ||
+                            member(actual.minimumDemands, 1, a, 0, ea, b, 0, eb, 1, 0) != (minimum[x][y] && !n[x][y])) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+bool checkPartialArithmeticViews()
+{
+    MLIRContext context;
+    context.disableMultithreading();
+    context.loadDialect<func::FuncDialect>();
+    OwningOpRef<func::FuncOp> function(func::FuncOp::create(UnknownLoc::get(&context), "partial_view",
+        FunctionType::get(&context, {}, {})));
+    fs::ArithmeticProgram program;
+    fs::GeneralArithmeticDemandAnalysis partial;
+    partial.exactMinimum = true;
+    partial.availableRelations = static_cast<uint8_t>(fs::ArithmeticRelationView::RequiredOrder);
+    fs::ArithmeticDemandAnalysis difference;
+    difference.exactMinimum = true; difference.availableRelations = partial.availableRelations;
+    std::string error;
+    if (fs::buildGeneralArithmeticSelectors(partial, {}).error.empty() ||
+        fs::buildArithmeticSelectors(difference, {}).error.empty() ||
+        fs::buildArithmeticHandoffAllocation(partial, {}).error.empty() ||
+        fs::buildArithmeticHandoffAllocation(difference, {}).error.empty() ||
+        fs::arithmeticAllocationCertificate(difference, {}, {}, 0, &context) ||
+        succeeded(fs::prepareGeneralArithmeticInsertion(*function, program, partial, error)) ||
+        succeeded(fs::prepareArithmeticInsertion(*function, program, difference, error))) {
+        llvm::errs() << "an omitted relation was interpreted as an empty exact relation\n"; return false;
+    }
+    // A failed optional order export must not poison an issued demand view or
+    // publish an incomplete allocation view. Failure itself is retained too.
+    fs::ArithmeticRegionalRelations owner;
+    owner.analysis.exactMinimum = true;
+    owner.analysis.requiredOrderAvailable = false;
+    owner.analysis.availableRelations &= ~uint8_t{2};
+    unsigned attempts = 0;
+    owner.analysis.requiredOrderContinuation =
+        std::make_shared<const fs::ArithmeticOrderContinuation<fs::IntegerSystem>>([&] {
+            ++attempts;
+            fs::ArithmeticOrderExport<fs::IntegerSystem> failure;
+            failure.error = "deliberately unavailable optional order"; return failure;
+        });
+    fs::detail::initializeArithmeticExportCache(owner, {});
+    auto demands = fs::requestArithmeticRelations(owner, fs::ArithmeticRelationView::Demands, error);
+    if (!demands || attempts) { return false; }
+    for (unsigned retry = 0; retry < 2; ++retry) {
+        if (fs::requestArithmeticRelations(owner, fs::ArithmeticRelationView::Allocation, error) ||
+            error != "deliberately unavailable optional order" || attempts != 1 ||
+            fs::requestArithmeticRelations(owner, fs::ArithmeticRelationView::Demands, error) != demands ||
+            demands->hasRelations(fs::ArithmeticRelationView::RequiredOrder)) { return false; }
+    }
+    llvm::outs() << "arithmetic relation views: partial consumers rejected, optional failure isolated and retained\n";
     return true;
 }
 bool checkLocalAdjacencyQueries()
@@ -743,8 +895,8 @@ bool checkDemandProfiles()
         if (record.stage == "arithmetic-demand-reduction" && record.work.empty()) { return false; }
     }
     for (const char* stage : {"arithmetic-demand-generators", "arithmetic-demand-reduction",
-             "arithmetic-demand-native-closure", "arithmetic-demand-required-closure",
-             "arithmetic-demand-required-difference", "arithmetic-demand-cover-composition",
+             "arithmetic-demand-native-closure", "arithmetic-demand-required-prefix",
+             "arithmetic-demand-required-export", "arithmetic-demand-first-demand-alternatives",
              "arithmetic-demand-cover-difference", "arithmetic-demand-adjacency",
              "arithmetic-demand-composition", "arithmetic-demand-difference"}) {
         if (!stages.count(stage)) { return false; }
@@ -775,6 +927,11 @@ int runChecks(Analyze analyze, llvm::StringRef name)
             auto analysis = analyze(bundle.program);
             if (!analysis.error.empty() || !analysis.exactMinimum) {
                 llvm::errs() << "arithmetic demand construction failed: " << analysis.error << "\n";
+                return 1;
+            }
+            if (analysis.cost.coverDemandRounds != (analysis.pipeCount ? analysis.pipeCount - 1 : 0) ||
+                analysis.cost.requiredOrderRounds != (analysis.pipeCount ? 1u : 0u)) {
+                llvm::errs() << "arithmetic witness construction exceeded its demand-round contract\n";
                 return 1;
             }
             bool adjacent = true;
@@ -852,11 +1009,14 @@ bool checkDifferenceExportScaling()
 }
 int runArithmeticDemandChecks()
 {
+    if (!checkFirstDemandContinuation(fs::analyzeArithmeticDemandsWithProtection)) { return 1; }
     return runChecks(fs::analyzeArithmeticDemands, "arithmetic demand");
 }
 int runGeneralArithmeticDemandChecks()
 {
-    if (!checkDifferenceExportScaling()) { return 1; }
+    if (!checkPartialArithmeticViews() ||
+        !checkFirstDemandContinuation(fs::analyzeGeneralArithmeticDemandsWithProtection) ||
+        !checkDifferenceExportScaling()) { return 1; }
     auto regional = [](const fs::ArithmeticProgram& program) {
         fs::ArithmeticRegionalRelations retained;
         retained.program = program;
@@ -864,6 +1024,29 @@ int runGeneralArithmeticDemandChecks()
         auto ledger = std::make_shared<fs::AnalysisLedger>();
         ledger->profiling = true;
         fs::detail::constructRegionalArithmetic(retained, protection, {ledger, 17});
+        if (!retained.differenceDemands || retained.analysis.cost.differenceExportSystems ||
+            retained.differenceDemands->requiredOrderAvailable ||
+            !retained.differenceDemands->requiredOrderContinuation ||
+            retained.differenceDemands->requiredOrderContinuation->requested()) {
+            retained.analysis.error = "mathematics eagerly built its optional order or integer export";
+            return retained.analysis;
+        }
+        std::string error;
+        auto minimum = fs::requestArithmeticRelations(retained, fs::ArithmeticRelationView::Demands, error);
+        if (!minimum || minimum->requiredOrderAvailable ||
+            retained.differenceDemands->requiredOrderContinuation->requested()) {
+            retained.analysis.error = "demand view forced the kth order round"; return retained.analysis;
+        }
+        auto full = fs::requestArithmeticRelations(retained, fs::ArithmeticRelationView::Complete, error);
+        auto copy = retained;
+        if (!full || !full->requiredOrderAvailable ||
+            fs::requestArithmeticRelations(copy, fs::ArithmeticRelationView::Complete, error) != full ||
+            fs::requestArithmeticRelations(copy, fs::ArithmeticRelationView::Demands, error) != minimum ||
+            retained.analysis.cost.differenceExportSystems) {
+            retained.analysis.error = "lazy relation export was incomplete, rebuilt, or mutated its source";
+            return retained.analysis;
+        }
+        retained.analysis = *full;
         const auto adapter = llvm::find_if(ledger->stages, [](const auto& record) {
             return record.stage == "arithmetic-difference-export" && record.region == 17 && record.work.size() == 3;
         });
@@ -871,6 +1054,16 @@ int runGeneralArithmeticDemandChecks()
             retained.analysis.error = "difference adapter work was not attributed separately";
         }
         const auto& cost = retained.analysis.cost;
+        uint64_t convertedSystems = 0;
+        for (const auto& record : ledger->stages) {
+            if (record.stage != "arithmetic-difference-export") { continue; }
+            for (const auto& [name, count] : record.work) {
+                if (name == "systems") { convertedSystems += count; }
+            }
+        }
+        if (convertedSystems != cost.differenceExportSystems) {
+            retained.analysis.error = "export stages double-counted earlier conversion work";
+        }
         if (!retained.differenceDemands || cost.differenceReductions != 1 || cost.integerReductions ||
             !cost.differenceExportSystems || !cost.differenceExportAtoms ||
             !program.recognition.configuredLimits) {

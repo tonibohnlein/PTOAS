@@ -78,7 +78,8 @@ const char* append(const ArithmeticRelationKey& key, const DifferenceBoundSystem
 const char* construct(const ArithmeticDemandAnalysis& analysis, llvm::ArrayRef<uint32_t> pipes,
                       ArithmeticSelectors& result)
 {
-    if (!analysis.error.empty() || !analysis.exactMinimum || !analysis.period) {
+    if (!analysis.error.empty() || !analysis.exactMinimum ||
+        !analysis.hasRelations(ArithmeticRelationView::Demands) || !analysis.period) {
         return "arithmetic selectors require a certified exact minimum-demand relation";
     }
     GroupIndex forward, inverse;

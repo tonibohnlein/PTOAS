@@ -756,6 +756,12 @@ LogicalResult checkArithmeticRanking(func::FuncOp function, pto::GMAliasPolicy p
   const auto namedAttempts = session.constructionCounts().mathematicalAttempts;
   const auto* namedDifference = session.arithmeticDemands();
   const auto* namedInteger = session.generalArithmeticDemands();
+  if ((namedDifference && (namedDifference->requiredOrderAvailable ||
+          !namedDifference->requiredOrderContinuation || namedDifference->requiredOrderContinuation->requested())) ||
+      (namedInteger && (namedInteger->requiredOrderAvailable ||
+          !namedInteger->requiredOrderContinuation || namedInteger->requiredOrderContinuation->requested()))) {
+    return function.emitError("root minimum-demand request eagerly built required order");
+  }
   if (failed(session.analyzeArithmeticFunction()) ||
       session.constructionCounts().mathematicalAttempts != namedAttempts ||
       session.arithmeticDemands() != namedDifference || session.generalArithmeticDemands() != namedInteger ||
@@ -955,11 +961,12 @@ LogicalResult checkArithmeticRequests(func::FuncOp function, pto::GMAliasPolicy 
   const auto& dbm = demands->differenceDemands;
   const auto& construction = demands->analysis.cost;
   if (!dbm || construction.differenceReductions != 1 || construction.integerReductions ||
-      !construction.differenceExportSystems ||
+      construction.differenceExportSystems ||
       queries->arithmeticRelations->differenceDemands != dbm ||
       weaker->arithmeticRelations->differenceDemands != dbm ||
       selected->arithmeticRelations->differenceDemands != dbm ||
-      selected->arithmeticRelations->analysis.cost.differenceExportSystems != construction.differenceExportSystems) {
+      selected->arithmeticRelations->integerExports != demands->integerExports ||
+      !selected->arithmeticRelations->analysis.cost.differenceExportSystems) {
     return function.emitError("arithmetic export failure/retry reconstructed or lost retained DBM mathematics");
   }
   llvm::outs() << "regional-difference-contract: whole-primitives retained adapter-once export-retry-shared\n";
@@ -1051,7 +1058,13 @@ LogicalResult checkArithmeticRequests(func::FuncOp function, pto::GMAliasPolicy 
     return function.emitError("successful arithmetic allocation damaged logical fragments or queries");
   }
   auto noAllocation = *demands;
-  noAllocation.analysis.requiredOrder.clear(); // Deliberately unavailable handoff-reuse certificate.
+  // Retain exact demands but deliberately withhold the required-order export.
+  // Clearing a diagnostic map cannot invalidate the original owned export.
+  auto demandView = requestArithmeticRelations(*demands, ArithmeticRelationView::Demands, error);
+  if (!demandView) { return failure(); }
+  noAllocation.analysis = *demandView;
+  noAllocation.integerExports.reset();
+  noAllocation.differenceDemands.reset();
   auto unavailablePlan = prepareArithmeticRegion(noAllocation, arena, {}, error, input);
   if (failed(unavailablePlan) || failed(materializeLogicalFamilies(**unavailablePlan))) {
     return function.emitError("allocation refusal prevented logical preparation");
@@ -2765,6 +2778,8 @@ int main(int argc, char **argv) {
               arithmeticCost = &owned->arithmeticRegionalDemands->analysis.cost;
             } else if (owned->generalArithmeticDemands) {
               arithmeticCost = &owned->generalArithmeticDemands->cost;
+            } else if (owned->arithmeticDemands) {
+              arithmeticCost = &owned->arithmeticDemands->cost;
             }
           }
           llvm::json::Object implicationCost;
@@ -2791,6 +2806,9 @@ int main(int argc, char **argv) {
             implicationCost["difference_export_systems"] = arithmeticCost->differenceExportSystems;
             implicationCost["difference_export_atoms"] = arithmeticCost->differenceExportAtoms;
             implicationCost["difference_export_coefficients"] = arithmeticCost->differenceExportCoefficients;
+            implicationCost["cover_demand_rounds"] = arithmeticCost->coverDemandRounds;
+            implicationCost["cover_alternative_pieces"] = arithmeticCost->coverAlternativePieces;
+            implicationCost["required_order_rounds"] = arithmeticCost->requiredOrderRounds;
             implicationCost["primitive_pieces"] = arithmeticCost->primitivePieces;
             implicationCost["projections"] = arithmeticCost->projections;
             implicationCost["relation_compositions"] = arithmeticCost->relationCompositions;

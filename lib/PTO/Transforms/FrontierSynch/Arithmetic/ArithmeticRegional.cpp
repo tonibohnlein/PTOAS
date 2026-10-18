@@ -30,8 +30,105 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
+#include <array>
 #include <map>
 namespace mlir::pto::frontiersynch {
+struct ArithmeticRegionalExportCache {
+    ArithmeticDemandProfile profile;
+    std::shared_ptr<const GeneralArithmeticDemandAnalysis> original;
+    ArithmeticAnalysisCost conversionCost;
+    ArithmeticAnalysisCost orderCost;
+    std::array<std::shared_ptr<const GeneralArithmeticRelation>, 4> relations;
+    std::map<uint8_t, std::shared_ptr<const GeneralArithmeticDemandAnalysis>> views;
+    std::map<uint8_t, std::string> failures;
+};
+void detail::initializeArithmeticExportCache(ArithmeticRegionalRelations& result, ArithmeticDemandProfile profile)
+{
+    result.integerExports = std::make_shared<ArithmeticRegionalExportCache>();
+    result.integerExports->profile = std::move(profile);
+    result.integerExports->original = std::make_shared<const GeneralArithmeticDemandAnalysis>(result.analysis);
+}
+std::shared_ptr<const GeneralArithmeticDemandAnalysis> requestArithmeticRelations(
+    const ArithmeticRegionalRelations& source, ArithmeticRelationView view, std::string& error)
+{
+    error.clear();
+    const auto mask = static_cast<uint8_t>(view);
+    if (!source.analysis.exactMinimum || !source.analysis.error.empty() || !mask || (mask & ~uint8_t{15})) {
+        error = "arithmetic relation view requires exact retained mathematics"; return {};
+    }
+    if (!source.integerExports) {
+        if (!source.analysis.hasRelations(view) || ((mask & 2) && !source.analysis.requiredOrderAvailable)) {
+            error = "arithmetic required-order view is unavailable"; return {};
+        }
+        return std::make_shared<const GeneralArithmeticDemandAnalysis>(source.analysis);
+    }
+    auto& cache = *source.integerExports;
+    const auto& original = *cache.original;
+    if (auto found = cache.views.find(mask); found != cache.views.end()) { return found->second; }
+    if (auto found = cache.failures.find(mask); found != cache.failures.end()) { error = found->second; return {}; }
+    auto refuse = [&](StringRef diagnostic) -> std::shared_ptr<const GeneralArithmeticDemandAnalysis> {
+        error = diagnostic.str(); cache.failures.emplace(mask, error); return {};
+    };
+    AnalysisProfileScope adapter(cache.profile.ledger, "arithmetic-difference-export", cache.profile.region);
+    adapter.constructed();
+    const auto before = cache.conversionCost;
+    auto recordWork = llvm::make_scope_exit([&] {
+        adapter.recordWork({{"systems", cache.conversionCost.differenceExportSystems - before.differenceExportSystems},
+            {"atoms", cache.conversionCost.differenceExportAtoms - before.differenceExportAtoms},
+            {"coefficients", cache.conversionCost.differenceExportCoefficients - before.differenceExportCoefficients}});
+    });
+    auto staged = cache.relations;
+    // Bits: demands, required order, native order, original generators.
+    const std::array<const GeneralArithmeticRelation*, 4> integer{
+        &original.minimumDemands, &original.requiredOrder,
+        &original.nativeOrder, &original.generators};
+    const auto* difference = source.differenceDemands.get();
+    for (unsigned index = 0; index < staged.size(); ++index) {
+        if (!(mask & (1u << index)) || staged[index]) { continue; }
+        GeneralArithmeticRelation relation;
+        if (difference) {
+            const std::array<const ArithmeticRelation*, 4> dbm{
+                &difference->minimumDemands, &difference->requiredOrder,
+                &difference->nativeOrder, &difference->generators};
+            auto* selected = dbm[index];
+            if (index == 1 && !difference->requiredOrderAvailable) {
+                if (!difference->requiredOrderContinuation) {
+                    return refuse("missing retained DBM order continuation");
+                }
+                const auto& order = difference->requiredOrderContinuation->request();
+                if (!order.error.empty()) { return refuse(order.error); }
+                selected = &order.relation; cache.orderCost = order.cost;
+            }
+            auto converted = detail::exportDifferenceRelation(*selected, &cache.conversionCost);
+            if (failed(converted)) { return refuse("retained DBM relation requires an unavailable integer export"); }
+            relation = std::move(*converted);
+        } else if (index == 1 && !original.requiredOrderAvailable) {
+            if (!original.requiredOrderContinuation) { return refuse("missing retained integer order continuation"); }
+            const auto& order = original.requiredOrderContinuation->request();
+            if (!order.error.empty()) { return refuse(order.error); }
+            relation = order.relation; cache.orderCost = order.cost;
+        } else { relation = *integer[index]; }
+        staged[index] = std::make_shared<const GeneralArithmeticRelation>(std::move(relation));
+    }
+    auto output = std::make_shared<GeneralArithmeticDemandAnalysis>();
+    output->period = source.analysis.period; output->parameterCount = source.analysis.parameterCount;
+    output->pipeCount = source.analysis.pipeCount; output->exactMinimum = true;
+    output->adjacentLocalDemands = source.analysis.adjacentLocalDemands;
+    output->availableRelations = mask;
+    output->requiredOrderAvailable = bool(mask & 2); output->cost = original.cost;
+    if (mask & 2) { accumulateArithmeticCost(output->cost, cache.orderCost); }
+    std::array<GeneralArithmeticRelation*, 4> destinations{
+        &output->minimumDemands, &output->requiredOrder, &output->nativeOrder, &output->generators};
+    for (unsigned index = 0; index < staged.size(); ++index) {
+        if (mask & (1u << index)) { *destinations[index] = *staged[index]; }
+    }
+    output->cost.differenceExportSystems = cache.conversionCost.differenceExportSystems;
+    output->cost.differenceExportAtoms = cache.conversionCost.differenceExportAtoms;
+    output->cost.differenceExportCoefficients = cache.conversionCost.differenceExportCoefficients;
+    cache.relations = std::move(staged);
+    cache.views.emplace(mask, output);
+    return output;
+}
 // No detached SSA or allocation callback is retained. The session cache owns
 // its exact mathematical source; exporter-local templates live in their State.
 struct ArithmeticRegionalPreparation {
@@ -214,6 +311,13 @@ struct State : ArithmeticRegionalRelations {
                                    primitive(PrimitiveKind::Occurrences, b));
         return arena->land(present, before);
     }
+    bool requireRelations(ArithmeticRelationView view)
+    {
+        auto retained = requestArithmeticRelations(*this, view, error);
+        if (!retained) { return false; }
+        analysis = *retained;
+        return true;
+    }
     Id reach(RegionalEvent a, RegionalEvent b)
     {
         if (a.type >= pipes.size() || b.type >= pipes.size()) { return RegionExpressions::invalid; }
@@ -225,6 +329,9 @@ struct State : ArithmeticRegionalRelations {
             // can be added in the reverse direction. Only C->I needs the
             // required-order relation on this pipe.
             return referenceOrder(a, b, true);
+        }
+        if (!analysis.requiredOrderAvailable && !requireRelations(ArithmeticRelationView::Allocation)) {
+            return RegionExpressions::invalid;
         }
         auto left = coordinates(a), right = coordinates(b);
         if (!left || !right) { return RegionExpressions::invalid; }
@@ -310,6 +417,7 @@ struct State : ArithmeticRegionalRelations {
             }
             return {};
         };
+        if (!requireRelations(ArithmeticRelationView::Allocation)) { return refuse("required-order"); }
         std::map<std::pair<std::size_t, std::size_t>, uint32_t> records;
         uint64_t bindingCount = 0, bindingSamples = 0;
         {
@@ -872,6 +980,7 @@ FailureOr<RegionalAnalysis> initializeExports(const std::shared_ptr<State>& stat
     }
 
     if (reduce && !reduce()) { return failure(); }
+    if (!state->requireRelations(ArithmeticRelationView::Demands)) { error = state->error; return failure(); }
     if (selectors) {
         state->selectors = buildArithmeticStorageSelectorsFromImported(
             state->program, *state->importedPrimitives, state->pipes);
@@ -1026,7 +1135,7 @@ FailureOr<RegionalAnalysis> exportSpecializedArithmeticRegion(
     auto state = std::make_shared<State>(allocationPolicy);
     state->input = demands.input; state->inputOwner = demands.inputOwner; state->indexOwner = demands.indexOwner;
     state->entryConstants = demands.entryConstants;
-    state->differenceDemands = demands.differenceDemands;
+    state->differenceDemands = demands.differenceDemands; state->integerExports = demands.integerExports;
     state->program = demands.program; state->analysis = demands.analysis; state->arena = expressions;
     auto exported = initializeExports(state, *demands.input, error, selectors,
         StorageExportRequest::SymbolicAllowed, parameterBinding);
@@ -1075,7 +1184,7 @@ FailureOr<RegionalAnalysis> exportArithmeticRegion(
     state->input = demands.input;
     state->inputOwner = inputOwner ? std::move(inputOwner) : demands.inputOwner;
     state->indexOwner = demands.indexOwner;
-    state->differenceDemands = demands.differenceDemands;
+    state->differenceDemands = demands.differenceDemands; state->integerExports = demands.integerExports;
     state->program = demands.program; state->analysis = demands.analysis;
     state->arena = expressions;
     auto exported = initializeExports(state, *demands.input, error, selectors,
@@ -1101,7 +1210,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegionImpl(
     state->input = demands.input;
     state->inputOwner = inputOwner ? std::move(inputOwner) : demands.inputOwner;
     state->indexOwner = demands.indexOwner;
-    state->differenceDemands = demands.differenceDemands;
+    state->differenceDemands = demands.differenceDemands; state->integerExports = demands.integerExports;
     state->program = demands.program; state->analysis = demands.analysis;
     state->arena = expressions; state->selectors.period = state->program.primitives.period;
     if (!state->initialize()) { error = state->error; return failure(); }
@@ -1112,6 +1221,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegionImpl(
     for (const auto& site : state->program.sites) {
         state->pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue));
     }
+    if (!state->requireRelations(ArithmeticRelationView::Demands)) { error = state->error; return failure(); }
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> plan = retained ?
         FailureOr<std::unique_ptr<PreparedLogicalPlan>>(retained->fragment->instantiate()) :
         prepareGeneralArithmeticRegionalInsertion(

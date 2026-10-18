@@ -97,8 +97,9 @@ relaxed test expectations is permitted to meet a performance target.
 
 ## Status and deletion ledger
 
-M1 is accepted by architecture and correctness review; see the
-[M1 receipt](frontier-sections56-path-m1-report.md). M2–M5 remain pending.
+M1 and M2 are accepted by architecture and correctness review; see the
+[M1 receipt](frontier-sections56-path-m1-report.md) and
+[M2 receipt](frontier-sections56-path-m2-report.md). M3–M5 remain pending.
 The full synchronization gate and 49-module campaign remain final-plan obligations.
 
 | Existing ownership/adapter | Replacement | Deletion gate |

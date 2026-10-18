@@ -15,6 +15,7 @@ namespace mlir::pto::frontiersynch {
 // Owned symbolic export. Original IR/shared input are borrowed as in the
 // regional contract; all imported relations and parameter bindings are owned.
 // Composition consumes these relations without reconstructing child accesses.
+struct ArithmeticRegionalExportCache;
 struct ArithmeticRegionalRelations {
     const SyncInput* input = nullptr;
     std::shared_ptr<const SyncInput> inputOwner;
@@ -23,12 +24,19 @@ struct ArithmeticRegionalRelations {
     ArithmeticProgram program;
     // Optional immutable DBM mathematics; exports share it and the converted view.
     std::shared_ptr<const ArithmeticDemandAnalysis> differenceDemands;
+    // For specialized owners this holds mathematical status/cost only. Consumers
+    // must request their relation views; unavailable is never an empty relation.
     GeneralArithmeticDemandAnalysis analysis;
+    std::shared_ptr<ArithmeticRegionalExportCache> integerExports;
     ArithmeticStorageSelectors selectors;
     std::vector<ArithmeticOccurrenceDomain> occurrences;
     std::vector<RegionExpressions::Id> parameters;
     std::vector<scf::ForOp> enclosing;
 };
+// Publishes a coherent requested view atomically. Copies of the original owner
+// share conversion and reachability continuation results, including refusals.
+std::shared_ptr<const GeneralArithmeticDemandAnalysis> requestArithmeticRelations(
+    const ArithmeticRegionalRelations& source, ArithmeticRelationView view, std::string& error);
 // Session mathematics contains no arena-local IDs or optional storage exports.
 std::shared_ptr<const ArithmeticRegionalRelations> analyzeArithmeticRegionDemands(
     ArithmeticRegionContext context, const PhaseIndex& index, const SyncInput& input,

@@ -72,7 +72,9 @@ bool orderedReuse(const ArithmeticDemandAnalysis& analysis,
 DictionaryAttr arithmeticAllocationCertificate(const ArithmeticDemandAnalysis& analysis,
     ArrayRef<uint32_t> pipes, const std::map<Pair, int64_t>& records, int64_t plan, MLIRContext* context)
 {
-    if (!analysis.error.empty() || !analysis.exactMinimum || !analysis.period || analysis.period > INT64_MAX) {
+    if (!analysis.error.empty() || !analysis.exactMinimum ||
+        !analysis.hasRelations(ArithmeticRelationView::Allocation) || !analysis.requiredOrderAvailable ||
+        !analysis.period || analysis.period > INT64_MAX) {
         return {};
     }
     using Entry = std::pair<const ArithmeticRelationKey*, const System*>;

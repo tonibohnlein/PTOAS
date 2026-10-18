@@ -881,13 +881,15 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
         pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue));
     }
     if (demands.generalArithmeticDemands) {
-        return generalArithmeticAllocationCertificate(*demands.generalArithmeticDemands, pipes,
+        return generalArithmeticAllocationCertificate(
+            *requestArithmeticRequiredOrder(*demands.generalArithmeticDemands), pipes,
             attempt.arithmeticRecords, plan, context);
     }
-    auto certificate = arithmeticAllocationCertificate(*demands.arithmeticDemands, pipes,
+    const auto complete = requestArithmeticRequiredOrder(*demands.arithmeticDemands);
+    auto certificate = arithmeticAllocationCertificate(*complete, pipes,
                                                        attempt.arithmeticRecords, plan, context);
     if (certificate) { return certificate; }
-    auto proof = buildArithmeticHandoffAllocation(*demands.arithmeticDemands, pipes);
+    auto proof = buildArithmeticHandoffAllocation(*complete, pipes);
     return encodeGeneralArithmeticAllocationCertificate(proof, pipes, attempt.arithmeticRecords, plan, context);
 }
 } // namespace

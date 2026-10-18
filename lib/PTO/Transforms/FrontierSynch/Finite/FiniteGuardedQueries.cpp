@@ -430,7 +430,9 @@ std::shared_ptr<const RegionalRelationData> retainedFiniteRelations(
     auto data = std::make_shared<RegionalRelationData>();
     data->input = state.expandedInput; data->context = source.expandedProgram->context;
     data->sites = source.expandedProgram->sites; data->parameterValues = source.expandedProgram->parameters;
-    data->analysis = *reduced; data->occurrences = state.expandedGenerators->occurrences();
+    data->analysis = *requestArithmeticRequiredOrder(*reduced);
+    if (!data->analysis.error.empty()) { return fail(data->analysis.error); }
+    data->occurrences = state.expandedGenerators->occurrences();
     data->completeRequiredOrder = true;
     data->incomingPrerequisites = source.expandedProgram->incomingPrerequisites;
     for (auto parameter : data->parameterValues) { data->parameters.push_back(state.arena->input(parameter)); }

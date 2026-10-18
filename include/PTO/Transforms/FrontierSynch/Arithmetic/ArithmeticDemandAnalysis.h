@@ -10,6 +10,7 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticProgram.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/DifferenceBoundRelations.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/IntegerRelations.h"
+#include <functional>
 #include <map>
 #include <memory>
 #include <vector>
@@ -41,6 +42,7 @@ struct ArithmeticDemandProfile {
 };
 struct ArithmeticAnalysisCost {
     uint64_t primitivePieces = 0;
+    uint64_t coverDemandRounds = 0, coverAlternativePieces = 0, requiredOrderRounds = 0;
     // Actual reductions and adapter work, not inferred complexity from a class label.
     uint64_t differenceReductions = 0, integerReductions = 0;
     uint64_t differenceExportSystems = 0, differenceExportAtoms = 0, differenceExportCoefficients = 0;
@@ -60,6 +62,36 @@ struct ArithmeticAnalysisCost {
     uint64_t physicalJoinAttempts = 0, physicalJoinCacheHits = 0, physicalJoinBuilds = 0;
     uint64_t physicalJoinEmptyHits = 0, physicalJoinRemaps = 0;
 };
+void accumulateArithmeticCost(ArithmeticAnalysisCost& target, const ArithmeticAnalysisCost& source);
+// Demand-only results own the final reachability continuation. Its immutable
+// output (including failure) is memoized within the synchronous analysis session;
+// copies share it, but never mutate the previously issued demand result.
+enum class ArithmeticDemandOutputs { Demands, Complete };
+enum class ArithmeticRelationView : uint8_t {
+    Demands = 1, RequiredOrder = 2, Allocation = 3, NativeOrder = 4, Generators = 8,
+    NativeAndGenerators = 12, Complete = 15
+};
+template<class System>
+struct ArithmeticOrderExport {
+    TypedArithmeticRelation<System> relation;
+    ArithmeticAnalysisCost cost;
+    std::string error;
+};
+template<class System>
+class ArithmeticOrderContinuation {
+public:
+    using Output = ArithmeticOrderExport<System>;
+    explicit ArithmeticOrderContinuation(std::function<Output()> build) : build(std::move(build)) {}
+    const Output& request() const
+    {
+        if (!cached) { cached = std::make_shared<const Output>(build()); build = {}; }
+        return *cached;
+    }
+    bool requested() const { return bool(cached); }
+private:
+    mutable std::function<Output()> build;
+    mutable std::shared_ptr<const Output> cached;
+};
 template<class System>
 struct TypedArithmeticDemandAnalysis {
     std::string error;
@@ -67,7 +99,15 @@ struct TypedArithmeticDemandAnalysis {
     unsigned parameterCount = 0, pipeCount = 0;
     TypedArithmeticRelation<System> generators;
     TypedArithmeticRelation<System> nativeOrder; // Reflexive N, restricted to present events.
-    TypedArithmeticRelation<System> requiredOrder; // Strict H, all payload event pairs.
+    TypedArithmeticRelation<System> requiredOrder; // Strict H, all payload event pairs when available.
+    uint8_t availableRelations = 15;
+    bool hasRelations(ArithmeticRelationView view) const
+    {
+        const auto mask = static_cast<uint8_t>(view);
+        return (availableRelations & mask) == mask;
+    }
+    bool requiredOrderAvailable = true;
+    std::shared_ptr<const ArithmeticOrderContinuation<System>> requiredOrderContinuation;
     TypedArithmeticRelation<System> minimumDemands; // F*: completion-to-start covers.
     ArithmeticAnalysisCost cost;
     // This certifies the relational construction only. Executable selectors and
@@ -77,6 +117,30 @@ struct TypedArithmeticDemandAnalysis {
 };
 using ArithmeticDemandAnalysis = TypedArithmeticDemandAnalysis<DifferenceBoundSystem>;
 using GeneralArithmeticDemandAnalysis = TypedArithmeticDemandAnalysis<IntegerSystem>;
+// The wrapper is fresh; only the immutable order computation is memoized.
+// A transformation changing coordinates, parameters or the underlying closure
+// must replace the continuation. Retention-only changes may share that order.
+template<class System>
+std::shared_ptr<const TypedArithmeticDemandAnalysis<System>> requestArithmeticRequiredOrder(
+    const TypedArithmeticDemandAnalysis<System>& source)
+{
+    auto output = std::make_shared<TypedArithmeticDemandAnalysis<System>>(source);
+    if (source.error.empty() && source.exactMinimum && !source.requiredOrderAvailable) {
+        if (!source.requiredOrderContinuation) {
+            output->error = "arithmetic required-order continuation unavailable";
+        } else {
+            const auto& order = source.requiredOrderContinuation->request();
+            output->error = order.error;
+            if (order.error.empty()) {
+                output->requiredOrder = order.relation;
+                output->requiredOrderAvailable = true;
+                output->availableRelations |= uint8_t{2};
+                accumulateArithmeticCost(output->cost, order.cost);
+            }
+        }
+    }
+    return output;
+}
 class StructuredProtection;
 // Paused exact generator construction. The original program/shared effects are
 // borrowed during creation; continuation uses only the imported relations.
@@ -114,8 +178,9 @@ private:
 GeneralArithmeticGeneratorStage analyzeGeneralArithmeticGenerators(
     const ArithmeticProgram& program, const StructuredProtection* protection = nullptr);
 GeneralArithmeticDemandAnalysis completeGeneralArithmeticDemands(GeneralArithmeticGeneratorStage&& stage);
-// Non-consuming completion retains the immutable generator/native-order view
+// Demand-only completion retains the immutable generator/native-order view
 // for a later adapter attempt and caches the reduced result independently.
+// Consumers requestArithmeticRequiredOrder only when they need that capability.
 std::shared_ptr<GeneralArithmeticDemandAnalysis> reduceGeneralArithmeticDemands(
     GeneralArithmeticGeneratorStage& stage);
 class DifferenceArithmeticGeneratorStage {
@@ -142,8 +207,9 @@ private:
 DifferenceArithmeticGeneratorStage analyzeDifferenceArithmeticGenerators(
     const ArithmeticProgram& program, const StructuredProtection* protection = nullptr);
 ArithmeticDemandAnalysis completeDifferenceArithmeticDemands(DifferenceArithmeticGeneratorStage&& stage);
-// Non-consuming completion retains the immutable generator/native-order view
+// Demand-only completion retains the immutable generator/native-order view
 // for a later adapter attempt and caches the reduced result independently.
+// Consumers requestArithmeticRequiredOrder only when they need that capability.
 std::shared_ptr<ArithmeticDemandAnalysis> reduceDifferenceArithmeticDemands(
     DifferenceArithmeticGeneratorStage& stage);
 // The DBM entry point accepts the difference-bound subclass. Input must supply
@@ -152,9 +218,11 @@ std::shared_ptr<ArithmeticDemandAnalysis> reduceDifferenceArithmeticDemands(
 // unfolding, IR mutation, hardware-protection inference or endpoint synthesis.
 class StructuredProtection;
 ArithmeticDemandAnalysis analyzeArithmeticDemandsWithProtection(const ArithmeticProgram& program,
-    const StructuredProtection& protection, ArithmeticDemandProfile profile = {});
+    const StructuredProtection& protection, ArithmeticDemandProfile profile = {},
+    ArithmeticDemandOutputs outputs = ArithmeticDemandOutputs::Complete);
 GeneralArithmeticDemandAnalysis analyzeGeneralArithmeticDemandsWithProtection(const ArithmeticProgram& program,
-    const StructuredProtection& protection, ArithmeticDemandProfile profile = {});
+    const StructuredProtection& protection, ArithmeticDemandProfile profile = {},
+    ArithmeticDemandOutputs outputs = ArithmeticDemandOutputs::Complete);
 ArithmeticDemandAnalysis analyzeArithmeticDemands(const ArithmeticProgram& program);
 // Exact integer projection extends the same relational engine to recognized
 // octagons and bounded coefficients. Projected unions retain their congruences;

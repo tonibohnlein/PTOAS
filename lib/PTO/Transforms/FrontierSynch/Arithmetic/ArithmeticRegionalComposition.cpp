@@ -537,6 +537,8 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
     if (!validExport(left) || !validExport(right) ||
         !left.completeRequiredOrder || !right.completeRequiredOrder ||
         !left.analysis.error.empty() || !right.analysis.error.empty() ||
+        !left.analysis.hasRelations(ArithmeticRelationView::Complete) ||
+        !right.analysis.hasRelations(ArithmeticRelationView::Complete) ||
         !left.selectors.error.empty() || !right.selectors.error.empty() ||
         left.analysis.period != right.analysis.period || left.analysis.period != left.selectors.period ||
         right.analysis.period != right.selectors.period || !left.analysis.period ||
@@ -560,28 +562,8 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
     }
     // Cumulative work is retained by the reusable parent export. outputPieces
     // below describes the current result, not a sum of intermediate snapshots.
-    for (auto member : {&ArithmeticAnalysisCost::primitivePieces,
-        &ArithmeticAnalysisCost::differenceReductions, &ArithmeticAnalysisCost::integerReductions,
-        &ArithmeticAnalysisCost::differenceExportSystems, &ArithmeticAnalysisCost::differenceExportAtoms,
-        &ArithmeticAnalysisCost::differenceExportCoefficients,
-        &ArithmeticAnalysisCost::importQueryRequests, &ArithmeticAnalysisCost::importQueryHits,
-        &ArithmeticAnalysisCost::importQueryBuilds, &ArithmeticAnalysisCost::pieceJoins,
-        &ArithmeticAnalysisCost::projections, &ArithmeticAnalysisCost::relationCompositions,
-        &ArithmeticAnalysisCost::differences, &ArithmeticAnalysisCost::implicationCacheHits,
-        &ArithmeticAnalysisCost::rationalImplications, &ArithmeticAnalysisCost::integerCounterexamples,
-        &ArithmeticAnalysisCost::exactImplicationChecks, &ArithmeticAnalysisCost::latticeRelaxationBuilds,
-        &ArithmeticAnalysisCost::latticeObjectiveQueries, &ArithmeticAnalysisCost::latticeObjectiveHits,
-        &ArithmeticAnalysisCost::latticeImplicationProofs, &ArithmeticAnalysisCost::latticeEmptyProofs,
-        &ArithmeticAnalysisCost::unionDifferenceAttempts,
-        &ArithmeticAnalysisCost::unionDifferenceCacheHits, &ArithmeticAnalysisCost::unionDifferenceBuilds,
-        &ArithmeticAnalysisCost::unionMergeAttempts,
-        &ArithmeticAnalysisCost::unionMergeCacheHits, &ArithmeticAnalysisCost::unionMergeBuilds,
-        &ArithmeticAnalysisCost::physicalJoinAttempts, &ArithmeticAnalysisCost::physicalJoinCacheHits,
-        &ArithmeticAnalysisCost::physicalJoinBuilds, &ArithmeticAnalysisCost::physicalJoinEmptyHits,
-        &ArithmeticAnalysisCost::physicalJoinRemaps}) {
-        out.analysis.cost.*member = left.analysis.cost.*member;
-        accumulateCost(out.analysis.cost.*member, right.analysis.cost.*member);
-    }
+    accumulateArithmeticCost(out.analysis.cost, left.analysis.cost);
+    accumulateArithmeticCost(out.analysis.cost, right.analysis.cost);
     for (auto member : {&RegionExpressions::RelationCost::gates, &RegionExpressions::RelationCost::pieces,
         &RegionExpressions::RelationCost::projections, &RegionExpressions::RelationCost::formulaProducts,
         &RegionExpressions::RelationCost::duplicateClauses, &RegionExpressions::RelationCost::conversionRequests,
@@ -644,6 +626,7 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
     out.analysis.exactMinimum = left.analysis.exactMinimum && right.analysis.exactMinimum;
     // This adapter does not certify adjacency; insertion may use consumer cuts.
     out.analysis.adjacentLocalDemands = false;
+    out.analysis.cost.outputPieces = 0;
     for (const auto& [key, pieces] : out.analysis.minimumDemands) {
         (void)key; out.analysis.cost.outputPieces += pieces.size();
     }
@@ -666,8 +649,13 @@ RegionalRelationData arithmeticRelationData(const ArithmeticRegionalRelations& i
     out.parameterValues = in.program.parameters; out.parameters = in.parameters; out.enclosing = in.enclosing;
     out.incomingPrerequisites = in.program.incomingPrerequisites;
     out.dischargedEffects = in.program.extraction.dischargedEffects;
-    out.analysis = in.analysis; out.selectors = in.selectors; out.occurrences = in.occurrences;
-    out.completeRequiredOrder = in.analysis.exactMinimum && in.analysis.error.empty();
+    std::string error;
+    auto relations = requestArithmeticRelations(in, ArithmeticRelationView::Complete, error);
+    if (relations) { out.analysis = *relations; }
+    else { out.analysis.error = std::move(error); }
+    out.selectors = in.selectors; out.occurrences = in.occurrences;
+    out.completeRequiredOrder = relations && relations->requiredOrderAvailable &&
+        relations->exactMinimum && relations->error.empty();
     return out;
 }
 FailureOr<ArithmeticRegionalRelations> composeArithmeticRegionalRelations(

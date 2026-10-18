@@ -443,7 +443,8 @@ ArithmeticHandoffAllocation buildAllocation(
 {
     ArithmeticHandoffAllocation result;
     result.period = analysis.period; result.parameterCount = analysis.parameterCount;
-    if (!analysis.error.empty() || !analysis.exactMinimum || !analysis.period ||
+    if (!analysis.error.empty() || !analysis.exactMinimum ||
+        !analysis.hasRelations(ArithmeticRelationView::Allocation) || !analysis.period ||
         analysis.period > INT64_MAX || !maxWidth || maxWidth > 6) {
         result.error = "arithmetic allocation requires exact demands and a width in 1..6"; return result;
     }
@@ -554,6 +555,8 @@ ArithmeticHandoffAllocation buildArithmeticHandoffAllocation(
     GeneralArithmeticDemandAnalysis converted;
     converted.period = analysis.period; converted.parameterCount = analysis.parameterCount;
     converted.exactMinimum = analysis.exactMinimum; converted.error = analysis.error;
+    converted.availableRelations = analysis.availableRelations;
+    converted.requiredOrderAvailable = analysis.requiredOrderAvailable;
     auto demands = detail::exportDifferenceRelation(analysis.minimumDemands);
     auto required = detail::exportDifferenceRelation(analysis.requiredOrder);
     if (failed(demands) || failed(required)) {

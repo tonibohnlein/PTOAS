@@ -25,6 +25,63 @@
 #include <deque>
 #include "llvm/ADT/Hashing.h"
 namespace mlir::pto::frontiersynch {
+void accumulateArithmeticCost(ArithmeticAnalysisCost& target, const ArithmeticAnalysisCost& source)
+{
+    accumulateCost(target.primitivePieces, source.primitivePieces);
+    accumulateCost(target.coverDemandRounds, source.coverDemandRounds);
+    accumulateCost(target.coverAlternativePieces, source.coverAlternativePieces);
+    accumulateCost(target.requiredOrderRounds, source.requiredOrderRounds);
+    accumulateCost(target.differenceReductions, source.differenceReductions);
+    accumulateCost(target.integerReductions, source.integerReductions);
+    accumulateCost(target.differenceExportSystems, source.differenceExportSystems);
+    accumulateCost(target.differenceExportAtoms, source.differenceExportAtoms);
+    accumulateCost(target.differenceExportCoefficients, source.differenceExportCoefficients);
+    accumulateCost(target.importQueryRequests, source.importQueryRequests);
+    accumulateCost(target.importQueryHits, source.importQueryHits);
+    accumulateCost(target.importQueryBuilds, source.importQueryBuilds);
+    accumulateCost(target.pieceJoins, source.pieceJoins);
+    accumulateCost(target.projections, source.projections);
+    accumulateCost(target.relationCompositions, source.relationCompositions);
+    accumulateCost(target.differences, source.differences);
+    accumulateCost(target.outputPieces, source.outputPieces);
+    accumulateCost(target.implicationCacheHits, source.implicationCacheHits);
+    accumulateCost(target.rationalImplications, source.rationalImplications);
+    accumulateCost(target.integerCounterexamples, source.integerCounterexamples);
+    accumulateCost(target.exactImplicationChecks, source.exactImplicationChecks);
+    accumulateCost(target.latticeRelaxationBuilds, source.latticeRelaxationBuilds);
+    accumulateCost(target.latticeObjectiveQueries, source.latticeObjectiveQueries);
+    accumulateCost(target.latticeObjectiveHits, source.latticeObjectiveHits);
+    accumulateCost(target.latticeImplicationProofs, source.latticeImplicationProofs);
+    accumulateCost(target.latticeEmptyProofs, source.latticeEmptyProofs);
+    accumulateCost(target.unionMergeAttempts, source.unionMergeAttempts);
+    accumulateCost(target.unionMergeCacheHits, source.unionMergeCacheHits);
+    accumulateCost(target.unionMergeBuilds, source.unionMergeBuilds);
+    accumulateCost(target.unionDifferenceAttempts, source.unionDifferenceAttempts);
+    accumulateCost(target.unionDifferenceCacheHits, source.unionDifferenceCacheHits);
+    accumulateCost(target.unionDifferenceBuilds, source.unionDifferenceBuilds);
+    accumulateCost(target.physicalJoinAttempts, source.physicalJoinAttempts);
+    accumulateCost(target.physicalJoinCacheHits, source.physicalJoinCacheHits);
+    accumulateCost(target.physicalJoinBuilds, source.physicalJoinBuilds);
+    accumulateCost(target.physicalJoinEmptyHits, source.physicalJoinEmptyHits);
+    accumulateCost(target.physicalJoinRemaps, source.physicalJoinRemaps);
+    accumulateCost(target.integerDifference.requests, source.integerDifference.requests);
+    accumulateCost(target.integerDifference.seeds, source.integerDifference.seeds);
+    accumulateCost(target.integerDifference.axes, source.integerDifference.axes);
+    accumulateCost(target.integerDifference.skippedAxes, source.integerDifference.skippedAxes);
+    accumulateCost(target.integerDifference.slices, source.integerDifference.slices);
+    accumulateCost(target.integerDifference.outputPieces, source.integerDifference.outputPieces);
+    auto& a = target.integerDifference.sliceFeasibility;
+    const auto& b = source.integerDifference.sliceFeasibility;
+    accumulateCost(a.calls, b.calls);
+    accumulateCost(a.cacheHits, b.cacheHits);
+    accumulateCost(a.candidateSubstitutions, b.candidateSubstitutions);
+    accumulateCost(a.equalityEliminations, b.equalityEliminations);
+    accumulateCost(a.octagonalEliminations, b.octagonalEliminations);
+    accumulateCost(a.congruenceChecks, b.congruenceChecks);
+    accumulateCost(a.congruenceMatrixColumns, b.congruenceMatrixColumns);
+    accumulateCost(a.unaryDecisions, b.unaryDecisions);
+}
+
 bool ArithmeticEventKey::operator<(const ArithmeticEventKey& other) const
 {
     return std::tie(site, event, residues) < std::tie(other.site, other.event, other.residues);
@@ -157,7 +214,7 @@ public:
         result.pipeCount = program.primitives.pipeCount;
     }
     TypedArithmeticDemandAnalysis<System> result;
-    void run(bool generatorsOnly = false)
+    void run(bool generatorsOnly = false, ArithmeticDemandOutputs outputs = ArithmeticDemandOutputs::Complete)
     {
         if (program.extraction.state != RecognitionState::Applicable ||
             program.recognition.state != RecognitionState::Applicable ||
@@ -169,7 +226,7 @@ public:
             scope.constructed();
             if (!import() || !buildRelations() || !buildConflicts()) { return; }
         }
-        if (!generatorsOnly) { complete(); }
+        if (!generatorsOnly) { complete(outputs); }
     }
     std::vector<TypedArithmeticOccurrenceDomain<System>> occurrenceDomains() const
     {
@@ -203,7 +260,7 @@ public:
             }
         }
     }
-    void complete()
+    void complete(ArithmeticDemandOutputs outputs = ArithmeticDemandOutputs::Complete)
     {
         if constexpr (std::is_same_v<System, DifferenceBoundSystem>) {
             accumulateCost(result.cost.differenceReductions, 1);
@@ -220,27 +277,7 @@ public:
             AnalysisProfileScope& reduction;
             IntegerDifferenceCost before;
             ~ClearScratch() {
-                if (analysis.implications) {
-                    const auto& counts = analysis.implications->cost();
-                    auto& cost = analysis.result.cost;
-                    accumulateCost(cost.implicationCacheHits, counts.hits);
-                    accumulateCost(cost.rationalImplications, counts.rationalProofs);
-                    accumulateCost(cost.integerCounterexamples, counts.witnessRefutations);
-                    accumulateCost(cost.exactImplicationChecks, counts.exactChecks);
-                    accumulateCost(cost.latticeRelaxationBuilds, counts.latticeBuilds);
-                    accumulateCost(cost.latticeObjectiveQueries, counts.latticeQueries);
-                    accumulateCost(cost.latticeObjectiveHits, counts.latticeHits);
-                    accumulateCost(cost.latticeImplicationProofs, counts.latticeProofs);
-                    accumulateCost(cost.latticeEmptyProofs, counts.latticeEmptyProofs);
-                }
-                const auto& merges = analysis.unionMerges.cost();
-                accumulateCost(analysis.result.cost.unionMergeAttempts, merges.attempts);
-                accumulateCost(analysis.result.cost.unionMergeCacheHits, merges.hits);
-                accumulateCost(analysis.result.cost.unionMergeBuilds, merges.builds);
-                const auto& differences = analysis.unionDifferences.cost();
-                accumulateCost(analysis.result.cost.unionDifferenceAttempts, differences.attempts);
-                accumulateCost(analysis.result.cost.unionDifferenceCacheHits, differences.hits);
-                accumulateCost(analysis.result.cost.unionDifferenceBuilds, differences.builds);
+                analysis.collectScratchCost();
                 if (analysis.profile.ledger && analysis.profile.ledger->profiling) {
                     const auto& difference = analysis.result.cost.integerDifference;
                     reduction.recordWork({{"difference-requests", difference.requests - before.requests},
@@ -263,43 +300,50 @@ public:
         } scratch{*this, reduction, result.cost.integerDifference};
         completeNative();
         if (!result.error.empty()) { return; }
-        Relation reach;
+        Relation reach, step;
         {
-            AnalysisProfileScope scope(profile.ledger, "arithmetic-demand-required-closure", profile.region);
+            AnalysisProfileScope scope(profile.ledger, "arithmetic-demand-required-prefix", profile.region);
             scope.constructed();
-            auto step = compose(result.generators, result.nativeOrder);
+            step = compose(result.generators, result.nativeOrder);
             reach = result.nativeOrder;
             Relation frontier;
             TaggedIdentities history;
             if constexpr (std::is_same_v<System, IntegerSystem>) {
                 frontier = reach;
-                for (const auto& [key, pieces] : reach) {
-                    for (const auto& piece : pieces) { history[key].insert(systemIdentity(piece)); }
+                for (const auto& [key, entries] : reach) {
+                    for (const auto& piece : entries) { history[key].insert(systemIdentity(piece)); }
                 }
             }
-            for (unsigned round = 0; round < result.pipeCount && result.error.empty(); ++round) {
-                // A numerical piece already composed under these endpoint tags
-                // contributes no new paths on a later round. The round bound stays
-                // unchanged; composition distributes over the accumulated union.
+            // Covers need only R(k-1). The empty-pipe contract never underflows.
+            for (unsigned round = 1; round < result.pipeCount && result.error.empty(); ++round) {
                 auto next = [&] {
                     if constexpr (std::is_same_v<System, IntegerSystem>) {
                         return compose(frontier, step, nullptr, &history);
                     } else { return compose(reach, step); }
                 }();
                 unite(reach, next);
+                ++result.cost.coverDemandRounds;
                 if constexpr (std::is_same_v<System, IntegerSystem>) { frontier = std::move(next); }
             }
         }
         if (!result.error.empty()) { return; }
-        result.requiredOrder = timed("arithmetic-demand-required-difference", [&] {
-            return subtract(reach, identity);
-        });
-        // Only generator endpoint keys can contribute to this subtraction.
-        // Required-order exports remain complete for later regional queries.
-        auto covered = timed("arithmetic-demand-cover-composition", [&] {
-            auto closure = compose(result.requiredOrder, result.requiredOrder, &result.generators);
-            unite(closure, result.nativeOrder);
-            return closure;
+        // Identify an alternative by its first demand. Strictness is complete
+        // endpoint disequality in the original context, not rank inequality.
+        // Only FINAL joins may be restricted to generator endpoint keys.
+        auto covered = timed("arithmetic-demand-first-demand-alternatives", [&] {
+            auto strictNative = subtract(result.nativeOrder, identity);
+            auto strictPrefix = subtract(reach, identity);
+            auto laterFirst = compose(strictNative, result.generators);
+            auto alternative = compose(laterFirst, reach, &result.generators);
+            auto nonemptySuffix = compose(result.generators, strictPrefix, &result.generators);
+            unite(alternative, nonemptySuffix);
+            for (const auto& [key, entries] : alternative) {
+                (void)key; accumulateCost(result.cost.coverAlternativePieces, entries.size());
+            }
+            // Qualified additional native C->I prerequisites can themselves
+            // cover a generator. completeNative() already closed those paths.
+            unite(alternative, result.nativeOrder);
+            return alternative;
         });
         result.minimumDemands = timed("arithmetic-demand-cover-difference", [&] {
             return subtract(result.generators, covered);
@@ -345,12 +389,77 @@ public:
                 }
             }
         }
+        if (outputs == ArithmeticDemandOutputs::Complete) {
+            finishRequiredOrder(std::move(reach), step, identity);
+            if (!result.error.empty()) { return; }
+        } else {
+            result.requiredOrderAvailable = false;
+            result.availableRelations &= ~uint8_t{2};
+            // No program pointer, arena ID or interned scratch identity escapes.
+            const auto parameters = result.parameterCount, pipes = result.pipeCount;
+            const auto period = result.period;
+            result.requiredOrderContinuation = std::make_shared<const ArithmeticOrderContinuation<System>>(
+                [reach = std::move(reach), step = std::move(step), ids = identity,
+                 parameters, pipes, period, profile = profile]() {
+                    ArithmeticProgram metadata;
+                    metadata.primitives.parameters.resize(parameters);
+                    metadata.primitives.pipeCount = pipes;
+                    metadata.primitives.period = period;
+                    Analysis<Policy> continuation(metadata, nullptr, profile);
+                    continuation.finishRequiredOrder(reach, step, ids, true);
+                    return ArithmeticOrderExport<System>{std::move(continuation.result.requiredOrder),
+                        std::move(continuation.result.cost), std::move(continuation.result.error)};
+                });
+        }
         result.exactMinimum = true;
         for (const auto& [key, pieces] : result.minimumDemands) {
             (void)key;
             result.cost.outputPieces += pieces.size();
         }
     }
+    void finishRequiredOrder(Relation reach, const Relation& step, const Relation& ids, bool ownScratch = false)
+    {
+        AnalysisProfileScope scope(profile.ledger, "arithmetic-demand-required-export", profile.region);
+        scope.constructed();
+        const auto before = result.cost;
+        if (result.pipeCount) {
+            auto next = compose(reach, step);
+            unite(reach, next);
+            ++result.cost.requiredOrderRounds;
+        }
+        result.requiredOrder = subtract(reach, ids);
+        if (ownScratch) { collectScratchCost(); }
+        scope.recordWork({{"rounds", result.cost.requiredOrderRounds - before.requiredOrderRounds},
+            {"compositions", result.cost.relationCompositions - before.relationCompositions},
+            {"projections", result.cost.projections - before.projections}});
+    }
+
+    void collectScratchCost()
+    {
+        auto& analysis = *this;
+        if (analysis.implications) {
+            const auto& counts = analysis.implications->cost();
+            auto& cost = analysis.result.cost;
+            accumulateCost(cost.implicationCacheHits, counts.hits);
+            accumulateCost(cost.rationalImplications, counts.rationalProofs);
+            accumulateCost(cost.integerCounterexamples, counts.witnessRefutations);
+            accumulateCost(cost.exactImplicationChecks, counts.exactChecks);
+            accumulateCost(cost.latticeRelaxationBuilds, counts.latticeBuilds);
+            accumulateCost(cost.latticeObjectiveQueries, counts.latticeQueries);
+            accumulateCost(cost.latticeObjectiveHits, counts.latticeHits);
+            accumulateCost(cost.latticeImplicationProofs, counts.latticeProofs);
+            accumulateCost(cost.latticeEmptyProofs, counts.latticeEmptyProofs);
+        }
+        const auto& merges = analysis.unionMerges.cost();
+        accumulateCost(analysis.result.cost.unionMergeAttempts, merges.attempts);
+        accumulateCost(analysis.result.cost.unionMergeCacheHits, merges.hits);
+        accumulateCost(analysis.result.cost.unionMergeBuilds, merges.builds);
+        const auto& differences = analysis.unionDifferences.cost();
+        accumulateCost(analysis.result.cost.unionDifferenceAttempts, differences.attempts);
+        accumulateCost(analysis.result.cost.unionDifferenceCacheHits, differences.hits);
+        accumulateCost(analysis.result.cost.unionDifferenceBuilds, differences.builds);
+    }
+
 private:
     const ArithmeticProgram& program;
     const StructuredProtection* protection;
@@ -1108,10 +1217,10 @@ private:
 };
 template<class Policy>
 auto analyze(const ArithmeticProgram& program, const StructuredProtection* protection = nullptr,
-    ArithmeticDemandProfile profile = {})
+    ArithmeticDemandProfile profile = {}, ArithmeticDemandOutputs outputs = ArithmeticDemandOutputs::Complete)
 {
     Analysis<Policy> analysis(program, protection, std::move(profile));
-    analysis.run();
+    analysis.run(false, outputs);
     if (!analysis.result.error.empty()) {
         analysis.result.generators.clear();
         analysis.result.nativeOrder.clear();
@@ -1178,7 +1287,7 @@ GeneralArithmeticGeneratorStage analyzeGeneralArithmeticGenerators(
 GeneralArithmeticDemandAnalysis completeGeneralArithmeticDemands(GeneralArithmeticGeneratorStage&& stage)
 {
     auto state = std::move(stage.state);
-    if (state && state->reduced) { return *state->reduced; }
+    if (state && state->reduced) { return *requestArithmeticRequiredOrder(*state->reduced); }
     if (!state || !state->engine) {
         GeneralArithmeticDemandAnalysis result;
         result.error = "arithmetic generator stage is unavailable or already consumed";
@@ -1200,13 +1309,19 @@ std::shared_ptr<GeneralArithmeticDemandAnalysis> reduceGeneralArithmeticDemands(
     if (!stage.state) { return {}; }
     auto& state = *stage.state;
     if (state.reduced) { return state.reduced; }
-    // Transfer only the engine to the consuming adapter. Preserve the original
-    // generator snapshot and domains for future periodic export requests.
-    GeneralArithmeticGeneratorStage completion;
-    completion.state->engine = std::move(state.engine);
-    if (completion.state->engine) { completion.state->engine->result = *state.generators; }
-    state.reduced = std::make_shared<GeneralArithmeticDemandAnalysis>(
-        completeGeneralArithmeticDemands(std::move(completion)));
+    // Reduce once, retaining the original generator snapshot and domains for
+    // periodic adapters. The owned order continuation replaces the engine.
+    if (!state.engine) { return {}; }
+    state.engine->result = *state.generators;
+    state.engine->complete(ArithmeticDemandOutputs::Demands);
+    if (!state.engine->result.error.empty()) {
+        auto& failed = state.engine->result;
+        failed.generators.clear(); failed.nativeOrder.clear();
+        failed.requiredOrder.clear(); failed.minimumDemands.clear();
+        failed.exactMinimum = false; failed.adjacentLocalDemands = false;
+    }
+    state.reduced = std::make_shared<GeneralArithmeticDemandAnalysis>(std::move(state.engine->result));
+    state.engine.reset();
     return state.reduced;
 }
 struct DifferenceArithmeticGeneratorStage::State {
@@ -1265,7 +1380,7 @@ DifferenceArithmeticGeneratorStage analyzeDifferenceArithmeticGenerators(
 ArithmeticDemandAnalysis completeDifferenceArithmeticDemands(DifferenceArithmeticGeneratorStage&& stage)
 {
     auto state = std::move(stage.state);
-    if (state && state->reduced) { return *state->reduced; }
+    if (state && state->reduced) { return *requestArithmeticRequiredOrder(*state->reduced); }
     if (!state || !state->engine) {
         ArithmeticDemandAnalysis result;
         result.error = "arithmetic generator stage is unavailable or already consumed";
@@ -1287,19 +1402,25 @@ std::shared_ptr<ArithmeticDemandAnalysis> reduceDifferenceArithmeticDemands(
     if (!stage.state) { return {}; }
     auto& state = *stage.state;
     if (state.reduced) { return state.reduced; }
-    // Transfer only the engine to the consuming adapter. Preserve the original
-    // generator snapshot and domains for future periodic export requests.
-    DifferenceArithmeticGeneratorStage completion;
-    completion.state->engine = std::move(state.engine);
-    if (completion.state->engine) { completion.state->engine->result = *state.generators; }
-    state.reduced = std::make_shared<ArithmeticDemandAnalysis>(
-        completeDifferenceArithmeticDemands(std::move(completion)));
+    // Reduce once, retaining the original generator snapshot and domains for
+    // periodic adapters. The owned order continuation replaces the engine.
+    if (!state.engine) { return {}; }
+    state.engine->result = *state.generators;
+    state.engine->complete(ArithmeticDemandOutputs::Demands);
+    if (!state.engine->result.error.empty()) {
+        auto& failed = state.engine->result;
+        failed.generators.clear(); failed.nativeOrder.clear();
+        failed.requiredOrder.clear(); failed.minimumDemands.clear();
+        failed.exactMinimum = false; failed.adjacentLocalDemands = false;
+    }
+    state.reduced = std::make_shared<ArithmeticDemandAnalysis>(std::move(state.engine->result));
+    state.engine.reset();
     return state.reduced;
 }
 ArithmeticDemandAnalysis analyzeArithmeticDemandsWithProtection(const ArithmeticProgram& program,
-    const StructuredProtection& protection, ArithmeticDemandProfile profile)
+    const StructuredProtection& protection, ArithmeticDemandProfile profile, ArithmeticDemandOutputs outputs)
 {
-    return analyze<DifferencePolicy>(program, &protection, std::move(profile));
+    return analyze<DifferencePolicy>(program, &protection, std::move(profile), outputs);
 }
 FailureOr<GeneralArithmeticRelation> completeGeneralArithmeticNativeOrder(
     GeneralArithmeticRelation native, unsigned pipeCount, unsigned parameterCount,
@@ -1320,9 +1441,9 @@ FailureOr<GeneralArithmeticRelation> completeGeneralArithmeticNativeOrder(
     return std::move(engine.result.nativeOrder);
 }
 GeneralArithmeticDemandAnalysis analyzeGeneralArithmeticDemandsWithProtection(const ArithmeticProgram& program,
-    const StructuredProtection& protection, ArithmeticDemandProfile profile)
+    const StructuredProtection& protection, ArithmeticDemandProfile profile, ArithmeticDemandOutputs outputs)
 {
-    return analyze<IntegerPolicy>(program, &protection, std::move(profile));
+    return analyze<IntegerPolicy>(program, &protection, std::move(profile), outputs);
 }
 ArithmeticDemandAnalysis analyzeArithmeticDemands(const ArithmeticProgram& program)
 {

@@ -126,7 +126,8 @@ const char* append(const ArithmeticRelationKey& key, const IntegerSystem& system
 const char* construct(const GeneralArithmeticDemandAnalysis& analysis, llvm::ArrayRef<uint32_t> pipes,
                       GeneralArithmeticSelectors& result)
 {
-    if (!analysis.error.empty() || !analysis.exactMinimum || !analysis.period) {
+    if (!analysis.error.empty() || !analysis.exactMinimum ||
+        !analysis.hasRelations(ArithmeticRelationView::Demands) || !analysis.period) {
         return "general arithmetic selectors require certified exact minimum demands";
     }
     GroupIndex forward, inverse;

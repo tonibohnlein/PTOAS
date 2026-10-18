@@ -16,7 +16,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticLogicalInsertio
     const ArithmeticDemandAnalysis& analysis, std::string& error, ArithmeticRecordMap& records)
 {
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
-    if (!analysis.error.empty() || !analysis.exactMinimum ||
+    if (!analysis.error.empty() || !analysis.exactMinimum || !analysis.hasRelations(ArithmeticRelationView::Demands) ||
         bits.isScalable() || bits.getFixedValue() != 64 || !analysis.period || analysis.period > INT64_MAX ||
         analysis.parameterCount != program.parameters.size()) {
         error = "arithmetic insertion requires reduced demands and a supported index representation";
@@ -64,7 +64,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareGeneral(
     ArithmeticRecordMap* records = nullptr)
 {
     const auto bits = DataLayout::closest(function).getTypeSizeInBits(IndexType::get(function.getContext()));
-    if (!analysis.error.empty() || !analysis.exactMinimum ||
+    if (!analysis.error.empty() || !analysis.exactMinimum || !analysis.hasRelations(ArithmeticRelationView::Demands) ||
         bits.isScalable() || bits.getFixedValue() != 64 || !analysis.period || analysis.period > INT64_MAX ||
         analysis.parameterCount != program.parameters.size()) {
         error = "arithmetic insertion requires reduced demands and a supported index representation";
