@@ -54,9 +54,8 @@ struct SequenceAnalysis {
     std::map<uint32_t, std::vector<SequenceSelectedEvent>> firstPayloads, lastPayloads;
     std::shared_ptr<SequenceAnalysisState> state;
 };
-// Recover the retained finite owner when this sequence is a single finite child.
-// No composition or demand construction is repeated.
-std::shared_ptr<FiniteAnalysis> finiteSequenceChild(const SequenceAnalysis& analysis);
+// Inspect retained children only; never qualify or construct another representation.
+bool sequenceNeedsEndpointUpgrade(const SequenceAnalysis& analysis);
 // The state owns expression/query DAGs and internal demand recipes. Physical
 // effects, recognition input and original IR remain borrowed; invalidate after any IR change.
 SequenceAnalysis analyzeSequence(func::FuncOp function, const SyncInput& input,

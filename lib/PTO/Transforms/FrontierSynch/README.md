@@ -65,6 +65,28 @@ the original scope, and allocation uses that graph's record namespace and existi
 certificate or query interface. This identity adapter introduces no crossing
 requirements or new storage representation.
 
+Completion attempts are scoped to retained session evidence. A newly available
+child capability permits reconsidering an old parent refusal or construction;
+refreshing an already available completion snapshot does not itself advance the
+evidence generation. Issued owners remain immutable and valid against unchanged
+source IR. Selecting a new fallback still requires the absence of retained exact
+mathematics for that request. Providers expose executable completion children;
+the parent does not inspect their finite or sequence representation.
+
+Finite, arithmetic, completion-child and session recipe inventories use
+`LogicalFamilyFragment`. Each instantiation owns fresh mutable inventories and
+shares only immutable recipes and admissible choices. Producer capture excludes
+request owners and terminal choices; session capture may retain choices without
+generated consumer predicates and restores its mathematical owner explicitly.
+Neither capture retains allocation callbacks, generated SSA or physical output.
+
+A compact repeated sequence keeps its mathematical representation on weak
+requests. A stronger endpoint request may select its existing phase alternative
+when the compact crossing shape lacks an allocation interface. That alternative
+has a separate retained owner and its own matching/allocation evidence; refusal
+leaves the original preparation available. Changed occurrence coordinates use
+the existing exact parent recomposition rather than reusing old crossing proofs.
+
 ## Shared descriptor and scalar facts
 
 `SyncInput` owns the reaching valid-shape index for its unchanged function. Access

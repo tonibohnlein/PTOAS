@@ -337,13 +337,20 @@ LogicalResult checkProducerFailureStages(func::FuncOp function, pto::GMAliasPoli
         if (cache.exhausted(cache.exhaustedKey(request))) { return failure(); }
         cache.activeRegions.clear();
         if (cache.exhausted(cache.exhaustedKey(request, true))) { return failure(); }
+        auto& completion = cache.completions[0];
+        completion.attempted = true;
+        completion.evidenceGeneration = cache.retainedEvidenceGeneration;
+        completion.error = "missing child capability";
+        if (!completion.current(cache.retainedEvidenceGeneration)) { return failure(); }
         cache.retainedEvidencePublished();
-        if (cache.exhausted(key)) { return failure(); }
+        if (cache.exhausted(key) || completion.current(cache.retainedEvidenceGeneration)) { return failure(); }
         cache.retainExhausted(key, refusal);
         cache.retainedEvidenceGeneration = UINT64_MAX;
+        completion.evidenceGeneration = 0; // A pre-wrap attempt must never revive.
         cache.retainExhausted(key, refusal);
         cache.retainedEvidencePublished();
-        if (cache.exhausted(key) || !cache.exhaustedRequests.empty()) { return failure(); }
+        if (cache.exhausted(key) || !cache.exhaustedRequests.empty() ||
+            completion.current(cache.retainedEvidenceGeneration)) { return failure(); }
         AnalysisSessionState fresh;
         if (fresh.exhausted(key)) { return failure(); }
     }
@@ -560,6 +567,42 @@ LogicalResult checkConditionalEndpointUpgrade(func::FuncOp function, pto::GMAlia
     }
     llvm::outs() << "conditional-endpoint-upgrade: guarded-closure-reused "
         "both-preparation-routes cold-equivalent residual\n";
+    return success();
+}
+LogicalResult checkPhaseCapabilityUpgrade(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    using namespace pto::frontiersynch;
+    for (bool warm : {true, false}) {
+        FrontierAnalysis session(function);
+        if (failed(session.initialize(policy))) { return failure(); }
+        AnalysisOutcome weak;
+        if (warm) {
+            weak = session.minimumDemands();
+            if (!weak.mathematical || !weak.mathematical->sequenceDemands ||
+                !sequenceNeedsEndpointUpgrade(*weak.mathematical->sequenceDemands)) {
+                return function.emitError("weak phase request did not retain compact mathematics");
+            }
+        }
+        AnalysisRequest request; request.needs.synchronization = true;
+        auto strong = session.analyze(request);
+        if (strong.status != AnalysisStatus::Ready || !strong.mathematical ||
+            !strong.mathematical->sequenceDemands ||
+            sequenceNeedsEndpointUpgrade(*strong.mathematical->sequenceDemands)) {
+            return function.emitError("strong phase request did not upgrade the retained compact representation");
+        }
+        const auto attempts = session.constructionCounts().mathematicalAttempts;
+        auto again = session.analyze(request);
+        if (again.mathematical != strong.mathematical ||
+            session.constructionCounts().mathematicalAttempts != attempts ||
+            (warm && session.minimumDemands().mathematical != weak.mathematical)) {
+            return function.emitError("phase capability upgrade replaced or rebuilt retained mathematics");
+        }
+        auto plan = session.prepareLogical(strong);
+        if (failed(plan) || failed(session.attachAllocation(strong, **plan, {0, 1, 2, 3, 4, 5}))) {
+            return function.emitError("phase capability lost its own physical allocation evidence");
+        }
+    }
+    llvm::outs() << "phase capability: compact mathematics retained, warm/cold upgrade and six-ID evidence passed\n";
     return success();
 }
 LogicalResult checkSequenceEndpointRetry(func::FuncOp function, pto::GMAliasPolicy policy)

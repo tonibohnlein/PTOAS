@@ -12,9 +12,11 @@
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisLedger.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.h"
+#include <functional>
 #include <memory>
 namespace mlir::pto::frontiersynch {
 class CompletionRegion;
+class CompletionInlineChild;
 struct ProgramRecognition;
 struct WholeInvocationIdentity;
 struct RegionalAnalysis;
@@ -68,6 +70,10 @@ struct AnalysisObligation {
 // Original MLIR must still outlive it and remain unchanged, as with MLIR analyses.
 struct MathematicalResult {
     std::shared_ptr<const SyncInput> input;
+    // Lazy provider-owned executable child capability, independent of exact
+    // query/selector exports. The callback retains its immutable source and
+    // caches qualification; it never returns a shared mutable plan.
+    std::function<std::shared_ptr<const CompletionInlineChild>()> completionChild;
     std::shared_ptr<const WholeInvocationIdentity> identityComposition;
     std::shared_ptr<FiniteAnalysis> finiteDemands;
     const ExplicitAnalysis* concreteDemands() const { return finiteDemands ? finiteDemands->concrete() : nullptr; }

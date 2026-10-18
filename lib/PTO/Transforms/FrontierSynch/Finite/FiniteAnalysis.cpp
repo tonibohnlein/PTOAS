@@ -8,32 +8,8 @@
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/Recognition.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
-#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/LogicalFamilyFragment.h"
 namespace mlir::pto::frontiersynch {
-struct FiniteRecipeTemplate {
-    int64_t planId;
-    bool completeInvocation, nestedIdentities, independentPieces, groupedFamilies;
-    std::shared_ptr<const FamilyEndpointRecipe> recipe;
-    std::vector<EndpointFamily> families;
-
-    explicit FiniteRecipeTemplate(const PreparedLogicalPlan& plan)
-        : planId(plan.planId), completeInvocation(plan.completeInvocation), nestedIdentities(plan.nestedIdentities),
-          independentPieces(plan.independentPieces), groupedFamilies(plan.groupedFamilies),
-          recipe(plan.familyRecipe), families(plan.families.begin(), plan.families.end()) {}
-
-    std::unique_ptr<PreparedLogicalPlan> instantiate() const
-    {
-        auto plan = std::make_unique<PreparedLogicalPlan>(planId);
-        plan->completeInvocation = completeInvocation;
-        plan->nestedIdentities = nestedIdentities;
-        plan->independentPieces = independentPieces;
-        plan->groupedFamilies = groupedFamilies;
-        plan->familyRecipe = recipe;
-        plan->families.assign(families.begin(), families.end());
-        return plan;
-    }
-};
-
 const std::string& FiniteAnalysis::error() const
 {
     if (const auto* value = concrete()) { return value->error; }
@@ -49,18 +25,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FiniteAnalysis::prepare()
         auto prepared = prepareExplicitInsertion(input->function(), *value, false);
         if (failed(prepared)) { return failure(); }
         if (!input->wholeFunction()) { (*prepared)->completeInvocation = false; }
-        // Cache only the existing scalar-free concrete producer's capability.
-        // Fresh mutable inventories share immutable recipes, never detached SSA.
-        if ((*prepared)->preparation.empty() && (*prepared)->endpoints.empty() &&
-            !(*prepared)->allocationPreparation && !(*prepared)->allocationCertificate &&
-            !(*prepared)->regionalAllocation && !(*prepared)->privateState &&
-            !(*prepared)->familyProtocol && !(*prepared)->physicalOutput && !(*prepared)->executedOutput &&
-            !(*prepared)->allocationProofs && !(*prepared)->mathematicalOwner && !(*prepared)->deferredOutput &&
-            !(*prepared)->completionOwner && !(*prepared)->compactBoundingOwner &&
-            !(*prepared)->recognitionReport && !(*prepared)->allocationProfile && !(*prepared)->profileControl &&
-            llvm::all_of((*prepared)->families, [](const auto& family) {
-                return !family.sourceChoices && !family.targetChoices;
-            })) { recipe = std::make_shared<const FiniteRecipeTemplate>(**prepared); }
+        recipe = LogicalFamilyFragment::capture(**prepared);
         return prepared;
     }
     auto& value = std::get<FiniteGuardedAnalysis>(representation);

@@ -11,6 +11,17 @@
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 namespace mlir::pto::frontiersynch {
+std::function<std::shared_ptr<const CompletionInlineChild>()> completionChildExport(
+    std::shared_ptr<FiniteAnalysis> finite)
+{
+    if (!finite) { return {}; }
+    using Result = std::shared_ptr<const CompletionInlineChild>;
+    auto retained = std::make_shared<std::optional<Result>>();
+    return [finite = std::move(finite), retained]() -> Result {
+        if (!*retained) { *retained = CompletionInlineChild::qualify(finite); }
+        return **retained;
+    };
+}
 namespace {
 bool contains(const DenseSet<Operation*>& roots, Operation* operation)
 {
@@ -45,14 +56,11 @@ std::shared_ptr<const CompletionInlineChild> CompletionInlineChild::qualify(std:
     auto plan = finite->prepare();
     if (failed(plan) || !eventFree(**plan) || !(*plan)->endpoints.empty() ||
         !(*plan)->preparation.empty() || (*plan)->familyProtocol) { return {}; }
+    auto fragment = LogicalFamilyFragment::capture(**plan);
+    if (!fragment) { return {}; }
     auto child = std::shared_ptr<CompletionInlineChild>(new CompletionInlineChild);
     child->finite = std::move(finite);
-    child->recipe = (*plan)->familyRecipe;
-    child->families = (*plan)->families;
-    child->planId = (*plan)->planId;
-    child->nested = (*plan)->nestedIdentities;
-    child->independent = (*plan)->independentPieces;
-    child->grouped = (*plan)->groupedFamilies;
+    child->fragment = std::move(fragment);
     uint8_t modes = 0;
     const auto& input = *child->finite->originalInput();
     for (auto* root : input.roots()) {
@@ -98,12 +106,8 @@ LogicalResult CompletionInlineChild::append(PreparedLogicalPlan& destination, IR
     DenseSet<const ClosedCompletionChild*>& checkedCalls) const
 {
     if (completion) { return completion->append(destination, mapping, completionCuts, checkedSources, checkedCalls); }
-    PreparedLogicalPlan plan(planId);
-    plan.familyRecipe = recipe;
-    plan.families = families;
-    plan.nestedIdentities = nested;
-    plan.independentPieces = independent;
-    plan.groupedFamilies = grouped;
+    auto fresh = fragment->instantiate();
+    auto& plan = *fresh;
     if (failed(materializeLogicalFamilies(plan)) || !eventFree(plan)) { return failure(); }
     DenseSet<Operation*> rootSet(roots().begin(), roots().end());
     for (const auto& stage : plan.preparation) {

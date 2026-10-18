@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SequenceAnalysisInternal.h"
+#include "CompletionInlineChild.h"
 #include "SequenceStorageIndex.h"
 #include "RepeatedRegionInternal.h"
 #include "../WholeInvocationIdentity.h"
@@ -20,10 +21,31 @@
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "llvm/ADT/MapVector.h"
 namespace mlir::pto::frontiersynch {
-std::shared_ptr<FiniteAnalysis> finiteSequenceChild(const SequenceAnalysis& analysis)
+std::function<std::shared_ptr<const CompletionInlineChild>()> completionChildExport(
+    std::shared_ptr<SequenceAnalysis> sequence)
 {
-    if (!analysis.error.empty() || !analysis.state || analysis.state->children.size() != 1) { return {}; }
-    return analysis.state->children.front().finite;
+    if (!sequence || !sequence->error.empty() || !sequence->state ||
+        sequence->state->children.size() != 1) { return {}; }
+    const auto& state = *sequence->state;
+    if (!state.program || !state.originalRegionId || *state.originalRegionId >= state.program->nodes.size() ||
+        state.program->nodes[*state.originalRegionId].kind != StructureKind::ExplicitRun) { return {}; }
+    return completionChildExport(state.children.front().finite);
+}
+bool sequenceNeedsEndpointUpgrade(const SequenceAnalysis& analysis)
+{
+    SmallVector<const SequenceAnalysis*> pending{&analysis};
+    DenseSet<const SequenceAnalysisState*> seen;
+    while (!pending.empty()) {
+        const auto* current = pending.pop_back_val();
+        if (!current->state || !seen.insert(current->state.get()).second) { continue; }
+        for (const auto& child : current->state->children) {
+            if (child.endpointRepresentationUpgrade) { return true; }
+            if (child.prefixMathematics && child.prefixMathematics->sequenceDemands) {
+                pending.push_back(child.prefixMathematics->sequenceDemands.get());
+            }
+        }
+    }
+    return false;
 }
 std::optional<int64_t> sequenceInteger(Value value)
 {
@@ -361,10 +383,9 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
             auto rotating = recognizeRotatingRegion(function, *input, *program,
                 static_cast<std::size_t>(&node - program->nodes.data()), index, arena);
             if (rotating.error.empty()) {
-                // Try the existing phase interface for one supplied nonunit
-                // crossing period; leave mixed crossing periods compact.
-                // Prefer its supported allocation shape before selecting a plan;
-                // allocation remains lazy and may still refuse that whole plan.
+                // Retain compact mathematics on a weak request. The existing
+                // phase alternative is an endpoint capability upgrade with its
+                // own occurrence mapping and allocation evidence.
                 if (rotating.state && !rotating.state->hasAllocationCrossingInterface()) {
                     const auto nonunit = llvm::find_if(rotating.state->crossings,
                         [](const auto& crossing) { return crossing.displacement != 1; });
@@ -373,7 +394,8 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
                         [&](const auto& crossing) {
                             return crossing.displacement == 1 || crossing.displacement == displacement;
                         });
-                    if (onePeriod && phasedChild(node, child.trips)) { return true; }
+                    child.endpointRepresentationUpgrade = onePeriod && !requireEndpoints;
+                    if (onePeriod && requireEndpoints && phasedChild(node, child.trips)) { return true; }
                 }
                 child.regional = std::move(rotating.regional); child.anchors = child.regional.anchors;
                 children.push_back(std::move(child)); return true;

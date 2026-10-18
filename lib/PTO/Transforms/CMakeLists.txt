@@ -301,6 +301,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Shared/FunctionStaging.cpp
   FrontierSynch/Shared/ExecutionContexts.cpp
   FrontierSynch/Shared/FamilyExpressions.cpp
+  FrontierSynch/Shared/LogicalFamilyFragment.cpp
   FrontierSynch/Shared/FamilyInsertion.cpp
   FrontierSynch/Shared/DeferredFamily.cpp
   FrontierSynch/Shared/RegionalAllocationCandidates.cpp

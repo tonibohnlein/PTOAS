@@ -323,7 +323,8 @@ std::optional<SequenceAnalysis> upgradeSequenceEndpoints(const SequenceAnalysis&
     const bool conditional = source->program->nodes[node].kind == StructureKind::Conditional;
     if ((!conditional && source->program->nodes[node].kind != StructureKind::Sequence) ||
         llvm::any_of(source->children, [&](const Child& child) {
-            return (child.originalArmGuard && !conditional) || (!child.originalNode &&
+            return child.endpointRepresentationUpgrade ||
+                (child.originalArmGuard && !conditional) || (!child.originalNode &&
                 (!child.regional.capabilities.endpointRecipes ||
                  (!child.regional.prepare && !child.regional.prepareWithVisits)));
         })) { return std::nullopt; }

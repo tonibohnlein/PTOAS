@@ -17,6 +17,7 @@
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisProfile.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Shared/LogicalFamilyFragment.h"
 #include <set>
 #include <tuple>
 #include <chrono>
@@ -51,13 +52,6 @@ struct ProducerFailure {
     SmallVector<ArithmeticDiagnostic> arithmeticDiagnostics;
 };
 struct ArithmeticRegionalPreparation;
-struct LogicalFamilyTemplate {
-    int64_t planId = 0;
-    bool completeInvocation = false, nestedIdentities = false;
-    bool independentPieces = false, groupedFamilies = false;
-    std::shared_ptr<const FamilyEndpointRecipe> recipe;
-    std::vector<EndpointFamily> families;
-};
 struct BackendAttempt {
     ProducerFailure failure;
     bool produced = false;
@@ -85,7 +79,7 @@ struct BackendAttempt {
     std::unique_ptr<PreparedLogicalPlan> pendingLogical;
     // Successful scalar-free construction only. Fresh preparations share its
     // immutable recipes/evidence and never share mutable plans or generated SSA.
-    std::shared_ptr<const LogicalFamilyTemplate> logicalFamilyTemplate;
+    std::shared_ptr<const LogicalFamilyFragment> logicalFamilyTemplate;
     std::shared_ptr<const ArithmeticRegionalPreparation> arithmeticPreparation;
     std::shared_ptr<const NumericTemplateEndpoints> periodicEndpoints;
     // Only the allocation capability is memoized here, including unavailable exports.
@@ -170,6 +164,7 @@ struct AnalysisSessionState {
     {
         if (retainedEvidenceGeneration == UINT64_MAX) {
             exhaustedRequests.clear();
+            for (auto& entry : completions) { entry.second.attempted = false; }
             retainedEvidenceGeneration = 0;
         } else { ++retainedEvidenceGeneration; }
     }
@@ -190,20 +185,19 @@ struct AnalysisSessionState {
     }
     std::shared_ptr<const CompletionSourceSnapshot> completionSource;
     struct CompletionAttempt {
-        bool attempted = false;
+        bool attempted = false, building = false, published = false;
+        uint64_t evidenceGeneration = 0;
         std::shared_ptr<const CompletionRegion> owner;
         std::string error;
+        bool current(uint64_t generation) const { return attempted && evidenceGeneration == generation; }
     };
     std::map<std::size_t, CompletionAttempt> completions;
+    // Issued snapshots remain usable after capability upgrades. Selection of a
+    // new fallback still obeys the no-retained-exact-result rule in analyze().
+    std::set<std::shared_ptr<const CompletionRegion>> issuedCompletions;
     bool ownsCompletion(const std::shared_ptr<const CompletionRegion>& owner) const
     {
-        return owner && llvm::any_of(completions, [&](const auto& entry) {
-            if (entry.second.owner != owner) { return false; }
-            auto scope = attempts.find(entry.first);
-            return scope == attempts.end() || llvm::none_of(scope->second, [](const auto& attempt) {
-                return attempt.first != AnalysisBackend::CompactBounding && bool(attempt.second.mathematical);
-            });
-        });
+        return owner && issuedCompletions.count(owner);
     }
     // The diagnostic owner exists during initialization. Only an actual analysis
     // request freezes configurable profiles, matching the prior lazy session.

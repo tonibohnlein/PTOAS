@@ -12,6 +12,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/CompletionInlineChild.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/AnalysisSessionInternal.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/IR/Diagnostics.h"
 #include "llvm/Support/raw_ostream.h"
@@ -78,6 +79,14 @@ LogicalResult productionChecks(func::FuncOp function)
                 (void)analysis.analyze(child);
             }
         }
+        fs::AnalysisRequest childRequest; childRequest.mode = fs::AnalysisMode::Fallback;
+        childRequest.needs.synchronization = true;
+        for (auto [id, node] : llvm::enumerate(analysis.result()->nodes)) {
+            if (isa_and_nonnull<scf::WhileOp>(node.anchor)) { childRequest.region = id; break; }
+        }
+        if (!childRequest.region) { return function.emitError("proper while scope not found"); }
+        auto child = analysis.analyze(childRequest);
+        if (!child.completion) { return function.emitError("proper while completion unavailable"); }
         fs::AnalysisRequest request; request.mode = fs::AnalysisMode::Fallback;
         request.needs.synchronization = true;
         auto outcome = analysis.analyze(request);
@@ -88,9 +97,40 @@ LogicalResult productionChecks(func::FuncOp function)
                 << " completion=" << bool(outcome.completion)
                 << " children=" << (outcome.completion ? outcome.completion->inlineChildren() : 0);
         }
+        // Warm both scopes after their first evidence publication. Repeated
+        // refreshes must not continually invalidate each other's generation.
+        child = analysis.analyze(childRequest);
+        outcome = analysis.analyze(request);
+        child = analysis.analyze(childRequest);
+        for (unsigned repeat = 0; repeat < 4; ++repeat) {
+            if (analysis.analyze(request).completion != outcome.completion ||
+                analysis.analyze(childRequest).completion != child.completion) {
+                return function.emitError("completion generation caused parent/child rebuild feedback");
+            }
+        }
         if (selected && (selected->transfer().protectEntry != outcome.completion->transfer().protectEntry ||
             selected->inlineChildren() != outcome.completion->inlineChildren())) {
             return function.emitError("child request order changed parent completion selection");
+        }
+        if (!prequery) {
+            bool published = false;
+            for (auto [id, node] : llvm::enumerate(analysis.result()->nodes)) {
+                if (node.kind != fs::StructureKind::ExplicitRun || node.payloads.empty()) { continue; }
+                fs::AnalysisRequest childRequest; childRequest.region = id;
+                auto child = analysis.analyzeFiniteExpansion(childRequest);
+                published |= child.status == fs::AnalysisStatus::Ready && bool(child.mathematical);
+            }
+            auto refreshed = analysis.analyze(request);
+            if (!published || !refreshed.completion || refreshed.completion == outcome.completion ||
+                refreshed.completion->transfer().protectEntry != outcome.completion->transfer().protectEntry ||
+                refreshed.completion->inlineChildren() != outcome.completion->inlineChildren()) {
+                return function.emitError("new child evidence did not refresh the cached parent snapshot");
+            }
+            auto oldPlan = analysis.prepareLogical(outcome);
+            if (failed(oldPlan) || failed(analysis.attachAllocation(outcome, **oldPlan))) {
+                return function.emitError("parent refresh invalidated its previously issued plan");
+            }
+            outcome = std::move(refreshed);
         }
         selected = outcome.completion;
         auto plan = analysis.prepareLogical(outcome);
@@ -125,7 +165,12 @@ LogicalResult scopedChecks(func::FuncOp function)
         auto source = fs::finiteFunctionInput(function, input, index);
         auto slice = fs::finiteRegionInput(source, childRoots);
         auto finite = fs::analyzeFinite(slice, fs::FiniteStrategy::Concrete);
-        auto child = fs::CompletionInlineChild::qualify(finite);
+        auto capability = fs::completionChildExport(finite);
+        auto child = capability();
+        const auto prepared = finite->work.recipeBuilds + finite->work.recipeHits;
+        if (capability() != child || finite->work.recipeBuilds + finite->work.recipeHits != prepared) {
+            return function.emitError("completion child capability repeated recipe qualification");
+        }
         if (function->hasAttr("test.reject_exact_child")) {
             if (child) { return function.emitError("eventful inline child was called resource-empty"); }
         } else {
@@ -139,6 +184,17 @@ LogicalResult scopedChecks(func::FuncOp function)
     if (!owner || owner->completesInvocation() || render(function) != original) {
         return function.emitError("proper-region qualification failed: ") << error;
     }
+    // Publication belongs to this snapshot, not to the current candidate cache.
+    // New exact evidence may invalidate a selection without invalidating an
+    // already-issued proper-region owner or its executable fragment.
+    fs::AnalysisSessionState snapshots;
+    snapshots.completions[1].owner = owner;
+    snapshots.issuedCompletions.insert(owner);
+    snapshots.retainedEvidencePublished();
+    snapshots.completions[1].owner.reset();
+    snapshots.attempts[1][fs::AnalysisBackend::Sequence].mathematical =
+        std::make_shared<fs::MathematicalResult>();
+    if (!snapshots.ownsCompletion(owner)) { return function.emitError("issued completion owner was invalidated"); }
     const auto& summary = owner->transfer().summary;
     const auto expected = function->getAttrOfType<DenseI64ArrayAttr>("test.scoped_completion");
     SmallVector<int64_t> observed{summary.all[0], summary.exposed[0], summary.suffix[0], summary.transparent};

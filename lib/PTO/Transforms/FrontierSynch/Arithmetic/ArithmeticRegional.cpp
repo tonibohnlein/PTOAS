@@ -8,6 +8,7 @@
 // Exact arithmetic child interfaces for sequence composition.
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "ArithmeticByteCover.h"
+#include "PTO/Transforms/FrontierSynch/Shared/LogicalFamilyFragment.h"
 #include "ArithmeticRegionalConstruction.h"
 #include "ArithmeticImportedPrimitives.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
@@ -39,33 +40,15 @@ struct ArithmeticRegionalPreparation {
     std::shared_ptr<const SyncInput> input;
     std::vector<scf::ForOp> enclosing;
     ArithmeticRegionalAllocationPolicy policy = ArithmeticRegionalAllocationPolicy::SingleId;
-    int64_t planId = 0;
-    bool completeInvocation = false, nestedIdentities = false, independentPieces = false, groupedFamilies = false;
-    std::shared_ptr<const FamilyEndpointRecipe> recipe;
-    std::vector<EndpointFamily> families;
+    std::shared_ptr<const LogicalFamilyFragment> fragment;
 };
 namespace {
 std::shared_ptr<ArithmeticRegionalPreparation> captureArithmeticFamily(const PreparedLogicalPlan& plan)
 {
-    if (!plan.endpoints.empty() || !plan.preparation.empty() || plan.privateState || plan.completionOwner ||
-        plan.physicalOutput || plan.executedOutput || plan.familyProtocol || plan.allocationCertificate ||
-        plan.allocationPreparation || plan.regionalAllocation ||
-        llvm::any_of(plan.families, [](const auto& family) {
-            return bool(family.sourceChoices) || bool(family.targetChoices);
-        })) { return {}; }
+    auto fragment = LogicalFamilyFragment::capture(plan);
+    if (!fragment) { return {}; }
     auto result = std::make_shared<ArithmeticRegionalPreparation>();
-    result->planId = plan.planId; result->completeInvocation = plan.completeInvocation;
-    result->nestedIdentities = plan.nestedIdentities; result->independentPieces = plan.independentPieces;
-    result->groupedFamilies = plan.groupedFamilies; result->recipe = plan.familyRecipe;
-    result->families = plan.families;
-    return result;
-}
-std::unique_ptr<PreparedLogicalPlan> instantiateArithmeticFamily(const ArithmeticRegionalPreparation& source)
-{
-    auto result = std::make_unique<PreparedLogicalPlan>(source.planId);
-    result->completeInvocation = source.completeInvocation; result->nestedIdentities = source.nestedIdentities;
-    result->independentPieces = source.independentPieces; result->groupedFamilies = source.groupedFamilies;
-    result->familyRecipe = source.recipe; result->families = source.families;
+    result->fragment = std::move(fragment);
     return result;
 }
 using Id = RegionExpressions::Id;
@@ -485,7 +468,7 @@ struct State : ArithmeticRegionalRelations {
 };
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareStateFamily(State& state)
 {
-    if (state.endpointTemplate) { return instantiateArithmeticFamily(*state.endpointTemplate); }
+    if (state.endpointTemplate) { return state.endpointTemplate->fragment->instantiate(); }
     auto plan = prepareGeneralArithmeticRegionalInsertion(state.program.context.function, state.program,
         state.analysis, state.emissionError);
     if (succeeded(plan)) { state.endpointTemplate = captureArithmeticFamily(**plan); }
@@ -1130,7 +1113,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegionImpl(
         state->pipes.push_back(static_cast<uint32_t>(site.phase->kPipeValue));
     }
     FailureOr<std::unique_ptr<PreparedLogicalPlan>> plan = retained ?
-        FailureOr<std::unique_ptr<PreparedLogicalPlan>>(instantiateArithmeticFamily(*retained)) :
+        FailureOr<std::unique_ptr<PreparedLogicalPlan>>(retained->fragment->instantiate()) :
         prepareGeneralArithmeticRegionalInsertion(
             state->program.context.function, state->program, state->analysis, error);
     if (failed(plan)) { return failure(); }

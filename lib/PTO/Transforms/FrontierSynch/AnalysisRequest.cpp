@@ -8,6 +8,7 @@
 // Request protocol adapters. Cache mathematical construction independently of
 // export checks; detached command fragments always have fresh ownership.
 #include "AnalysisSessionInternal.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "Shared/CompletionInlineChild.h"
 #include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
@@ -398,6 +399,16 @@ AnalysisOutcome FrontierAnalysis::requestBackend(AnalysisBackend backend, const 
     if (request.needs.selectors && !result.available.selectors) { result.stage = AnalysisStage::Selectors; }
     if (request.needs.evaluation == AnalysisEvaluation::Stateful) { result.stage = AnalysisStage::Demands; }
     if (result.stage == AnalysisStage::None && request.needs.synchronization) {
+        const auto sequence = demands.sequenceDemands;
+        const bool upgrade = backend == AnalysisBackend::Sequence && sequence &&
+            sequenceNeedsEndpointUpgrade(*sequence);
+        if (upgrade) {
+            // This is the one retained compact-to-phase capability alternative,
+            // not another mathematical selection on a weak request. A refused
+            // upgrade leaves the incumbent's own preparation available.
+            auto stronger = requestBackend(AnalysisBackend::SequenceEndpoints, request);
+            if (stronger.status == AnalysisStatus::Ready) { return stronger; }
+        }
         if (!attempt.endpoints) {
             auto prepared = prepareLogical(result);
             attempt.endpoints = succeeded(prepared);
@@ -452,8 +463,28 @@ std::vector<AnalysisBackend> FrontierAnalysis::exactAttemptFamilies(
 std::shared_ptr<const CompletionRegion> FrontierAnalysis::completionRegion(std::size_t region, std::string& error)
 {
     auto& cached = sessionState->completions[region];
-    if (cached.attempted) { error = cached.error; return cached.owner; }
-    cached.attempted = true;
+    if (cached.current(sessionState->retainedEvidenceGeneration)) {
+        error = cached.error; return cached.owner;
+    }
+    if (cached.building) { error = "recursive completion capability request"; return {}; }
+    cached.building = true;
+    cached.owner.reset();
+    cached.error.clear();
+    auto finish = llvm::make_scope_exit([&]() {
+        cached.building = false;
+        if (cached.owner) {
+            sessionState->issuedCompletions.insert(cached.owner);
+            // First availability can enable a parent. Refreshing an available
+            // snapshot after producer evidence changed is not new evidence:
+            // otherwise alternating parent/child requests invalidate forever.
+            if (!cached.published) {
+                cached.published = true;
+                sessionState->retainedEvidencePublished();
+            }
+        }
+        cached.evidenceGeneration = sessionState->retainedEvidenceGeneration;
+        cached.attempted = true;
+    });
     SmallVector<Operation*> roots;
     const auto& node = program->nodes[region];
     if (node.kind == StructureKind::ExplicitRun) { roots = node.operations; }
@@ -471,31 +502,28 @@ std::shared_ptr<const CompletionRegion> FrontierAnalysis::completionRegion(std::
         const auto id = pending.pop_back_val();
         const auto& childNode = program->nodes[id];
         std::shared_ptr<const CompletionInlineChild> child;
-        // Import retained mathematics first. Only finite implementations have
-        // an event-free inline exporter; other exact owners remain retained.
+        // Providers own qualification and the immutable fragment. The parent
+        // requests this capability without inspecting a selected representation.
         if (auto found = sessionState->attempts.find(id); found != sessionState->attempts.end()) {
             for (const auto& attempt : found->second) {
                 const auto& math = attempt.second.mathematical;
-                if (!math) { continue; }
-                auto finite = math->finiteDemands;
-                if (!finite && childNode.kind == StructureKind::ExplicitRun && math->sequenceDemands) {
-                    finite = finiteSequenceChild(*math->sequenceDemands);
-                }
-                child = CompletionInlineChild::qualify(std::move(finite));
+                if (!math || !math->completionChild) { continue; }
+                child = math->completionChild();
                 if (child) { break; }
             }
         }
         if (!child) {
             auto found = sessionState->completions.find(id);
             if (found != sessionState->completions.end()) {
-                child = CompletionInlineChild::qualify(found->second.owner);
+                std::string childError;
+                child = CompletionInlineChild::qualify(completionRegion(id, childError));
             }
         }
         if (!child && childNode.kind == StructureKind::ExplicitRun) {
             AnalysisRequest request; request.region = id;
             auto answer = requestBackend(AnalysisBackend::Sequence, request);
-            if (answer.mathematical && answer.mathematical->sequenceDemands) {
-                child = CompletionInlineChild::qualify(finiteSequenceChild(*answer.mathematical->sequenceDemands));
+            if (answer.mathematical && answer.mathematical->completionChild) {
+                child = answer.mathematical->completionChild();
             }
         }
         if (child) { children.push_back(std::move(child)); }
@@ -716,35 +744,10 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
     return finish(std::move(result));
 }
 namespace {
-bool scalarFreeFamilyTemplate(const PreparedLogicalPlan& plan)
-{
-    return plan.familyRecipe && !plan.familyProtocol && !plan.physicalOutput &&
-        plan.endpoints.empty() && plan.preparation.empty() && !plan.allocationCertificate &&
-        !plan.allocationPreparation && !plan.regionalAllocation && !plan.privateState &&
-        !plan.completionOwner && !plan.compactBoundingOwner && !plan.recognitionReport &&
-        !plan.allocationProfile && !plan.profileControl &&
-        llvm::all_of(plan.families, [](const auto& family) {
-            return (!family.sourceChoices || !family.sourceChoices->consumerPredicate()) &&
-                (!family.targetChoices || !family.targetChoices->consumerPredicate());
-        });
-}
-std::unique_ptr<PreparedLogicalPlan> instantiateFamilyTemplate(const LogicalFamilyTemplate& source)
-{
-    auto plan = std::make_unique<PreparedLogicalPlan>(source.planId);
-    plan->completeInvocation = source.completeInvocation;
-    plan->nestedIdentities = source.nestedIdentities;
-    plan->independentPieces = source.independentPieces;
-    plan->groupedFamilies = source.groupedFamilies;
-    plan->familyRecipe = source.recipe;
-    plan->families = source.families;
-    return plan;
-}
 void retainFamilyTemplate(BackendAttempt& attempt, const PreparedLogicalPlan& plan)
 {
-    if (!attempt.logicalFamilyTemplate && scalarFreeFamilyTemplate(plan)) {
-        attempt.logicalFamilyTemplate = std::make_shared<const LogicalFamilyTemplate>(LogicalFamilyTemplate{
-            plan.planId, plan.completeInvocation, plan.nestedIdentities, plan.independentPieces,
-            plan.groupedFamilies, plan.familyRecipe, plan.families});
+    if (!attempt.logicalFamilyTemplate) {
+        attempt.logicalFamilyTemplate = LogicalFamilyFragment::capture(plan, LogicalFamilyFragment::Context::Session);
     }
 }
 } // namespace
@@ -752,8 +755,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical
 {
     if (result.completion) {
         if (result.mathematical || !sessionState || !sessionState->ownsCompletion(result.completion) ||
-            result.completion->inputOwner() != storage ||
-            (result.completion->completesInvocation() && hasWholeFunctionMinimumDemands())) { return failure(); }
+            result.completion->inputOwner() != storage) { return failure(); }
         auto plan = std::make_unique<PreparedLogicalPlan>(0);
         plan->completeInvocation = result.completion->completesInvocation();
         plan->completionOwner = result.completion;
@@ -775,7 +777,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical
     }
     if (retained->second.logicalFamilyTemplate) {
         profile.cacheHit();
-        auto plan = instantiateFamilyTemplate(*retained->second.logicalFamilyTemplate);
+        auto plan = retained->second.logicalFamilyTemplate->instantiate();
         plan->mathematicalOwner = result.mathematical;
         return plan;
     }

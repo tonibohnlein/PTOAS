@@ -60,6 +60,9 @@ struct Child {
     std::shared_ptr<const NumericTemplate> numericTemplate;
     std::shared_ptr<const NumericTemplateEndpoints> numericRecipe;
     std::optional<std::size_t> originalNode;
+    // A stronger request may choose the existing phase representation. Its
+    // changed coordinates require the normal exact parent recomposition.
+    bool endpointRepresentationUpgrade = false;
     std::optional<Expr> originalArmGuard;
     // Producer-owned disjoint visit slices; valid only at the retained endpoints.
     std::shared_ptr<const BoundaryPartition> boundaryPartition;

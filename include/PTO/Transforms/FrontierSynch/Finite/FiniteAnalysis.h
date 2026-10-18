@@ -44,7 +44,7 @@ private:
     std::shared_ptr<uint64_t> rootCopyWork;
     std::shared_ptr<const PhaseIndex> indexOwner;
 };
-struct FiniteRecipeTemplate;
+class LogicalFamilyFragment;
 class FiniteAnalysis {
 public:
     FiniteAnalysis(std::shared_ptr<const FiniteOccurrenceInput> input, ExplicitAnalysis result)
@@ -63,7 +63,7 @@ private:
     std::shared_ptr<const FiniteOccurrenceInput> input;
     std::variant<ExplicitAnalysis, FiniteGuardedAnalysis> representation;
     std::string preparationError;
-    std::shared_ptr<const FiniteRecipeTemplate> recipe;
+    std::shared_ptr<const LogicalFamilyFragment> recipe;
 };
 std::shared_ptr<const FiniteOccurrenceInput> finiteFunctionInput(func::FuncOp function,
     std::shared_ptr<const SyncInput> storage, std::shared_ptr<const PhaseIndex> index);

@@ -12,7 +12,9 @@
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionTransfer.h"
 #include "mlir/IR/IRMapping.h"
+#include "PTO/Transforms/FrontierSynch/Shared/LogicalFamilyFragment.h"
 namespace mlir::pto::frontiersynch {
+struct SequenceAnalysis;
 class CompletionSourceSnapshot;
 class CompletionStorage;
 class ClosedCompletionChild;
@@ -32,10 +34,13 @@ private:
     std::shared_ptr<FiniteAnalysis> finite;
     std::shared_ptr<const CompletionRegion> completion;
     CompletionSummary effects;
-    std::shared_ptr<const FamilyEndpointRecipe> recipe;
-    std::vector<EndpointFamily> families;
-    int64_t planId = 0;
-    bool nested = false, independent = false, grouped = false;
+    std::shared_ptr<const LogicalFamilyFragment> fragment;
 };
+// A failed qualification is specific to this immutable mathematical owner.
+// Upgraded representations publish their own export and never mutate this one.
+std::function<std::shared_ptr<const CompletionInlineChild>()> completionChildExport(
+    std::shared_ptr<FiniteAnalysis> finite);
+std::function<std::shared_ptr<const CompletionInlineChild>()> completionChildExport(
+    std::shared_ptr<SequenceAnalysis> sequence);
 } // namespace mlir::pto::frontiersynch
 #endif

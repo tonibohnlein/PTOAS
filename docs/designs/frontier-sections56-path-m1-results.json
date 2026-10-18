@@ -1,0 +1,1556 @@
+{
+  "baseline_revision": "d6a920bf74785377998b35aa1c313198ce982e9b",
+  "scope": "M1 retained lifecycle; no full-suite or device claim",
+  "focused_gate": {
+    "elapsed": 63.25411558151245,
+    "tests": [
+      {
+        "name": "PTOIR :: pto/sync_finite_emission_scaling.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_finite_family_pipeline.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_repeated_region.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_repeated_storage.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_contextual_deferred_output.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_mixed_deferred_output.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_scoped.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_general_arithmetic_insertion.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_finite_qualification.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_sequence_endpoint_retry.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_cleanup_deferred_output.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_public.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_transfer.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_children.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_arithmetic_export_retention.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_conditional_endpoint_upgrade.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_inputs.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_closed_completion.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_retained_demand_requests.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_completion_region.pto",
+        "code": "PASS"
+      },
+      {
+        "name": "PTOIR :: pto/sync_phase_capability_upgrade.pto",
+        "code": "PASS"
+      }
+    ]
+  },
+  "finite": {
+    "status": "complete",
+    "binaries": {
+      "baseline": {
+        "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/sections56-path-completion/baseline/pto-test-opt",
+        "sha256": "bd83f39cb3c21b30cd0ff1d052504756242d92d0c547e5c688876cf199197884"
+      },
+      "candidate": {
+        "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "sha256": "228bb653c948f6038612e858afe951b0410aa9041d3f41f7de8f74eab4b17064"
+      },
+      "trace_tool": {
+        "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "sha256": "7d33bced2b84a5c8dd1e207f161987f730370fd796d5035858163fc78d7232db"
+      }
+    },
+    "flags": "gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5 profile-stages=true",
+    "execution": {
+      "affinity": [
+        0
+      ],
+      "address_space_limit": [
+        4294967296,
+        4294967296
+      ],
+      "python": "3.12.13 (main, Jun 23 2026, 15:18:55) [Clang 22.1.3 ]",
+      "driver_sha256": "b579a425e29f105f1d1c569e862b0ac57bfb1695e8f5c05b2bd1e537626bd38a"
+    },
+    "baseline_profile": "Both baseline and candidate saved artifacts profiled using their own trace tool",
+    "comparison": "Same post-compaction baseline; retain semantic/structural bounds, require construction/live/evaluated non-regression, not historical strict compaction improvement",
+    "cases": [
+      {
+        "form": "concrete",
+        "size": 4,
+        "input_sha256": "2e7653d4eecc27361cc49713ed13249460e1b4f95625dfa1356a8d772f0ecaba",
+        "routes": {
+          "saved": {
+            "baseline": {
+              "constructed_scalars": 29,
+              "live_added_arithmetic": 29,
+              "sets": 7,
+              "waits": 7
+            },
+            "candidate": {
+              "constructed_scalars": 29,
+              "live_added_arithmetic": 29,
+              "sets": 7,
+              "waits": 7
+            }
+          },
+          "combined": {
+            "baseline": {
+              "constructed_scalars": 29,
+              "live_added_arithmetic": 29,
+              "sets": 7,
+              "waits": 7
+            },
+            "candidate": {
+              "constructed_scalars": 29,
+              "live_added_arithmetic": 29,
+              "sets": 7,
+              "waits": 7
+            }
+          }
+        },
+        "timings": {},
+        "bindings_checked": 4,
+        "scaling_bounds": {
+          "scope": "fixed template control construction, two pipes, supplied input size n",
+          "mathematical_nodes_limit": 80,
+          "routes": {
+            "saved": {
+              "constructed_scalars": 29,
+              "scalar_limit": 48,
+              "largest_guard_limit": 1
+            },
+            "combined": {
+              "constructed_scalars": 29,
+              "scalar_limit": 48,
+              "largest_guard_limit": 1
+            }
+          }
+        }
+      },
+      {
+        "form": "concrete",
+        "size": 8,
+        "input_sha256": "fadc293aade02474914d920d53777370b7372f71498fea726a454d6f36ac2dd7",
+        "routes": {
+          "saved": {
+            "baseline": {
+              "constructed_scalars": 61,
+              "live_added_arithmetic": 61,
+              "sets": 15,
+              "waits": 15
+            },
+            "candidate": {
+              "constructed_scalars": 61,
+              "live_added_arithmetic": 61,
+              "sets": 15,
+              "waits": 15
+            }
+          },
+          "combined": {
+            "baseline": {
+              "constructed_scalars": 61,
+              "live_added_arithmetic": 61,
+              "sets": 15,
+              "waits": 15
+            },
+            "candidate": {
+              "constructed_scalars": 61,
+              "live_added_arithmetic": 61,
+              "sets": 15,
+              "waits": 15
+            }
+          }
+        },
+        "timings": {},
+        "bindings_checked": 4,
+        "scaling_bounds": {
+          "scope": "fixed template control construction, two pipes, supplied input size n",
+          "mathematical_nodes_limit": 144,
+          "routes": {
+            "saved": {
+              "constructed_scalars": 61,
+              "scalar_limit": 88,
+              "largest_guard_limit": 1
+            },
+            "combined": {
+              "constructed_scalars": 61,
+              "scalar_limit": 88,
+              "largest_guard_limit": 1
+            }
+          }
+        }
+      },
+      {
+        "form": "concrete",
+        "size": 16,
+        "input_sha256": "478d759633e9bedf3f4c148fd064ce3c61b8392403250de6ac14e6862e9e09c1",
+        "routes": {
+          "saved": {
+            "baseline": {
+              "constructed_scalars": 125,
+              "live_added_arithmetic": 125,
+              "sets": 31,
+              "waits": 31
+            },
+            "candidate": {
+              "constructed_scalars": 125,
+              "live_added_arithmetic": 125,
+              "sets": 31,
+              "waits": 31
+            }
+          },
+          "combined": {
+            "baseline": {
+              "constructed_scalars": 125,
+              "live_added_arithmetic": 125,
+              "sets": 31,
+              "waits": 31
+            },
+            "candidate": {
+              "constructed_scalars": 125,
+              "live_added_arithmetic": 125,
+              "sets": 31,
+              "waits": 31
+            }
+          }
+        },
+        "timings": {
+          "saved": {
+            "pairs": [
+              {
+                "baseline": {
+                  "seconds": 0.2392097464762628,
+                  "producer_seconds": 0.11965510621666908,
+                  "allocation_process_seconds": 0.11955464025959373,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 130,
+                  "arithmetic_added": 125,
+                  "sets": 31,
+                  "waits": 31
+                },
+                "candidate": {
+                  "seconds": 0.23810931900516152,
+                  "producer_seconds": 0.11895973095670342,
+                  "allocation_process_seconds": 0.1191495880484581,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 130,
+                  "arithmetic_added": 125,
+                  "sets": 31,
+                  "waits": 31
+                }
+              },
+              {
+                "candidate": {
+                  "seconds": 0.24222875712439418,
+                  "producer_seconds": 0.12067065434530377,
+                  "allocation_process_seconds": 0.1215581027790904,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 130,
+                  "arithmetic_added": 125,
+                  "sets": 31,
+                  "waits": 31
+                },
+                "baseline": {
+                  "seconds": 0.23767518531531096,
+                  "producer_seconds": 0.11897258926182985,
+                  "allocation_process_seconds": 0.1187025960534811,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 130,
+                  "arithmetic_added": 125,
+                  "sets": 31,
+                  "waits": 31
+                }
+              },
+              {
+                "baseline": {
+                  "seconds": 0.2356898565776646,
+                  "producer_seconds": 0.11784292431548238,
+                  "allocation_process_seconds": 0.11784693226218224,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 130,
+                  "arithmetic_added": 125,
+                  "sets": 31,
+                  "waits": 31
+                },
+                "candidate": {
+                  "seconds": 0.24121404998004436,
+                  "producer_seconds": 0.12038225214928389,
+                  "allocation_process_seconds": 0.12083179783076048,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 130,
+                  "arithmetic_added": 125,
+                  "sets": 31,
+                  "waits": 31
+                }
+              }
+            ],
+            "median_candidate_over_baseline": 1.0191588019718687
+          },
+          "combined": {
+            "pairs": [
+              {
+                "baseline": {
+                  "seconds": 0.11898160399869084,
+                  "producer_seconds": 0.11898160399869084,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 130,
+                  "arithmetic_added": 125,
+                  "sets": 31,
+                  "waits": 31
+                },
+                "candidate": {
+                  "seconds": 0.12021810468286276,
+                  "producer_seconds": 0.12021810468286276,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 130,
+                  "arithmetic_added": 125,
+                  "sets": 31,
+                  "waits": 31
+                }
+              },
+              {
+                "candidate": {
+                  "seconds": 0.12340414617210627,
+                  "producer_seconds": 0.12340414617210627,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 130,
+                  "arithmetic_added": 125,
+                  "sets": 31,
+                  "waits": 31
+                },
+                "baseline": {
+                  "seconds": 0.12175035290420055,
+                  "producer_seconds": 0.12175035290420055,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 130,
+                  "arithmetic_added": 125,
+                  "sets": 31,
+                  "waits": 31
+                }
+              },
+              {
+                "baseline": {
+                  "seconds": 0.12205994175747037,
+                  "producer_seconds": 0.12205994175747037,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 130,
+                  "arithmetic_added": 125,
+                  "sets": 31,
+                  "waits": 31
+                },
+                "candidate": {
+                  "seconds": 0.1199157671071589,
+                  "producer_seconds": 0.1199157671071589,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 130,
+                  "arithmetic_added": 125,
+                  "sets": 31,
+                  "waits": 31
+                }
+              }
+            ],
+            "median_candidate_over_baseline": 1.0103923685899
+          }
+        },
+        "bindings_checked": 4,
+        "scaling_bounds": {
+          "scope": "fixed template control construction, two pipes, supplied input size n",
+          "mathematical_nodes_limit": 272,
+          "routes": {
+            "saved": {
+              "constructed_scalars": 125,
+              "scalar_limit": 168,
+              "largest_guard_limit": 1
+            },
+            "combined": {
+              "constructed_scalars": 125,
+              "scalar_limit": 168,
+              "largest_guard_limit": 1
+            }
+          }
+        }
+      },
+      {
+        "form": "guarded",
+        "size": 4,
+        "input_sha256": "4a755160bd99044b94dfee888d70af11253aefb1be4ef8bed31f17371616d73f",
+        "routes": {
+          "saved": {
+            "baseline": {
+              "constructed_scalars": 35,
+              "live_added_arithmetic": 35,
+              "sets": 4,
+              "waits": 4
+            },
+            "candidate": {
+              "constructed_scalars": 35,
+              "live_added_arithmetic": 35,
+              "sets": 4,
+              "waits": 4
+            }
+          },
+          "combined": {
+            "baseline": {
+              "constructed_scalars": 35,
+              "live_added_arithmetic": 35,
+              "sets": 4,
+              "waits": 4
+            },
+            "candidate": {
+              "constructed_scalars": 35,
+              "live_added_arithmetic": 35,
+              "sets": 4,
+              "waits": 4
+            }
+          }
+        },
+        "timings": {},
+        "bindings_checked": 4,
+        "scaling_bounds": {
+          "scope": "fixed template control construction, two pipes, supplied input size n",
+          "mathematical_nodes_limit": 80,
+          "routes": {
+            "saved": {
+              "constructed_scalars": 35,
+              "scalar_limit": 48,
+              "largest_guard_limit": 28
+            },
+            "combined": {
+              "constructed_scalars": 35,
+              "scalar_limit": 48,
+              "largest_guard_limit": 28
+            }
+          }
+        }
+      },
+      {
+        "form": "guarded",
+        "size": 8,
+        "input_sha256": "d68011514010360f752686b2064c5c24f70a698ea2462d481bf55a2631a228a8",
+        "routes": {
+          "saved": {
+            "baseline": {
+              "constructed_scalars": 71,
+              "live_added_arithmetic": 71,
+              "sets": 8,
+              "waits": 8
+            },
+            "candidate": {
+              "constructed_scalars": 71,
+              "live_added_arithmetic": 71,
+              "sets": 8,
+              "waits": 8
+            }
+          },
+          "combined": {
+            "baseline": {
+              "constructed_scalars": 71,
+              "live_added_arithmetic": 71,
+              "sets": 8,
+              "waits": 8
+            },
+            "candidate": {
+              "constructed_scalars": 71,
+              "live_added_arithmetic": 71,
+              "sets": 8,
+              "waits": 8
+            }
+          }
+        },
+        "timings": {},
+        "bindings_checked": 4,
+        "scaling_bounds": {
+          "scope": "fixed template control construction, two pipes, supplied input size n",
+          "mathematical_nodes_limit": 144,
+          "routes": {
+            "saved": {
+              "constructed_scalars": 71,
+              "scalar_limit": 88,
+              "largest_guard_limit": 52
+            },
+            "combined": {
+              "constructed_scalars": 71,
+              "scalar_limit": 88,
+              "largest_guard_limit": 52
+            }
+          }
+        }
+      },
+      {
+        "form": "guarded",
+        "size": 16,
+        "input_sha256": "ae0f5fad053fa154347c8c561743a554b70a88a98437ea9245b0ad44126569bc",
+        "routes": {
+          "saved": {
+            "baseline": {
+              "constructed_scalars": 143,
+              "live_added_arithmetic": 143,
+              "sets": 16,
+              "waits": 16
+            },
+            "candidate": {
+              "constructed_scalars": 143,
+              "live_added_arithmetic": 143,
+              "sets": 16,
+              "waits": 16
+            }
+          },
+          "combined": {
+            "baseline": {
+              "constructed_scalars": 143,
+              "live_added_arithmetic": 143,
+              "sets": 16,
+              "waits": 16
+            },
+            "candidate": {
+              "constructed_scalars": 143,
+              "live_added_arithmetic": 143,
+              "sets": 16,
+              "waits": 16
+            }
+          }
+        },
+        "timings": {
+          "saved": {
+            "pairs": [
+              {
+                "baseline": {
+                  "seconds": 0.23859466705471277,
+                  "producer_seconds": 0.11942424718290567,
+                  "allocation_process_seconds": 0.1191704198718071,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 164,
+                  "arithmetic_added": 143,
+                  "sets": 16,
+                  "waits": 16
+                },
+                "candidate": {
+                  "seconds": 0.25140607031062245,
+                  "producer_seconds": 0.1211397759616375,
+                  "allocation_process_seconds": 0.13026629434898496,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 164,
+                  "arithmetic_added": 143,
+                  "sets": 16,
+                  "waits": 16
+                }
+              },
+              {
+                "candidate": {
+                  "seconds": 0.24158281972631812,
+                  "producer_seconds": 0.12080653384327888,
+                  "allocation_process_seconds": 0.12077628588303924,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 164,
+                  "arithmetic_added": 143,
+                  "sets": 16,
+                  "waits": 16
+                },
+                "baseline": {
+                  "seconds": 0.2402347349561751,
+                  "producer_seconds": 0.11990484688431025,
+                  "allocation_process_seconds": 0.12032988807186484,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 164,
+                  "arithmetic_added": 143,
+                  "sets": 16,
+                  "waits": 16
+                }
+              },
+              {
+                "baseline": {
+                  "seconds": 0.24376629618927836,
+                  "producer_seconds": 0.12086732825264335,
+                  "allocation_process_seconds": 0.12289896793663502,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 164,
+                  "arithmetic_added": 143,
+                  "sets": 16,
+                  "waits": 16
+                },
+                "candidate": {
+                  "seconds": 0.24424177827313542,
+                  "producer_seconds": 0.122274415101856,
+                  "allocation_process_seconds": 0.12196736317127943,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 164,
+                  "arithmetic_added": 143,
+                  "sets": 16,
+                  "waits": 16
+                }
+              }
+            ],
+            "median_candidate_over_baseline": 1.0056115314481437
+          },
+          "combined": {
+            "pairs": [
+              {
+                "baseline": {
+                  "seconds": 0.12091816030442715,
+                  "producer_seconds": 0.12091816030442715,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 164,
+                  "arithmetic_added": 143,
+                  "sets": 16,
+                  "waits": 16
+                },
+                "candidate": {
+                  "seconds": 0.11976922396570444,
+                  "producer_seconds": 0.11976922396570444,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 164,
+                  "arithmetic_added": 143,
+                  "sets": 16,
+                  "waits": 16
+                }
+              },
+              {
+                "candidate": {
+                  "seconds": 0.12102682422846556,
+                  "producer_seconds": 0.12102682422846556,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 164,
+                  "arithmetic_added": 143,
+                  "sets": 16,
+                  "waits": 16
+                },
+                "baseline": {
+                  "seconds": 0.1191947371698916,
+                  "producer_seconds": 0.1191947371698916,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 164,
+                  "arithmetic_added": 143,
+                  "sets": 16,
+                  "waits": 16
+                }
+              },
+              {
+                "baseline": {
+                  "seconds": 0.1189836673438549,
+                  "producer_seconds": 0.1189836673438549,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 164,
+                  "arithmetic_added": 143,
+                  "sets": 16,
+                  "waits": 16
+                },
+                "candidate": {
+                  "seconds": 0.1204871442168951,
+                  "producer_seconds": 0.1204871442168951,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 164,
+                  "arithmetic_added": 143,
+                  "sets": 16,
+                  "waits": 16
+                }
+              }
+            ],
+            "median_candidate_over_baseline": 1.0126359937174843
+          }
+        },
+        "bindings_checked": 4,
+        "scaling_bounds": {
+          "scope": "fixed template control construction, two pipes, supplied input size n",
+          "mathematical_nodes_limit": 272,
+          "routes": {
+            "saved": {
+              "constructed_scalars": 143,
+              "scalar_limit": 168,
+              "largest_guard_limit": 100
+            },
+            "combined": {
+              "constructed_scalars": 143,
+              "scalar_limit": 168,
+              "largest_guard_limit": 100
+            }
+          }
+        }
+      },
+      {
+        "form": "writers",
+        "size": 4,
+        "input_sha256": "9f985f405271d86596081739ea0cb8dce4f73346b902330fa277f9c490ddc20a",
+        "routes": {
+          "saved": {
+            "baseline": {
+              "constructed_scalars": 83,
+              "live_added_arithmetic": 80,
+              "sets": 4,
+              "waits": 4
+            },
+            "candidate": {
+              "constructed_scalars": 83,
+              "live_added_arithmetic": 80,
+              "sets": 4,
+              "waits": 4
+            }
+          },
+          "combined": {
+            "baseline": {
+              "constructed_scalars": 83,
+              "live_added_arithmetic": 80,
+              "sets": 4,
+              "waits": 4
+            },
+            "candidate": {
+              "constructed_scalars": 83,
+              "live_added_arithmetic": 80,
+              "sets": 4,
+              "waits": 4
+            }
+          }
+        },
+        "timings": {},
+        "bindings_checked": 4,
+        "scaling_bounds": {
+          "scope": "fixed template control construction, two pipes, supplied input size n",
+          "mathematical_nodes_limit": 544,
+          "routes": {
+            "saved": {
+              "constructed_scalars": 83,
+              "scalar_limit": 144,
+              "largest_guard_limit": 28
+            },
+            "combined": {
+              "constructed_scalars": 83,
+              "scalar_limit": 144,
+              "largest_guard_limit": 28
+            }
+          }
+        }
+      },
+      {
+        "form": "writers",
+        "size": 8,
+        "input_sha256": "f04b52fc0934d0f867dd3a8c4cb4b916f85cfa09ed5c36681d1158f2394f37ac",
+        "routes": {
+          "saved": {
+            "baseline": {
+              "constructed_scalars": 265,
+              "live_added_arithmetic": 258,
+              "sets": 8,
+              "waits": 8
+            },
+            "candidate": {
+              "constructed_scalars": 265,
+              "live_added_arithmetic": 258,
+              "sets": 8,
+              "waits": 8
+            }
+          },
+          "combined": {
+            "baseline": {
+              "constructed_scalars": 265,
+              "live_added_arithmetic": 258,
+              "sets": 8,
+              "waits": 8
+            },
+            "candidate": {
+              "constructed_scalars": 265,
+              "live_added_arithmetic": 258,
+              "sets": 8,
+              "waits": 8
+            }
+          }
+        },
+        "timings": {},
+        "bindings_checked": 4,
+        "scaling_bounds": {
+          "scope": "fixed template control construction, two pipes, supplied input size n",
+          "mathematical_nodes_limit": 1568,
+          "routes": {
+            "saved": {
+              "constructed_scalars": 265,
+              "scalar_limit": 400,
+              "largest_guard_limit": 52
+            },
+            "combined": {
+              "constructed_scalars": 265,
+              "scalar_limit": 400,
+              "largest_guard_limit": 52
+            }
+          }
+        }
+      },
+      {
+        "form": "writers",
+        "size": 16,
+        "input_sha256": "35baf2927258f819e571f99b09c76ae585a525b3356f9a2e30df93a370fb3c26",
+        "routes": {
+          "saved": {
+            "baseline": {
+              "constructed_scalars": 917,
+              "live_added_arithmetic": 902,
+              "sets": 16,
+              "waits": 16
+            },
+            "candidate": {
+              "constructed_scalars": 917,
+              "live_added_arithmetic": 902,
+              "sets": 16,
+              "waits": 16
+            }
+          },
+          "combined": {
+            "baseline": {
+              "constructed_scalars": 917,
+              "live_added_arithmetic": 902,
+              "sets": 16,
+              "waits": 16
+            },
+            "candidate": {
+              "constructed_scalars": 917,
+              "live_added_arithmetic": 902,
+              "sets": 16,
+              "waits": 16
+            }
+          }
+        },
+        "timings": {
+          "saved": {
+            "pairs": [
+              {
+                "baseline": {
+                  "seconds": 0.2966234958730638,
+                  "producer_seconds": 0.14571035001426935,
+                  "allocation_process_seconds": 0.15091314585879445,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 907,
+                  "arithmetic_added": 902,
+                  "sets": 16,
+                  "waits": 16
+                },
+                "candidate": {
+                  "seconds": 0.3004938648082316,
+                  "producer_seconds": 0.14867022586986423,
+                  "allocation_process_seconds": 0.15182363893836737,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 907,
+                  "arithmetic_added": 902,
+                  "sets": 16,
+                  "waits": 16
+                }
+              },
+              {
+                "candidate": {
+                  "seconds": 0.30961856711655855,
+                  "producer_seconds": 0.15278284717351198,
+                  "allocation_process_seconds": 0.15683571994304657,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 907,
+                  "arithmetic_added": 902,
+                  "sets": 16,
+                  "waits": 16
+                },
+                "baseline": {
+                  "seconds": 0.3066151989623904,
+                  "producer_seconds": 0.1518999100662768,
+                  "allocation_process_seconds": 0.15471528889611363,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 907,
+                  "arithmetic_added": 902,
+                  "sets": 16,
+                  "waits": 16
+                }
+              },
+              {
+                "baseline": {
+                  "seconds": 0.3060915139503777,
+                  "producer_seconds": 0.1517172809690237,
+                  "allocation_process_seconds": 0.154374232981354,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 907,
+                  "arithmetic_added": 902,
+                  "sets": 16,
+                  "waits": 16
+                },
+                "candidate": {
+                  "seconds": 0.30775923701003194,
+                  "producer_seconds": 0.1520467959344387,
+                  "allocation_process_seconds": 0.15571244107559323,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 907,
+                  "arithmetic_added": 902,
+                  "sets": 16,
+                  "waits": 16
+                }
+              }
+            ],
+            "median_candidate_over_baseline": 1.0097952357362967
+          },
+          "combined": {
+            "pairs": [
+              {
+                "baseline": {
+                  "seconds": 0.14106381684541702,
+                  "producer_seconds": 0.14106381684541702,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 907,
+                  "arithmetic_added": 902,
+                  "sets": 16,
+                  "waits": 16
+                },
+                "candidate": {
+                  "seconds": 0.1395313199609518,
+                  "producer_seconds": 0.1395313199609518,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 907,
+                  "arithmetic_added": 902,
+                  "sets": 16,
+                  "waits": 16
+                }
+              },
+              {
+                "candidate": {
+                  "seconds": 0.13626283826306462,
+                  "producer_seconds": 0.13626283826306462,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 907,
+                  "arithmetic_added": 902,
+                  "sets": 16,
+                  "waits": 16
+                },
+                "baseline": {
+                  "seconds": 0.13387149665504694,
+                  "producer_seconds": 0.13387149665504694,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 907,
+                  "arithmetic_added": 902,
+                  "sets": 16,
+                  "waits": 16
+                }
+              },
+              {
+                "baseline": {
+                  "seconds": 0.13304222701117396,
+                  "producer_seconds": 0.13304222701117396,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 907,
+                  "arithmetic_added": 902,
+                  "sets": 16,
+                  "waits": 16
+                },
+                "candidate": {
+                  "seconds": 0.13310167379677296,
+                  "producer_seconds": 0.13310167379677296,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 907,
+                  "arithmetic_added": 902,
+                  "sets": 16,
+                  "waits": 16
+                }
+              }
+            ],
+            "median_candidate_over_baseline": 1.0004468264470197
+          }
+        },
+        "bindings_checked": 4,
+        "scaling_bounds": {
+          "scope": "fixed template control construction, two pipes, supplied input size n",
+          "mathematical_nodes_limit": 5152,
+          "routes": {
+            "saved": {
+              "constructed_scalars": 917,
+              "scalar_limit": 1296,
+              "largest_guard_limit": 100
+            },
+            "combined": {
+              "constructed_scalars": 917,
+              "scalar_limit": 1296,
+              "largest_guard_limit": 100
+            }
+          }
+        }
+      },
+      {
+        "form": "composed",
+        "size": 4,
+        "input_sha256": "f4717ef341b197aeed3a97fe51c448b1c5ab89a3fa1f069e29616b32bad0bcad",
+        "routes": {
+          "saved": {
+            "baseline": {
+              "constructed_scalars": 78,
+              "live_added_arithmetic": 73,
+              "sets": 7,
+              "waits": 7
+            },
+            "candidate": {
+              "constructed_scalars": 78,
+              "live_added_arithmetic": 73,
+              "sets": 7,
+              "waits": 7
+            }
+          },
+          "combined": {
+            "baseline": {
+              "constructed_scalars": 78,
+              "live_added_arithmetic": 73,
+              "sets": 7,
+              "waits": 7
+            },
+            "candidate": {
+              "constructed_scalars": 78,
+              "live_added_arithmetic": 73,
+              "sets": 7,
+              "waits": 7
+            }
+          }
+        },
+        "timings": {},
+        "bindings_checked": 4,
+        "scaling_bounds": {
+          "scope": "fixed template control construction, two pipes, supplied input size n",
+          "mathematical_nodes_limit": 544,
+          "routes": {
+            "saved": {
+              "constructed_scalars": 78,
+              "scalar_limit": 144,
+              "largest_guard_limit": 28
+            },
+            "combined": {
+              "constructed_scalars": 78,
+              "scalar_limit": 144,
+              "largest_guard_limit": 28
+            }
+          }
+        }
+      },
+      {
+        "form": "composed",
+        "size": 8,
+        "input_sha256": "c63b400984d5dffe2fdd8c95956bd9de3c1148969854973c8962503ee9598809",
+        "routes": {
+          "saved": {
+            "baseline": {
+              "constructed_scalars": 238,
+              "live_added_arithmetic": 225,
+              "sets": 15,
+              "waits": 15
+            },
+            "candidate": {
+              "constructed_scalars": 238,
+              "live_added_arithmetic": 225,
+              "sets": 15,
+              "waits": 15
+            }
+          },
+          "combined": {
+            "baseline": {
+              "constructed_scalars": 238,
+              "live_added_arithmetic": 225,
+              "sets": 15,
+              "waits": 15
+            },
+            "candidate": {
+              "constructed_scalars": 238,
+              "live_added_arithmetic": 225,
+              "sets": 15,
+              "waits": 15
+            }
+          }
+        },
+        "timings": {},
+        "bindings_checked": 4,
+        "scaling_bounds": {
+          "scope": "fixed template control construction, two pipes, supplied input size n",
+          "mathematical_nodes_limit": 1568,
+          "routes": {
+            "saved": {
+              "constructed_scalars": 238,
+              "scalar_limit": 400,
+              "largest_guard_limit": 52
+            },
+            "combined": {
+              "constructed_scalars": 238,
+              "scalar_limit": 400,
+              "largest_guard_limit": 52
+            }
+          }
+        }
+      },
+      {
+        "form": "composed",
+        "size": 16,
+        "input_sha256": "9a69631511bc46612af1a89da13e8010fa687dd3df256cb1896033e61af212f2",
+        "routes": {
+          "saved": {
+            "baseline": {
+              "constructed_scalars": 750,
+              "live_added_arithmetic": 721,
+              "sets": 31,
+              "waits": 31
+            },
+            "candidate": {
+              "constructed_scalars": 750,
+              "live_added_arithmetic": 721,
+              "sets": 31,
+              "waits": 31
+            }
+          },
+          "combined": {
+            "baseline": {
+              "constructed_scalars": 750,
+              "live_added_arithmetic": 721,
+              "sets": 31,
+              "waits": 31
+            },
+            "candidate": {
+              "constructed_scalars": 750,
+              "live_added_arithmetic": 721,
+              "sets": 31,
+              "waits": 31
+            }
+          }
+        },
+        "timings": {
+          "saved": {
+            "pairs": [
+              {
+                "baseline": {
+                  "seconds": 0.3462343979626894,
+                  "producer_seconds": 0.17909360397607088,
+                  "allocation_process_seconds": 0.16714079398661852,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 726,
+                  "arithmetic_added": 721,
+                  "sets": 31,
+                  "waits": 31
+                },
+                "candidate": {
+                  "seconds": 0.3499711607582867,
+                  "producer_seconds": 0.17990764183923602,
+                  "allocation_process_seconds": 0.1700635189190507,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 726,
+                  "arithmetic_added": 721,
+                  "sets": 31,
+                  "waits": 31
+                }
+              },
+              {
+                "candidate": {
+                  "seconds": 0.3488938440568745,
+                  "producer_seconds": 0.1793702240101993,
+                  "allocation_process_seconds": 0.1695236200466752,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 726,
+                  "arithmetic_added": 721,
+                  "sets": 31,
+                  "waits": 31
+                },
+                "baseline": {
+                  "seconds": 0.3458236726000905,
+                  "producer_seconds": 0.17872712668031454,
+                  "allocation_process_seconds": 0.16709654591977596,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 726,
+                  "arithmetic_added": 721,
+                  "sets": 31,
+                  "waits": 31
+                }
+              },
+              {
+                "baseline": {
+                  "seconds": 0.3232647767290473,
+                  "producer_seconds": 0.16862030187621713,
+                  "allocation_process_seconds": 0.15464447485283017,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 726,
+                  "arithmetic_added": 721,
+                  "sets": 31,
+                  "waits": 31
+                },
+                "candidate": {
+                  "seconds": 0.30712723918259144,
+                  "producer_seconds": 0.159759976901114,
+                  "allocation_process_seconds": 0.14736726228147745,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 726,
+                  "arithmetic_added": 721,
+                  "sets": 31,
+                  "waits": 31
+                }
+              }
+            ],
+            "median_candidate_over_baseline": 1.008877852212085
+          },
+          "combined": {
+            "pairs": [
+              {
+                "baseline": {
+                  "seconds": 0.14008448319509625,
+                  "producer_seconds": 0.14008448319509625,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 726,
+                  "arithmetic_added": 721,
+                  "sets": 31,
+                  "waits": 31
+                },
+                "candidate": {
+                  "seconds": 0.14018539292737842,
+                  "producer_seconds": 0.14018539292737842,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 726,
+                  "arithmetic_added": 721,
+                  "sets": 31,
+                  "waits": 31
+                }
+              },
+              {
+                "candidate": {
+                  "seconds": 0.14297348028048873,
+                  "producer_seconds": 0.14297348028048873,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 726,
+                  "arithmetic_added": 721,
+                  "sets": 31,
+                  "waits": 31
+                },
+                "baseline": {
+                  "seconds": 0.14127290109172463,
+                  "producer_seconds": 0.14127290109172463,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 726,
+                  "arithmetic_added": 721,
+                  "sets": 31,
+                  "waits": 31
+                }
+              },
+              {
+                "baseline": {
+                  "seconds": 0.13867574371397495,
+                  "producer_seconds": 0.13867574371397495,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 726,
+                  "arithmetic_added": 721,
+                  "sets": 31,
+                  "waits": 31
+                },
+                "candidate": {
+                  "seconds": 0.14245836716145277,
+                  "producer_seconds": 0.14245836716145277,
+                  "allocation_process_seconds": 0.0,
+                  "profiles": [],
+                  "stage_profiles": [],
+                  "producer_stderr": "",
+                  "allocation_stderr": "",
+                  "arithmetic_total": 726,
+                  "arithmetic_added": 721,
+                  "sets": 31,
+                  "waits": 31
+                }
+              }
+            ],
+            "median_candidate_over_baseline": 1.0120375470144833
+          }
+        },
+        "bindings_checked": 4,
+        "scaling_bounds": {
+          "scope": "fixed template control construction, two pipes, supplied input size n",
+          "mathematical_nodes_limit": 5152,
+          "routes": {
+            "saved": {
+              "constructed_scalars": 750,
+              "scalar_limit": 1296,
+              "largest_guard_limit": 100
+            },
+            "combined": {
+              "constructed_scalars": 750,
+              "scalar_limit": 1296,
+              "largest_guard_limit": 100
+            }
+          }
+        }
+      }
+    ]
+  },
+  "production": {
+    "baseline_revision": "d6a920bf74785377998b35aa1c313198ce982e9b",
+    "flags": [
+      "--pto-frontier-analysis",
+      "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5"
+    ],
+    "tools": {
+      "baseline": "bd83f39cb3c21b30cd0ff1d052504756242d92d0c547e5c688876cf199197884",
+      "candidate": "228bb653c948f6038612e858afe951b0410aa9041d3f41f7de8f74eab4b17064"
+    },
+    "cases": {
+      "completion": {
+        "input_sha256": "c05f326f8094dace450af5d1c1986587060671d12ade528f5206d008b5224c4b",
+        "output_equal_except_recognition": true,
+        "byte_identical": true,
+        "pairs": [
+          {
+            "baseline": 0.11697306297719479,
+            "candidate": 0.11675317119807005
+          },
+          {
+            "candidate": 0.11666465178132057,
+            "baseline": 0.1167781911790371
+          },
+          {
+            "baseline": 0.11812237510457635,
+            "candidate": 0.1183720389381051
+          }
+        ],
+        "median_candidate_over_baseline": 0.9990277345746651
+      },
+      "phase": {
+        "input_sha256": "10a23e642dfccd769bfd2ff5367d13704fd0a9a45a4438c50bc54b3389db5e0b",
+        "output_equal_except_recognition": true,
+        "byte_identical": false,
+        "pairs": [
+          {
+            "baseline": 0.1585310259833932,
+            "candidate": 0.164229447953403
+          },
+          {
+            "candidate": 0.16198606975376606,
+            "baseline": 0.1568022039718926
+          },
+          {
+            "baseline": 0.1576632121577859,
+            "candidate": 0.16190999001264572
+          }
+        ],
+        "median_candidate_over_baseline": 1.033059903818716
+      },
+      "arithmetic": {
+        "input_sha256": "1f9adde7bdf416ff3916770948a959e914bae011f07d48703bfa968f2889cc05",
+        "output_equal_except_recognition": true,
+        "byte_identical": true,
+        "pairs": [
+          {
+            "baseline": 0.11638478003442287,
+            "candidate": 0.11686333687976003
+          },
+          {
+            "candidate": 0.11879424238577485,
+            "baseline": 0.11929463222622871
+          },
+          {
+            "baseline": 0.11916406778618693,
+            "candidate": 0.11838202690705657
+          }
+        ],
+        "median_candidate_over_baseline": 0.995805428701059
+      }
+    }
+  },
+  "local_artifacts": ".local/sections56-path-completion",
+  "driver_sha256": {
+    "m1-finite-regression.py": "264a4477b6776b9f67010376a85f622e1e37498e748e729f26a139a9ec36c556",
+    "m1-time-production.py": "c7ac2be6236ff071f125b54b51bace291669d2edb3f540cc11c4b4a941ca6af2"
+  }
+}

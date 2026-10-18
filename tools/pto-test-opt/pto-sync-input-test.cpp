@@ -65,6 +65,7 @@ LogicalResult checkProducerFailureStages(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkCrossingCostSelection(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkPiecewiseAccessCache(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSequenceEndpointRetry(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkPhaseCapabilityUpgrade(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkConditionalEndpointUpgrade(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkNaturalRotatingExportRetry(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkFiniteArithmeticSession(func::FuncOp, pto::GMAliasPolicy);
@@ -2557,6 +2558,10 @@ int main(int argc, char **argv) {
       }
       if (certification && function->hasAttr("test.conditional_endpoint_upgrade")) {
         if (failed(checkConditionalEndpointUpgrade(function, policy))) { return 1; }
+        continue;
+      }
+      if (certification && function->hasAttr("test.phase_capability_upgrade")) {
+        if (failed(checkPhaseCapabilityUpgrade(function, policy))) { return 1; }
         continue;
       }
       if (certification && function->hasAttr("test.sequence_endpoint_retry")) {

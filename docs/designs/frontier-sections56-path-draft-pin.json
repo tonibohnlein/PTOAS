@@ -1,0 +1,16 @@
+{
+  "repository_revision": "c400d4abbc7ea26e478cbd5b0236cdb29c39ac92",
+  "working_tree": [
+    " M appendices/explicit_reduction_details.tex",
+    " M sections/minimum_demands.tex"
+  ],
+  "sha256": {
+    "sections/minimum_demands.tex": "c5cd1346aab146ed31feb856b78f863d7e101ad5d4d9481f9e871e06580165f6",
+    "sections/approximate_demands.tex": "162fd68ee836da133b369b039d2d2326b014da7ea209357d750574aabba1b3b1",
+    "appendices/arithmetic_tractability.tex": "c2d725a1e2280a3b1df13c56a7eb86eafde549bf8d7e707107b621b1cbeafe63",
+    "appendices/arithmetic_specializations.tex": "c2056eea15f4cad511012fd0ca3122f41bbbcda46195117239b063333f68a6f8",
+    "appendices/regional_composition_details.tex": "cdae8b1a3ce8c395c4ab0b7a0e9608ae657154976bd581389136d8b611063e40",
+    "appendices/selective_conservative.tex": "800c2e0dd05cbb20fa7700409ef1101fc66c4bd124d9f7a4fc458a5460096b7f",
+    "appendices/explicit_reduction_details.tex": "35a57136d2f3e0a91ef895c96f90dfbdcbe20327a1e9c739b23a66c4c52db9dc"
+  }
+}

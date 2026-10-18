@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Existing mathematical producers behind the session request protocol. No
 // endpoint code or allocation is constructed by these adapters.
+#include "Shared/CompletionInlineChild.h"
 #include "AnalysisSessionInternal.h"
 #include "WholeInvocationIdentity.h"
 #include "Shared/FiniteExpansionPlan.h"
@@ -1018,6 +1019,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::adaptNumericalSequen
     owned->normalizedInput = retained->normalizedInput;
     owned->regionalDemands = std::make_shared<const RegionalAnalysis>(sequenceRegionalResult(*sequence));
     owned->sequenceDemands = std::move(sequence);
+    owned->completionChild = completionChildExport(owned->sequenceDemands);
     owned->backend = "numerical-sequence";
     return owned;
 }
@@ -1089,6 +1091,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceRegionBackend
         }
         owned->regionalDemands = std::make_shared<const RegionalAnalysis>(sequenceRegionalResult(*sequence));
         owned->sequenceDemands = std::move(sequence);
+        owned->completionChild = completionChildExport(owned->sequenceDemands);
         owned->backend = endpoints ? "sequence-endpoints" : "sequence";
         return owned;
     }
@@ -1137,6 +1140,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
         if (failed(produceExplicitFunction())) {
             if (nativeScalarOnly) {
                 owned->finiteDemands = std::make_shared<FiniteAnalysis>(finiteInput, ExplicitAnalysis{});
+                owned->completionChild = completionChildExport(owned->finiteDemands);
                 owned->backend = "native-scalar";
                 return owned;
             }
@@ -1144,6 +1148,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
             return {};
         }
         owned->finiteDemands = concreteFinite;
+        owned->completionChild = completionChildExport(owned->finiteDemands);
         owned->backend = "explicit";
         return owned;
     case AnalysisBackend::NumericalPeriodic:
@@ -1191,6 +1196,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
             return {};
         }
         owned->sequenceDemands = sequenceAnalysis;
+        owned->completionChild = completionChildExport(owned->sequenceDemands);
         owned->backend = "sequence";
         return owned;
     }
@@ -1225,6 +1231,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::produceBackend(
             return {};
         }
         owned->finiteDemands = std::move(demands);
+        owned->completionChild = completionChildExport(owned->finiteDemands);
         owned->backend = "finite-guarded";
         return owned;
     }
