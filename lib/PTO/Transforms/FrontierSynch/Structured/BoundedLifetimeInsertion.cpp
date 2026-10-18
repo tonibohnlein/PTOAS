@@ -48,6 +48,18 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRe
         error = "bounded lifetime requires a certified skeleton, refresh and counted domain";
         return failure();
     }
+    const auto& prerequisiteProof = recognized.prerequisites;
+    if (!prerequisiteProof || !prerequisiteProof->scope ||
+        prerequisiteProof->scope != index.prerequisiteScope() ||
+        prerequisiteProof->input != &input || prerequisiteProof->loop != loop ||
+        prerequisiteProof->phases.size() != skeleton.phases.size() || !prerequisiteProof->local.error.empty()) {
+        error = "bounded lifetime requires its original local-prerequisite certificate"; return failure();
+    }
+    for (auto [site, phase] : llvm::zip(skeleton.phases, prerequisiteProof->phases)) {
+        if (!phase || site.phase != phase || !llvm::is_contained(index.phasesFor(phase->elementOp), phase)) {
+            error = "bounded prerequisite certificate belongs to a different skeleton"; return failure();
+        }
+    }
     const auto m = skeleton.phases.size(), span = exportSpan.value_or(recognized.refresh.span);
     if (span < recognized.refresh.span) {
         error = "export window is smaller than certified lifetime";
@@ -68,6 +80,7 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRe
     if (!arena) { arena = std::make_shared<RegionExpressions>(); }
     auto demands = std::make_shared<BoundedLifetimeDemandResult>(std::move(arena));
     demands->function = function; demands->loop = loop; demands->input = &input;
+    demands->prerequisites = prerequisiteProof;
     auto& e = demands->expressions;
     auto& symbols = demands->symbols;
     const auto base = demands->base =
@@ -189,11 +202,7 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> analyzeBoundedLifetimeRe
             }
         }
     }
-    auto prerequisites = index.mapPrerequisites(phases);
-    if (!prerequisites.error.empty()) {
-        error = prerequisites.error;
-        return failure();
-    }
+    const auto& prerequisites = prerequisiteProof->local;
     for (uint64_t d = 0; d <= span; ++d) {
         for (auto edge : prerequisites.native) {
             window.nativePrerequisites.push_back(
@@ -221,6 +230,10 @@ FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> cachedBoundedLifetimeReg
 {
     auto loop = dyn_cast_or_null<scf::ForOp>(node.anchor);
     if (!loop || !node.boundedLifetime) { error = "no bounded loop certificate"; return failure(); }
+    if (!node.boundedLifetime->prerequisites ||
+        node.boundedLifetime->prerequisites->scope != index.prerequisiteScope()) {
+        error = "bounded cache requires its original local-prerequisite certificate"; return failure();
+    }
     if (!node.boundedDemandAttempted) {
         auto analyzed = analyzeBoundedLifetimeRegion(function, loop, index, input,
             *node.boundedLifetime, node.boundedDemandError);

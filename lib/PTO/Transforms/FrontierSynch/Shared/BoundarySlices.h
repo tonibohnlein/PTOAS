@@ -29,11 +29,14 @@ struct BoundaryPartition {
 // outer AND/OR expressions. RetainChildControl stops at proper nested loops
 // and leaves unpartitioned predicates with their original child provider.
 // Callers must prove that the resulting skeleton is used at most once before
-// dispensing with control invariance.
+// dispensing with control invariance. A supplied positive controlPeriod lets
+// exact phase-invariant Boolean atoms remain with the phase specializer; the
+// caller must bind them for each phase before constructing a child interface.
 std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
     const PhaseIndex& index, RegionExpressions& arena, RegionExpressions::Id trips,
     const DenseMap<Value, RegionExpressions::Id>& inherited, std::string& error,
-    BoundaryControlPolicy policy = BoundaryControlPolicy::RequirePartition);
+    BoundaryControlPolicy policy = BoundaryControlPolicy::RequirePartition,
+    uint64_t controlPeriod = 0);
 // Evaluate a Boolean formula under certified atom bindings. nullopt means an
 // unbound operand still depends on the repeated loop, not an unknown truth value.
 std::optional<RegionExpressions::Id> boundaryGuard(Value value, PhaseNormalization& normalizer,

@@ -17,6 +17,16 @@ module {
       %shifted = arith.subi %i, %one : index
       %min = arith.minsi %shifted, %zero : index
       %max = arith.maxsi %shifted, %zero : index
+      %phase = arith.remui %i, %four : index
+      %signed = arith.subi %phase, %one : index
+      %negative = arith.cmpi slt, %signed, %zero {test.phase_values = array<i64: 1, 0, 0, 0>} : index
+      %unsigned = arith.cmpi ugt, %signed, %four {test.phase_values = array<i64: 1, 0, 0, 0>} : index
+      %positive = arith.cmpi sgt, %signed, %zero {test.phase_values = array<i64: 0, 0, 1, 1>} : index
+      %either = arith.ori %negative, %positive {test.phase_values = array<i64: 1, 0, 1, 1>} : i1
+      %both = arith.andi %negative, %positive {test.phase_values = array<i64: 0, 0, 0, 0>} : i1
+      %different = arith.xori %negative, %positive {test.phase_values = array<i64: 1, 0, 1, 1>} : i1
+      %selected = arith.select %negative, %zero, %phase {test.phase_values = array<i64: 0, 1, 2, 3>} : index
+      %absolute = arith.cmpi eq, %i, %one {test.not_periodic} : index
     }
     return
   }

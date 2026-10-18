@@ -311,18 +311,31 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
         if (node.boundedLifetime &&
             node.boundedLifetime->skeleton.result.state == RecognitionState::Applicable) {
             std::string diagnostic;
-            auto bounded = cachedBoundedLifetimeRegion(function, node, index, *input, diagnostic);
+            // The legacy sequence entry may construct a fresh index. Requalify
+            // in that scope instead of borrowing another index's prerequisites
+            // or poisoning the original session's cached attempt.
+            std::optional<BoundedLifetimeRecognition> rebound;
+            const auto* recognition = &*node.boundedLifetime;
+            FailureOr<std::shared_ptr<BoundedLifetimeDemandResult>> bounded = failure();
+            if (!recognition->prerequisites || recognition->prerequisites->scope != index.prerequisiteScope()) {
+                rebound = recognizeBoundedLifetime(cast<scf::ForOp>(node.anchor), index, *input);
+                recognition = &*rebound;
+                bounded = analyzeBoundedLifetimeRegion(function, cast<scf::ForOp>(node.anchor),
+                    index, *input, *recognition, diagnostic);
+            } else {
+                bounded = cachedBoundedLifetimeRegion(function, node, index, *input, diagnostic);
+            }
             if (succeeded(bounded)) {
                 FailureOr<RegionalAnalysis> regional = failure();
                 if (resolveOriginal.exports) {
                     const auto id = static_cast<std::size_t>(&node - program->nodes.data());
                     regional = resolveOriginal.exports(id, AnalysisBackend::BoundedLifetime, diagnostic);
                 } else {
-                    auto queries = boundedLifetimeRegionalQueries(*bounded, *node.boundedLifetime,
+                    auto queries = boundedLifetimeRegionalQueries(*bounded, *recognition,
                         index, arena, diagnostic);
                     if (succeeded(queries)) {
                         regional =
-                            boundedLifetimeRegionalSelectors(**bounded, *node.boundedLifetime, *queries, diagnostic);
+                            boundedLifetimeRegionalSelectors(**bounded, *recognition, *queries, diagnostic);
                     }
                 }
                 node.boundedExportError = diagnostic;

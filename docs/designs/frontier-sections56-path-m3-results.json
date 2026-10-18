@@ -1,0 +1,359 @@
+{
+  "baseline_revision": "6e837006c212432f2801c7f88ba710b72c71dc4d",
+  "flags": [
+    "--mlir-disable-threading",
+    "--pto-frontier-analysis=profile-stages=true physical-output=true allocation-ids=0,1,2,3,4,5"
+  ],
+  "tools": {
+    "baseline": "7ec40dc3e66b811fca822848e41dcd9428be91db886869110643a0d4fac58603",
+    "candidate": "ca24d9cfdc1f81b5463e2c4100fab02da719879fa9da2b67065a0bad9c82cb5f"
+  },
+  "cases": {
+    "period2": {
+      "input_sha256": "8d9bb34cae9d260e63251e8f33d300dfea79e0d8d6e2d81d439b68e4586502f1",
+      "runs": {
+        "baseline": [
+          {
+            "seconds": 0.16075023030862212,
+            "returncode": 1,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "seconds": 0.15817136876285076,
+            "returncode": 1,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "seconds": 0.1601584362797439,
+            "returncode": 1,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        ],
+        "candidate": [
+          {
+            "seconds": 0.15660680504515767,
+            "returncode": 0,
+            "stdout_sha256": "536be84af7cde8f03e8ff08d7a44c48161f90917f954c9443ea37cd4b92ea6b8"
+          },
+          {
+            "seconds": 0.15537246316671371,
+            "returncode": 0,
+            "stdout_sha256": "536be84af7cde8f03e8ff08d7a44c48161f90917f954c9443ea37cd4b92ea6b8"
+          },
+          {
+            "seconds": 0.15813513100147247,
+            "returncode": 0,
+            "stdout_sha256": "536be84af7cde8f03e8ff08d7a44c48161f90917f954c9443ea37cd4b92ea6b8"
+          }
+        ]
+      }
+    },
+    "period3": {
+      "input_sha256": "690892118a8d8c93e32942cede6ee35374a52d2f22baefe78b75d0dee9d44def",
+      "runs": {
+        "baseline": [
+          {
+            "seconds": 0.16037701815366745,
+            "returncode": 1,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "seconds": 0.16043343022465706,
+            "returncode": 1,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "seconds": 0.15963428979739547,
+            "returncode": 1,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        ],
+        "candidate": [
+          {
+            "seconds": 0.15642601996660233,
+            "returncode": 0,
+            "stdout_sha256": "d2a6d0168544cf501c7c5269ab56e6bd0a2e0e671f50a93a2a46a45df0bbbff6"
+          },
+          {
+            "seconds": 0.1571237170137465,
+            "returncode": 0,
+            "stdout_sha256": "d2a6d0168544cf501c7c5269ab56e6bd0a2e0e671f50a93a2a46a45df0bbbff6"
+          },
+          {
+            "seconds": 0.15578672895208,
+            "returncode": 0,
+            "stdout_sha256": "d2a6d0168544cf501c7c5269ab56e6bd0a2e0e671f50a93a2a46a45df0bbbff6"
+          }
+        ]
+      }
+    },
+    "mixed2": {
+      "input_sha256": "dff8c90feada8a8080e3d7db1cf18ea227ab7f265638c099fe518ee1f10d9ea1",
+      "runs": {
+        "baseline": [
+          {
+            "seconds": 0.15729378862306476,
+            "returncode": 0,
+            "stdout_sha256": "ac718fbd7f2cd755913d7f491fa5c621d0fced20510834bceeb6dd704cd19088"
+          },
+          {
+            "seconds": 0.15862199990078807,
+            "returncode": 0,
+            "stdout_sha256": "ac718fbd7f2cd755913d7f491fa5c621d0fced20510834bceeb6dd704cd19088"
+          },
+          {
+            "seconds": 0.1609162469394505,
+            "returncode": 0,
+            "stdout_sha256": "ac718fbd7f2cd755913d7f491fa5c621d0fced20510834bceeb6dd704cd19088"
+          }
+        ],
+        "candidate": [
+          {
+            "seconds": 0.15627946611493826,
+            "returncode": 0,
+            "stdout_sha256": "a0467254a627ccf59a24da099d1939cc212171e03f1e5ab4672225a86a075325"
+          },
+          {
+            "seconds": 0.15642048930749297,
+            "returncode": 0,
+            "stdout_sha256": "a0467254a627ccf59a24da099d1939cc212171e03f1e5ab4672225a86a075325"
+          },
+          {
+            "seconds": 0.15966650983318686,
+            "returncode": 0,
+            "stdout_sha256": "a0467254a627ccf59a24da099d1939cc212171e03f1e5ab4672225a86a075325"
+          }
+        ]
+      },
+      "median_candidate_over_baseline": 0.9922336176114405,
+      "byte_identical": false
+    },
+    "ordinary_repeat": {
+      "input_sha256": "4c8f404d8f7900948ef6f2457cd28f444700f5bb9e402ee3a1b9a08ff7b99677",
+      "runs": {
+        "baseline": [
+          {
+            "seconds": 0.15997972199693322,
+            "returncode": 1,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "seconds": 0.15998027799651027,
+            "returncode": 1,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "seconds": 0.16064863605424762,
+            "returncode": 1,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        ],
+        "candidate": [
+          {
+            "seconds": 0.16102352738380432,
+            "returncode": 1,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "seconds": 0.16017940500751138,
+            "returncode": 1,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "seconds": 0.16057816706597805,
+            "returncode": 1,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        ]
+      }
+    }
+  },
+  "milestone": "M3",
+  "gate": {
+    "elapsed_seconds": 81.57258296012878,
+    "tests": [
+      {
+        "name": "PTOIR :: pto/sync_composed_phases.pto",
+        "code": "PASS",
+        "elapsed": 77.74916052818298
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_regional_interfaces.pto",
+        "code": "PASS",
+        "elapsed": 59.620930671691895
+      },
+      {
+        "name": "PTOIR :: pto/sync_repeated_region.pto",
+        "code": "PASS",
+        "elapsed": 9.51496171951294
+      },
+      {
+        "name": "PTOIR :: pto/sync_phase_control.pto",
+        "code": "PASS",
+        "elapsed": 4.412519216537476
+      },
+      {
+        "name": "PTOIR :: pto/sync_repeated_storage.pto",
+        "code": "PASS",
+        "elapsed": 2.059690237045288
+      },
+      {
+        "name": "PTOIR :: pto/sync_general_arithmetic_insertion.pto",
+        "code": "PASS",
+        "elapsed": 1.6295819282531738
+      },
+      {
+        "name": "PTOIR :: pto/sync_arithmetic_composition.pto",
+        "code": "PASS",
+        "elapsed": 1.6609365940093994
+      },
+      {
+        "name": "PTOIR :: pto/sync_general_arithmetic_demands.pto",
+        "code": "PASS",
+        "elapsed": 1.5584230422973633
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_regional_allocation.pto",
+        "code": "PASS",
+        "elapsed": 0.8485562801361084
+      },
+      {
+        "name": "PTOIR :: pto/sync_arithmetic_periodic_conversion.pto",
+        "code": "PASS",
+        "elapsed": 0.7835037708282471
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_first_tail_allocation.pto",
+        "code": "PASS",
+        "elapsed": 0.5564191341400146
+      },
+      {
+        "name": "PTOIR :: pto/sync_arithmetic_membership.pto",
+        "code": "PASS",
+        "elapsed": 0.5476493835449219
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_boundary_presence.pto",
+        "code": "PASS",
+        "elapsed": 0.4975550174713135
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_macro_selectors.pto",
+        "code": "PASS",
+        "elapsed": 0.401050329208374
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_prefix_realization.pto",
+        "code": "PASS",
+        "elapsed": 0.3488736152648926
+      },
+      {
+        "name": "PTOIR :: pto/sync_phase_minmax.pto",
+        "code": "PASS",
+        "elapsed": 0.13227176666259766
+      },
+      {
+        "name": "PTOIR :: pto/sync_arithmetic_export_retention.pto",
+        "code": "PASS",
+        "elapsed": 0.11965274810791016
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_lifetime_provenance.pto",
+        "code": "PASS",
+        "elapsed": 0.10252904891967773
+      },
+      {
+        "name": "PTOIR :: pto/sync_rotating_region_storage.pto",
+        "code": "PASS",
+        "elapsed": 0.0846395492553711
+      },
+      {
+        "name": "PTOIR :: pto/sync_phase_capability_upgrade.pto",
+        "code": "PASS",
+        "elapsed": 0.0828714370727539
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_predicate_history.pto",
+        "code": "PASS",
+        "elapsed": 0.08065485954284668
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_endpoint_audit.pto",
+        "code": "PASS",
+        "elapsed": 0.0602262020111084
+      },
+      {
+        "name": "PTOIR :: pto/sync_recognition_guarded.pto",
+        "code": "PASS",
+        "elapsed": 0.05399799346923828
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_allocation_session.pto",
+        "code": "PASS",
+        "elapsed": 0.046143531799316406
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_prerequisite_scope.pto",
+        "code": "PASS",
+        "elapsed": 0.044812679290771484
+      },
+      {
+        "name": "PTOIR :: pto/sync_recognition_arithmetic.pto",
+        "code": "PASS",
+        "elapsed": 0.03757286071777344
+      },
+      {
+        "name": "PTOIR :: pto/sync_phase_index.pto",
+        "code": "PASS",
+        "elapsed": 0.040017127990722656
+      },
+      {
+        "name": "PTOIR :: pto/sync_bounded_inactive_emission.pto",
+        "code": "PASS",
+        "elapsed": 0.03706526756286621
+      }
+    ]
+  },
+  "semantic_checks": {
+    "phase_event_closures": 28,
+    "ordinary_causal_allocation": 20,
+    "combined_production_physical_traces": 20,
+    "composed_entry_exit_queries": 48
+  },
+  "inventories": {
+    "period2_candidate": {
+      "arithmetic": 292,
+      "set": 4,
+      "wait": 4
+    },
+    "period3_candidate": {
+      "arithmetic": 292,
+      "set": 4,
+      "wait": 4
+    },
+    "mixed2_baseline": {
+      "arithmetic": 125,
+      "set": 3,
+      "wait": 3
+    },
+    "mixed2_candidate": {
+      "arithmetic": 300,
+      "set": 4,
+      "wait": 4
+    }
+  },
+  "limitations": [
+    "Mixed fixture code-size regression; neutral paired process timing.",
+    "Ordinary symbolic-inner repeat still lacks combined allocation export; no capacity lower bound.",
+    "Full synchronization gate, primary49 and device execution not run in M3."
+  ],
+  "compliance": {
+    "brace_prefilter_false_positives": 17,
+    "disposition": "Manually inspected braced bodies; no suppression; line-length finding fixed."
+  },
+  "initial_fixture": {
+    "issue": "Nonadjacent same-pipe hazards violate realization-equality premise.",
+    "baseline_candidate_payload_closures_equal": true,
+    "correction": "New nested fixture removes external bank-zero writes; retains inner threshold and both polarities; no existing oracle relaxed."
+  }
+}

@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --certify-regions %s | FileCheck %s
+// CHECK: bounded-prerequisites: 48 composed event-kind/readiness checks passed
+// CHECK: bounded-prerequisites: local-map retained, incoming separate, foreign scope refused
+// CHECK: bounded-prerequisites: carried obligation retained
+// CHECK: bounded-prerequisites: escaping result requires an exit occurrence map
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @incoming(%n: index) attributes {test.bounded_prerequisites} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    %alias = pto.alloc_tile addr = %base : !tile
+    %other_base = arith.constant 64 : i64
+    %other = pto.alloc_tile addr = %other_base : !tile
+    %seed = pto.tgetval ins(%other, %zero : !tile, index) outs : f32
+    scf.for %i = %zero to %n step %one {
+      pto.tsetval ins(%zero, %value : index, f32) outs(%tile : !tile)
+      pto.tadds ins(%alias, %seed : !tile, f32) outs(%alias : !tile)
+      %next = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+      pto.tsetval ins(%zero, %next : index, f32) outs(%tile : !tile)
+    }
+    pto.tadds ins(%tile, %value : !tile, f32) outs(%tile : !tile)
+    return
+  }
+  func.func @carried(%n: index) -> f32 attributes {test.bounded_prerequisites, test.carried_prerequisite} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    %out = scf.for %i = %zero to %n step %one iter_args(%state = %value) -> (f32) {
+      pto.tsetval ins(%zero, %state : index, f32) outs(%tile : !tile)
+      %next = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+      scf.yield %next : f32
+    }
+    return %out : f32
+  }
+  func.func @escaping(%n: index) -> f32 attributes {test.bounded_prerequisites, test.escaping_prerequisite} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %value = arith.constant 1.0 : f32
+    %tile = pto.alloc_tile addr = %base : !tile
+    %out = scf.for %i = %zero to %n step %one iter_args(%state = %value) -> (f32) {
+      pto.tsetval ins(%zero, %value : index, f32) outs(%tile : !tile)
+      %next = pto.tgetval ins(%tile, %zero : !tile, index) outs : f32
+      scf.yield %next : f32
+    }
+    return %out : f32
+  }
+}

@@ -53,6 +53,7 @@ std::optional<uint64_t> PhaseNormalization::modulus(Value value)
 }
 bool PhaseNormalization::periodic(Value value, uint64_t period)
 {
+    if (!period) { return false; }
     if (!value) { return true; }
     auto& cached = periodicValues[value];
     if (auto found = cached.find(period); found != cached.end()) { return found->second; }
@@ -68,7 +69,8 @@ bool PhaseNormalization::periodic(Value value, uint64_t period)
             return period % *divisor == 0 && residue(value, 0, period).has_value();
         }
         if (!isa<arith::AddIOp, arith::SubIOp, arith::MulIOp, arith::IndexCastOp, arith::IndexCastUIOp,
-                 arith::ExtSIOp, arith::ExtUIOp, arith::TruncIOp>(op)) { return false; }
+                 arith::ExtSIOp, arith::ExtUIOp, arith::TruncIOp, arith::CmpIOp,
+                 arith::AndIOp, arith::OrIOp, arith::XOrIOp, arith::SelectOp>(op)) { return false; }
         return llvm::all_of(op->getOperands(), [&](Value operand) { return periodic(operand, period); });
     };
     auto result = compute();
@@ -142,12 +144,46 @@ std::optional<RegionExpressions::Id> PhaseNormalization::atPhase(Value value, ui
             }
             return std::nullopt;
         }
+        if (auto select = dyn_cast<arith::SelectOp>(op)) {
+            auto condition = atPhase(select.getCondition(), phase, period);
+            if (!condition) { return std::nullopt; }
+            // Preserve conditional definedness: a known arm never requests the
+            // other arm's representation or historical inputs.
+            if (auto known = arena.constantValue(*condition)) {
+                return atPhase(*known ? select.getTrueValue() : select.getFalseValue(), phase, period);
+            }
+            auto yes = atPhase(select.getTrueValue(), phase, period);
+            auto no = atPhase(select.getFalseValue(), phase, period);
+            return yes && no ? std::optional<Id>(arena.select(*condition, *yes, *no)) : std::nullopt;
+        }
         if (op->getNumOperands() != 2) { return std::nullopt; }
         // A remainder has its complete value in [0, divisor), so the congruence
         // certificate is sufficient here. It is not sufficient for a raw address.
         if (modulus(value)) { return residue(value, phase, period); }
         auto left = atPhase(op->getOperand(0), phase, period), right = atPhase(op->getOperand(1), phase, period);
         if (!left || !right) { return std::nullopt; }
+        if (auto compare = dyn_cast<arith::CmpIOp>(op)) {
+            const auto bits = DataLayout::closest(outer).getTypeSizeInBits(compare.getLhs().getType());
+            if (bits.isScalable() || bits.getFixedValue() != 64) { return std::nullopt; }
+            switch (compare.getPredicate()) {
+            case arith::CmpIPredicate::eq: return arena.eq(*left, *right);
+            case arith::CmpIPredicate::ne: return arena.lnot(arena.eq(*left, *right));
+            case arith::CmpIPredicate::slt: return arena.slt(*left, *right);
+            case arith::CmpIPredicate::sle: return arena.lnot(arena.slt(*right, *left));
+            case arith::CmpIPredicate::sgt: return arena.slt(*right, *left);
+            case arith::CmpIPredicate::sge: return arena.lnot(arena.slt(*left, *right));
+            case arith::CmpIPredicate::ult: return arena.lt(*left, *right);
+            case arith::CmpIPredicate::ule: return arena.le(*left, *right);
+            case arith::CmpIPredicate::ugt: return arena.lt(*right, *left);
+            case arith::CmpIPredicate::uge: return arena.le(*right, *left);
+            }
+            return std::nullopt;
+        }
+        if (value.getType().isInteger(1)) {
+            if (isa<arith::AndIOp>(op)) { return arena.land(*left, *right); }
+            if (isa<arith::OrIOp>(op)) { return arena.lor(*left, *right); }
+            if (isa<arith::XOrIOp>(op)) { return arena.lnot(arena.eq(*left, *right)); }
+        }
         if (isa<arith::AddIOp>(op)) { return arena.add(*left, *right); }
         if (isa<arith::SubIOp>(op)) { return arena.sub(*left, *right); }
         if (isa<arith::MinSIOp, arith::MaxSIOp>(op)) {

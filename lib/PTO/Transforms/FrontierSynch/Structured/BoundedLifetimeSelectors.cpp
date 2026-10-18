@@ -452,6 +452,7 @@ FailureOr<RegionalAnalysis> boundedLifetimeRegionalSelectors(
     const RegionalAnalysis& queries, std::string& error)
 {
     if (!queries.expressions || !queries.expressions->constructionError().empty() || !demands.input ||
+        !demands.prerequisites || demands.prerequisites != recognized.prerequisites ||
         queries.accessModel != &demands.input->accesses() ||
         queries.gmAliasPolicy != demands.input->memory().gmPolicy() ||
         recognized.skeleton.phases.size() != demands.anchors.size() ||

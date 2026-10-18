@@ -124,8 +124,22 @@ struct PhysicalRefreshDescription {
     SmallVector<GuardedPhase> coveragePhases;
     SmallVector<PhysicalWriterCoverage, 0> writerCoverage;
 };
+// Original-occurrence certificate. Local edges have zero visit displacement;
+// refresh certifies storage generators only. Incoming/outgoing edges stay with
+// the enclosing regional composition and are never covered by refresh.span.
+// Boundary inventories describe the supplied PhaseIndex scope, not a proof
+// that no external obligation exists. The parent retains its original index.
+struct BoundedPrerequisiteCertificate {
+    std::shared_ptr<const PhasePrerequisiteScope> scope;
+    const SyncInput* input = nullptr;
+    Operation* loop = nullptr;
+    SmallVector<const CompoundInstanceElement*> phases;
+    PhasePrerequisiteEdges local;
+    SmallVector<ValuePrerequisite> incoming, outgoing;
+};
 struct BoundedLifetimeRecognition {
     GuardedRecognition skeleton;
+    std::shared_ptr<const BoundedPrerequisiteCertificate> prerequisites;
     RefreshCertificate refresh;
     std::optional<PhysicalRefreshDescription> physical;
 };

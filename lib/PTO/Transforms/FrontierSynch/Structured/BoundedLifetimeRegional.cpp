@@ -266,6 +266,7 @@ bool validateContext(const std::shared_ptr<BoundedLifetimeDemandResult>& demands
 {
     if ((arena && !arena->constructionError().empty()) ||
         (inputOwner && demands && inputOwner.get() != demands->input) || !demands || !arena || !recognized.physical ||
+        !demands->prerequisites || demands->prerequisites != recognized.prerequisites ||
         !demands->input || !demands->function || !demands->loop || recognized.refresh.span > (UINT32_MAX - 2) / 2 ||
         recognized.skeleton.phases.size() != demands->unconditional.size() ||
         recognized.skeleton.phases.size() != demands->anchors.size() || !recognized.physical->period ||
@@ -305,6 +306,10 @@ FailureOr<RegionalAnalysis> boundedLifetimeRegionalQueries(
     const PhaseIndex& index, std::shared_ptr<RegionExpressions> arena, std::string& error,
     std::shared_ptr<const SyncInput> inputOwner)
 {
+    if (!recognized.prerequisites || !recognized.prerequisites->scope ||
+        recognized.prerequisites->scope != index.prerequisiteScope()) {
+        error = "bounded queries require their original local-prerequisite certificate"; return failure();
+    }
     if (!validateContext(demands, recognized, arena, inputOwner, error)) { return failure(); }
     const uint64_t mixingSpan = 2 * recognized.refresh.span + 1;
     if (!detail::physicalRefreshWindowFits(mixingSpan + 1, recognized.skeleton.phases.size(),

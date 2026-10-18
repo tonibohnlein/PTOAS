@@ -443,7 +443,8 @@ std::optional<Expr> boundaryGuard(Value value, PhaseNormalization& normalizer,
 }
 std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
     const PhaseIndex& index, RegionExpressions& arena, Expr trips,
-    const DenseMap<Value, Expr>& inherited, std::string& error, BoundaryControlPolicy policy)
+    const DenseMap<Value, Expr>& inherited, std::string& error, BoundaryControlPolicy policy,
+    uint64_t controlPeriod)
 {
     if (!CountedLoop::get(loop) || index.hasUnprovedCarriedState(loop)) {
         error = "boundary slicing requires a representable counted loop with proved carried state";
@@ -463,6 +464,7 @@ std::optional<std::vector<BoundarySlice>> collectBoundarySlices(scf::ForOp loop,
     DenseSet<Value> seen;
     std::function<bool(Value)> collect = [&](Value value) {
         if (!seen.insert(value).second || inherited.count(value) || normalizer.independent(value)) { return true; }
+        if (controlPeriod && normalizer.periodic(value, controlPeriod)) { return true; }
         // A parent interval can already fix a compound predicate, e.g. false
         // AND an inner first-iteration test. Its unused atom does not change
         // the child's skeleton and must not introduce artificial child slices.

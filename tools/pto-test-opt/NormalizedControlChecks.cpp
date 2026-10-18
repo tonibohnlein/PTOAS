@@ -371,6 +371,22 @@ LogicalResult checkPhaseMinMax(func::FuncOp function, pto::GMAliasPolicy policy)
     PhaseNormalization normalizer(loop, index, expressions);
     bool valid = true;
     loop.walk([&](Operation* op) {
+        if (auto expected = op->getAttrOfType<DenseI64ArrayAttr>("test.phase_values")) {
+            if (expected.size() != 4 || op->getNumResults() != 1) { valid = false; return; }
+            auto result = op->getResult(0);
+            valid &= normalizer.periodic(result, 4) && !normalizer.periodic(result, 0);
+            for (uint64_t phase = 0; phase < 4; ++phase) {
+                auto value = normalizer.atPhase(result, phase, 4);
+                if (function->hasAttr("test.narrow_phase")) { continue; }
+                valid &= value && expressions.constantValue(*value) == static_cast<uint64_t>(expected[phase]);
+                const auto size = expressions.size();
+                valid &= normalizer.atPhase(result, phase, 4) == value && expressions.size() == size;
+            }
+            return;
+        }
+        if (op->hasAttr("test.not_periodic")) {
+            valid &= !normalizer.periodic(op->getResult(0), 4); return;
+        }
         if (!isa<arith::MinSIOp, arith::MaxSIOp>(op)) { return; }
         for (uint64_t phase = 0; phase < 4; ++phase) {
             auto value = normalizer.atPhase(op->getResult(0), phase, 1);

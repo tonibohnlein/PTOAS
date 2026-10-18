@@ -34,6 +34,7 @@ struct PhasePrerequisiteEdges {
 };
 
 struct PhaseSourceFacts;
+struct PhasePrerequisiteScope;
 class PhaseIndex {
 public:
     // Function, SyncInput and records must outlive the index. Preserve original
@@ -48,6 +49,9 @@ public:
     LogicalResult build(func::FuncOp source, ArrayRef<const CompoundInstanceElement*> phases,
                         std::shared_ptr<const PhaseSourceFacts> facts);
     std::shared_ptr<const PhaseSourceFacts> sourceFacts() const { return facts; }
+    // Identity of this completed prerequisite inventory, invalidated by every
+    // rebuild including failed builds. Retaining it does not retain source IR.
+    std::shared_ptr<const PhasePrerequisiteScope> prerequisiteScope() const { return prerequisiteIdentity; }
     // Return reusable facts only if the requested view is covered. A caller
     // may otherwise explicitly construct fresh facts for a larger universe.
     std::shared_ptr<const PhaseSourceFacts> sourceFactsFor(
@@ -70,6 +74,9 @@ public:
     // routes must account for its completion prerequisite, beyond storage.
     bool needsValuePrerequisite(Operation* operation) const;
     ArrayRef<ValuePrerequisite> prerequisitesFor(Operation* operation) const;
+    // Lazily index the established edge inventory once. Regional boundary
+    // requests then visit only edges incident to their original producers.
+    ArrayRef<ValuePrerequisite> prerequisitesFrom(const CompoundInstanceElement* producer) const;
     // One occurrence per phase. External producers belong to composition.
     PhasePrerequisiteEdges mapPrerequisites(ArrayRef<const CompoundInstanceElement*> phases) const;
 
@@ -101,10 +108,13 @@ private:
     DenseSet<Operation*> valuePrerequisites;
     DenseSet<Value> relevantValues;
     std::shared_ptr<const PhaseSourceFacts> facts;
+    std::shared_ptr<const PhasePrerequisiteScope> prerequisiteIdentity;
     uint64_t localRelevanceVisits = 0;
     void computeCarriedOrdinals(PhaseSourceFacts& result);
     void computeRelevance();
     DenseMap<Operation*, SmallVector<ValuePrerequisite>> prerequisites;
+    mutable std::optional<DenseMap<const CompoundInstanceElement*,
+        SmallVector<ValuePrerequisite>>> producerPrerequisites;
     void traceResult(const CompoundInstanceElement* producer, Value result,
                      DenseMap<Operation*, bool>& carriedRelevance);
 };

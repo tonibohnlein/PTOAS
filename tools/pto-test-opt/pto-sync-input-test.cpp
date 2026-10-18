@@ -61,6 +61,7 @@ LogicalResult checkUniformRelationCrossings(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedNumericSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSpecializedGuardedSession(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkPhaseMinMax(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult checkBoundedPrerequisiteScope(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkProducerFailureStages(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkCrossingCostSelection(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkPiecewiseAccessCache(func::FuncOp, pto::GMAliasPolicy);
@@ -2551,6 +2552,10 @@ int main(int argc, char **argv) {
       }
       if (certification && function->hasAttr("test.producer_failure")) {
         if (failed(checkProducerFailureStages(function, policy))) { return 1; }
+        continue;
+      }
+      if (certification && function->hasAttr("test.bounded_prerequisites")) {
+        if (failed(checkBoundedPrerequisiteScope(function, policy))) { return 1; }
         continue;
       }
       if (certification && function->hasAttr("test.phase_minmax")) {

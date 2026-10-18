@@ -103,9 +103,12 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
     std::string sliceError;
     std::vector<BoundarySlice> intervals;
     bool boundaryControl = false;
-    outer.getBody()->walk([&](scf::IfOp branch) { boundaryControl |= !normalizer.independent(branch.getCondition()); });
+    outer.getBody()->walk([&](scf::IfOp branch) {
+        boundaryControl |= !normalizer.periodic(branch.getCondition(), period);
+    });
     if (boundaryControl) {
-        auto sliced = collectBoundarySlices(outer, index, expressions, trips, DenseMap<Value, Expr>(), sliceError);
+        auto sliced = collectBoundarySlices(outer, index, expressions, trips, DenseMap<Value, Expr>(), sliceError,
+            BoundaryControlPolicy::RequirePartition, period);
         if (!sliced) { return unavailable(sliceError); }
         intervals = std::move(*sliced);
     } else { intervals.push_back({{c(0), trips}, DenseMap<Value, Expr>()}); }
@@ -190,12 +193,47 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
         }
         return true;
     };
+    // Discover binding candidates once. Outer periodicity alone does not make
+    // a predicate invariant inside a child: phase && inner_iv < 2 still needs
+    // the inner boundary split. Only inherit predicates invariant in every
+    // enclosing proper child loop; leave mixed formulas to boundaryGuard().
+    SmallVector<Value> phaseControls, pendingControl;
+    outer.getBody()->walk([&](scf::IfOp branch) { pendingControl.push_back(branch.getCondition()); });
+    DenseSet<Value> seenControl;
+    DenseMap<Operation*, std::unique_ptr<PhaseNormalization>> childNormalizers;
+    while (!pendingControl.empty()) {
+        auto value = pendingControl.pop_back_val();
+        if (!seenControl.insert(value).second || normalizer.independent(value)) { continue; }
+        auto* operation = value.getDefiningOp();
+        if (!operation) { continue; }
+        for (auto operand : operation->getOperands()) {
+            if (operand.getType().isInteger(1)) { pendingControl.push_back(operand); }
+        }
+        if (!normalizer.periodic(value, period)) { continue; }
+        bool childInvariant = true;
+        for (auto* parent = operation->getParentOp(); parent != outer; parent = parent->getParentOp()) {
+            auto inner = dyn_cast<scf::ForOp>(parent);
+            if (!inner) { continue; }
+            auto& childNormalizer = childNormalizers[parent];
+            if (!childNormalizer) {
+                childNormalizer = std::make_unique<PhaseNormalization>(inner, index, expressions);
+            }
+            if (!childNormalizer->independent(value)) { childInvariant = false; break; }
+        }
+        if (childInvariant) { phaseControls.push_back(value); }
+    }
     std::vector<RegionalAnalysis> intervalViews;
     for (const auto& interval : intervals) {
         std::vector<RegionalAnalysis> phases;
         enum class LogicalPhaseForm { OriginalParameters, NumericOccurrences };
         std::vector<LogicalPhaseForm> logicalForms;
         for (uint64_t phase = 0; phase < period; ++phase) {
+            auto phaseBindings = interval.bindings;
+            for (auto value : phaseControls) {
+                auto bound = normalizer.atPhase(value, phase, period);
+                if (!bound) { return unavailable("phase control normalization unavailable"); }
+                phaseBindings[value] = *bound;
+            }
             auto logicalForm = LogicalPhaseForm::OriginalParameters;
             auto previousAttempt = repeatedAttempt;
             std::string compactFailure;
@@ -220,7 +258,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             return unavailable("phase conditional needs result-free mapped control");
                         }
                         auto condition = boundaryGuard(
-                            branch.getCondition(), normalizer, interval.bindings, expressions);
+                            branch.getCondition(), normalizer, phaseBindings, expressions);
                         if (!condition) { return unavailable("phase conditional has no invariant interval predicate"); }
                         for (auto armId : child.children) {
                             const auto& arm = program->nodes[armId];
@@ -298,7 +336,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                         auto parameterBinding = [&](Value parameter) -> std::optional<Expr> {
                             if (parameter.getType().isInteger(1)) {
                                 if (auto bound = boundaryGuard(
-                                        parameter, normalizer, interval.bindings, expressions)) {
+                                        parameter, normalizer, phaseBindings, expressions)) {
                                     return bound;
                                 }
                             }
@@ -349,7 +387,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             return true;
                         }
                     }
-                    if (auto found = rotating.find(id); found != rotating.end() && interval.bindings.empty()) {
+                    if (auto found = rotating.find(id); found != rotating.end() && phaseBindings.empty()) {
                         SmallVector<std::pair<Expr, Expr>> replacements;
                         auto phaseTrips = phaseTripCount(found->second.loop, normalizer, expressions,
                                                         phase, period, replacements);
@@ -388,7 +426,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             return unavailable("nested sliced child requires a phase-specialized counted domain");
                         }
                         auto childSlices = collectBoundarySlices(
-                            inner, index, expressions, *innerTrips, interval.bindings, diagnostic);
+                            inner, index, expressions, *innerTrips, phaseBindings, diagnostic);
                         if (!childSlices) { return unavailable("nested boundary: " + diagnostic); }
                         std::vector<RegionalAnalysis> childParts;
                         for (auto& slice : *childSlices) {
@@ -600,7 +638,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                     return literal ? std::optional<int64_t>(APInt(64, *literal).getSExtValue()) : std::nullopt;
                 };
                 TemplateControlConstant control = [&](Value value) -> std::optional<bool> {
-                    auto bound = boundaryGuard(value, normalizer, interval.bindings, expressions);
+                    auto bound = boundaryGuard(value, normalizer, phaseBindings, expressions);
                     if (!bound) { return std::nullopt; }
                     auto literal = expressions.constantValue(*bound);
                     return literal ? std::optional<bool>(*literal != 0) : std::nullopt;

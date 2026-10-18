@@ -39,6 +39,9 @@ struct BoundedLifetimeDemandResult {
     std::vector<StorageLaneCell> physicalCells;
     std::vector<uint8_t> unconditional;
     std::vector<TemplateEndpointAnchor> anchors;
+    // Shares the recognition's original prerequisite mapping; a local window
+    // does not consume its external entry/exit obligations.
+    std::shared_ptr<const BoundedPrerequisiteCertificate> prerequisites;
     LifetimeWindowInput window;
     LifetimeWindowAnalysis analysis;
     std::shared_ptr<BoundedLifetimeAllocationRecipe> allocationRecipe;

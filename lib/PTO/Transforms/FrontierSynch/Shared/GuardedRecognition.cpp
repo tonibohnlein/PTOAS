@@ -232,6 +232,30 @@ BoundedLifetimeRecognition recognizeBoundedLifetime(scf::ForOp loop, const Phase
         skeleton.result.note(RecognitionIssue::AdditionalPrerequisite, loop);
         return out;
     }
+    auto retainedPrerequisites = std::make_shared<BoundedPrerequisiteCertificate>();
+    retainedPrerequisites->scope = index.prerequisiteScope();
+    retainedPrerequisites->input = &input; retainedPrerequisites->loop = loop;
+    retainedPrerequisites->phases = phases;
+    retainedPrerequisites->local = std::move(prerequisites);
+    // Keep the boundary obligations explicit. The session's original regional
+    // composer maps them to first/last occurrences or refuses that capability;
+    // a successful local window is not an entry/exit readiness certificate.
+    auto incoming = [&](Operation* operation) {
+        for (const auto& edge : index.prerequisitesFor(operation)) {
+            if (!edge.producer || !loop->isProperAncestor(edge.producer->elementOp)) {
+                retainedPrerequisites->incoming.push_back(edge);
+            }
+        }
+    };
+    incoming(loop);
+    DenseSet<Operation*> targets;
+    for (const auto* phase : phases) {
+        if (targets.insert(phase->elementOp).second) { incoming(phase->elementOp); }
+        for (const auto& edge : index.prerequisitesFrom(phase)) {
+            if (!loop->isProperAncestor(edge.consumer)) { retainedPrerequisites->outgoing.push_back(edge); }
+        }
+    }
+    out.prerequisites = std::move(retainedPrerequisites);
     if (physicalProjection) {
         out.physical = detail::certifyPhysicalRefresh(skeleton, input, loop, out.refresh);
         if (!out.physical) { skeleton.result.note(RecognitionIssue::RefreshBound, loop); return out; }

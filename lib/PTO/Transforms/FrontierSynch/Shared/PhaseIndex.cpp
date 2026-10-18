@@ -19,6 +19,7 @@ namespace mlir::pto::frontiersynch {
 // Immutable after the root build; scoped indexes retain their own phase map,
 // relevance delta and value prerequisites. Original IR/phase lifetimes are
 // unchanged from PhaseIndex's borrowed-source contract.
+struct PhasePrerequisiteScope {};
 struct PhaseSourceFacts {
     func::FuncOp function;
     DenseSet<const CompoundInstanceElement*> phases;
@@ -103,7 +104,8 @@ LogicalResult PhaseIndex::build(func::FuncOp source, ArrayRef<const CompoundInst
                                std::shared_ptr<const PhaseSourceFacts> shared)
 {
     anchorPhases.clear(); valuePrerequisites.clear(); prerequisites.clear(); relevantValues.clear();
-    facts.reset(); localRelevanceVisits = 0; dominance.invalidate(); function = {};
+    prerequisiteIdentity.reset();
+    facts.reset(); producerPrerequisites.reset(); localRelevanceVisits = 0; dominance.invalidate(); function = {};
     if (!source) { return failure(); }
     if (shared && shared->function != source) {
         return source.emitError("shared phase facts belong to another function");
@@ -131,6 +133,7 @@ LogicalResult PhaseIndex::build(func::FuncOp source, ArrayRef<const CompoundInst
             traceResult(entry.second.front(), value, carriedRelevance);
         }
     }
+    prerequisiteIdentity = std::make_shared<const PhasePrerequisiteScope>();
     return success();
 }
 void PhaseIndex::computeRelevance()
@@ -301,6 +304,17 @@ ArrayRef<ValuePrerequisite> PhaseIndex::prerequisitesFor(Operation* operation) c
     return found == prerequisites.end() ? ArrayRef<ValuePrerequisite>{} : found->second;
 }
 
+ArrayRef<ValuePrerequisite> PhaseIndex::prerequisitesFrom(const CompoundInstanceElement* producer) const
+{
+    if (!producerPrerequisites) {
+        producerPrerequisites.emplace();
+        for (const auto& entry : prerequisites) {
+            for (const auto& edge : entry.second) { (*producerPrerequisites)[edge.producer].push_back(edge); }
+        }
+    }
+    const auto found = producerPrerequisites->find(producer);
+    return found == producerPrerequisites->end() ? ArrayRef<ValuePrerequisite>{} : found->second;
+}
 PhasePrerequisiteEdges PhaseIndex::mapPrerequisites(ArrayRef<const CompoundInstanceElement*> phases) const
 {
     PhasePrerequisiteEdges output;

@@ -710,3 +710,146 @@ bool checkBoundedMacroSelectors(const fs::BoundedLifetimeDemandResult& demands,
                  << " reader-writer=" << simultaneousReaderWriter << " comparisons=" << comparisons << "\n";
     return checkMacroComposition(demands, recognized, index, queries);
 }
+
+namespace {
+bool checkBoundedReadinessComposition(std::shared_ptr<fs::BoundedLifetimeDemandResult> demands,
+    const fs::BoundedLifetimeRecognition& recognized, const fs::PhaseIndex& index)
+{
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    std::string error;
+    auto queries = fs::boundedLifetimeRegionalQueries(demands, recognized, index, arena, error);
+    if (failed(queries)) { llvm::errs() << error << "\n"; return false; }
+    auto bounded = fs::boundedLifetimeRegionalSelectors(*demands, recognized, *queries, error);
+    if (failed(bounded)) { llvm::errs() << error << "\n"; return false; }
+    auto program = fs::recognizeProgram(demands->function, *demands->input, index);
+    if (failed(program)) { return false; }
+    std::vector<fs::RegionalAnalysis> outside;
+    for (auto [id, node] : llvm::enumerate(program->nodes)) {
+        if (node.kind != fs::StructureKind::ExplicitRun || !node.loops.empty() || !node.payloadCount) { continue; }
+        auto child = fs::analyzeSequenceRegion(demands->function, *demands->input, *program, id, arena, {}, false);
+        if (!child.error.empty()) { llvm::errs() << child.error << "\n"; return false; }
+        outside.push_back(fs::sequenceRegionalResult(child));
+    }
+    if (outside.size() != 2 || outside[0].anchors.size() != 1 || outside[1].anchors.size() != 1) { return false; }
+    auto composed = fs::composeRegionalSequence(demands->function, arena,
+        {outside[0], *bounded, outside[1]}, true, false);
+    if (!composed.error.empty()) { llvm::errs() << composed.error << "\n"; return false; }
+    auto& e = *arena;
+    // Independent facts for the fixture: seed reads a disjoint tile on S.
+    // S native start/completion order reaches the first S write, but completion
+    // does not gate its start. The SSA seed does gate the following V tadds.
+    // The final S write conflicts with the suffix V tadds in the original tile.
+    struct Expected { fs::RegionExpressions::Id query; bool whenPresent; };
+    std::vector<Expected> expected;
+    for (auto sourceKind : {fs::PeriodicEventKind::Start, fs::PeriodicEventKind::Completion}) {
+        for (auto targetKind : {fs::PeriodicEventKind::Start, fs::PeriodicEventKind::Completion}) {
+            for (unsigned site : {0U, 1U}) {
+                auto answer = fs::sequenceEventReachability(composed,
+                    {0, 0, e.constant(0), sourceKind}, {1, site, e.constant(0), targetKind});
+                if (!answer) { return false; }
+                expected.push_back({*answer, site == 1 || sourceKind == fs::PeriodicEventKind::Start ||
+                    targetKind == fs::PeriodicEventKind::Completion});
+            }
+            auto exit = fs::sequenceEventReachability(composed,
+                {1, 3, e.constant(0), sourceKind}, {2, 0, e.constant(0), targetKind});
+            if (!exit) { return false; }
+            expected.push_back({*exit, true});
+        }
+    }
+    for (unsigned trips : {0U, 1U, 2U, 5U}) {
+        for (auto answer : expected) {
+            auto actual = evaluateMacroComposition(e, answer.query, demands->loop, trips, true);
+            if (!actual || *actual != (trips && answer.whenPresent)) { return false; }
+        }
+    }
+    llvm::outs() << "bounded-prerequisites: 48 composed event-kind/readiness checks passed\n";
+    return true;
+}
+} // namespace
+
+// The storage refresh certificate must not erase original SSA obligations at
+// the loop boundary. Compare the reverse export with the forward edge inventory.
+LogicalResult checkBoundedPrerequisiteScope(func::FuncOp function, pto::GMAliasPolicy policy)
+{
+    pto::SyncInput input(policy);
+    fs::PhaseIndex index;
+    if (failed(input.build(function)) || failed(index.build(function, input))) { return failure(); }
+    auto loops = function.getOps<scf::ForOp>();
+    if (loops.empty()) { return failure(); }
+    auto loop = *loops.begin();
+    for (const auto* phase : input.instructions()) {
+        std::vector<fs::ValuePrerequisite> expected;
+        function.walk([&](Operation* operation) {
+            for (const auto& edge : index.prerequisitesFor(operation)) {
+                if (edge.producer == phase) { expected.push_back(edge); }
+            }
+        });
+        auto actual = index.prerequisitesFrom(phase);
+        if (actual.size() != expected.size() || actual.data() != index.prerequisitesFrom(phase).data()) {
+            return function.emitError("prerequisite reverse inventory was rebuilt or lost edges");
+        }
+        for (const auto& edge : expected) {
+            if (llvm::none_of(actual, [&](const auto& candidate) {
+                    return candidate.consumer == edge.consumer && candidate.native == edge.native &&
+                        candidate.directSSA == edge.directSSA;
+                })) { return function.emitError("prerequisite reverse inventory changed an edge"); }
+        }
+    }
+    auto recognized = fs::recognizeBoundedLifetime(loop, index, input);
+    if (function->hasAttr("test.carried_prerequisite") || function->hasAttr("test.escaping_prerequisite")) {
+        if (recognized.skeleton.result.state == fs::RecognitionState::Applicable ||
+            llvm::none_of(recognized.skeleton.result.diagnostics, [](const auto& diagnostic) {
+                return diagnostic.issue == fs::RecognitionIssue::LoopCarriedState;
+            })) {
+            return function.emitError("carried prerequisite acquired an unsupported local span");
+        }
+        llvm::outs() << (function->hasAttr("test.escaping_prerequisite") ?
+            "bounded-prerequisites: escaping result requires an exit occurrence map\n" :
+            "bounded-prerequisites: carried obligation retained\n");
+        return success();
+    }
+    if (recognized.skeleton.result.state != fs::RecognitionState::Applicable ||
+        !recognized.prerequisites || recognized.prerequisites->incoming.empty() ||
+        (recognized.prerequisites->local.native.empty() && recognized.prerequisites->local.demands.empty())) {
+        return function.emitError("fixture lacks qualified local and incoming prerequisites");
+    }
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    std::string error;
+    auto demands = fs::analyzeBoundedLifetimeRegion(function, loop, index, input, recognized, error, arena);
+    if (failed(demands) || (*demands)->prerequisites != recognized.prerequisites) {
+        return function.emitError("bounded construction did not retain prerequisite ownership: " + error);
+    }
+    if (!checkBoundedReadinessComposition(*demands, recognized, index)) {
+        return function.emitError("bounded incoming/outgoing composition lost readiness");
+    }
+    const auto size = arena->size();
+    auto foreign = recognized;
+    auto proof = std::make_shared<fs::BoundedPrerequisiteCertificate>(*recognized.prerequisites);
+    proof->input = nullptr; foreign.prerequisites = std::move(proof);
+    if (succeeded(fs::analyzeBoundedLifetimeRegion(function, loop, index, input, foreign, error, arena)) ||
+        error.find("local-prerequisite certificate") == std::string::npos || arena->size() != size) {
+        return function.emitError("foreign bounded certificate was consumed or constructed expressions");
+    }
+    fs::PhaseIndex otherScope;
+    if (failed(otherScope.build(function, input)) ||
+        succeeded(fs::analyzeBoundedLifetimeRegion(function, loop, otherScope, input, recognized, error, arena)) ||
+        error.find("local-prerequisite certificate") == std::string::npos || arena->size() != size) {
+        return function.emitError("same-phase different prerequisite scope was consumed");
+    }
+    if (succeeded(fs::boundedLifetimeRegionalQueries(*demands, recognized, otherScope, arena, error)) ||
+        error.find("local-prerequisite certificate") == std::string::npos || arena->size() != size) {
+        return function.emitError("foreign prerequisite scope reached global-query construction");
+    }
+    if (succeeded(fs::prepareBoundedLifetimeLogicalResult(*demands, error, true)) ||
+        error.find("whole invocation") == std::string::npos) {
+        return function.emitError("regional refresh was promoted to whole-invocation coverage");
+    }
+    const auto previousScope = index.prerequisiteScope();
+    if (failed(index.build(function, input)) || index.prerequisiteScope() == previousScope ||
+        succeeded(fs::analyzeBoundedLifetimeRegion(function, loop, index, input, recognized, error, arena)) ||
+        error.find("local-prerequisite certificate") == std::string::npos || arena->size() != size) {
+        return function.emitError("rebuilt prerequisite scope accepted a stale certificate");
+    }
+    llvm::outs() << "bounded-prerequisites: local-map retained, incoming separate, foreign scope refused\n";
+    return success();
+}
