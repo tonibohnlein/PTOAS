@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Small independent integer-point checks for DBM primitives and selectors.
+#include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/DifferenceArrangement.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticSelectors.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompactAllocation.h"
 #include "llvm/ADT/STLExtras.h"
@@ -108,6 +109,52 @@ bool subtraction()
             if (contains(*result, {Integer(x), Integer(y)}) != (box && x != y && x >= 0)) { return false; }
         }
     }
+    return true;
+}
+bool seededSubtraction()
+{
+    auto universe = System::create(1, {});
+    auto nonpositive = System::create(1, {atom(1, 0, 0)});
+    auto positive = System::create(1, {atom(0, 1, -1)});
+    if (failed(universe) || failed(nonpositive) || failed(positive)) { return false; }
+    auto covered = fs::subtractDifferenceBoundUnions(1, {*universe}, {*nonpositive, *positive});
+    if (failed(covered) || !covered->empty()) { return false; }
+    for (unsigned pattern = 0; pattern < 256; ++pattern) {
+        std::vector<System> left, right;
+        for (unsigned i = 0; i < 2; ++i) {
+            const auto offset = int64_t((pattern >> (2 * i)) % 4) - 2;
+            auto seed = System::create(2, {atom(0, 1, -offset), atom(1, 0, offset + 2),
+                atom(0, 2, 2), atom(2, 0, 2)});
+            auto cut = System::create(2, {atom(1, 2, offset), atom(2, 0, int64_t(pattern % 3) - 1)});
+            if (failed(seed) || failed(cut)) { return false; }
+            left.push_back(*seed); right.push_back(*cut);
+        }
+        if (pattern % 3 == 0) { right.push_back(right.front()); }
+        auto result = fs::subtractDifferenceBoundUnions(2, left, right);
+        if (failed(result)) { return false; }
+        for (int64_t x = -4; x <= 4; ++x) {
+            for (int64_t y = -4; y <= 4; ++y) {
+                const std::vector<Integer> point{Integer(x), Integer(y)};
+                if (contains(*result, point) != (contains(left, point) && !contains(right, point))) { return false; }
+            }
+        }
+    }
+    for (unsigned count : {16U, 64U, 256U, 1024U}) {
+        std::vector<System> left;
+        for (unsigned i = 0; i < count; ++i) {
+            auto point = System::create(2, {atom(1, 0, i), atom(0, 1, -int64_t(i)),
+                atom(2, 0, 0), atom(0, 2, 0)});
+            if (failed(point)) { return false; }
+            left.push_back(*point);
+        }
+        auto cut = System::create(2, {atom(2, 0, -1)});
+        if (failed(cut)) { return false; }
+        fs::detail::DifferenceArrangementWork work;
+        auto result = fs::detail::subtractDifferenceArrangement(2, left, {*cut}, &work);
+        if (failed(result) || result->size() != count || work.seedVisits != count ||
+            work.thresholdAtoms != 1 || work.slices != 2 * count) { return false; }
+    }
+    llvm::outs() << "seeded DBM subtraction: 20736 point checks; 16/64/256/1024 seeds, one axis, two slices per seed\n";
     return true;
 }
 fs::ArithmeticRelationKey key(std::size_t target, uint64_t period = 2)
@@ -277,7 +324,7 @@ bool zeroCoordinates()
 } // namespace
 int runArithmeticSelectorChecks()
 {
-    if (!closureAndProjection() || !largeConstantsAndEmpty() || !subtraction()) {
+    if (!closureAndProjection() || !largeConstantsAndEmpty() || !subtraction() || !seededSubtraction()) {
         llvm::errs() << "exact difference-bound primitive checks failed\n";
         return 1;
     }

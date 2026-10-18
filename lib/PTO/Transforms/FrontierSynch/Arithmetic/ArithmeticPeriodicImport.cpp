@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "DifferenceIntegerConversion.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticPeriodicConversion.h"
 #include "mlir/IR/Matchers.h"
 #include "../Shared/CountedLoop.h"
@@ -146,21 +147,10 @@ FailureOr<IntegerSystem> ordinalSystem(const IntegerSystem& system, const Intege
     for (auto& row : congruences) { row.residue -= substitute(row.coefficients); }
     return IntegerSystem::create(system.dimensions(), constraints, congruences);
 }
-FailureOr<IntegerSystem> integerRows(unsigned dimensions, ArrayRef<DifferenceBoundConstraint> atoms)
-{
-    std::vector<IntegerConstraint> rows;
-    for (const auto& atom : atoms) {
-        IntegerConstraint row{std::vector<BoundInteger>(dimensions), atom.bound};
-        if (atom.lhs) { row.coefficients[atom.lhs - 1] += BoundInteger(1); }
-        if (atom.rhs) { row.coefficients[atom.rhs - 1] -= BoundInteger(1); }
-        rows.push_back(std::move(row));
-    }
-    return IntegerSystem::create(dimensions, rows, {});
-}
 FailureOr<IntegerSystem> ordinalSystem(const DifferenceBoundSystem& system, const IntegerAffine& lower,
     int64_t step, ArrayRef<BoundInteger> offsets)
 {
-    auto adapted = integerRows(system.dimensions(), system.constraints());
+    auto adapted = detail::integerDifferenceRows(system.dimensions(), system.constraints());
     if (failed(adapted)) { return failure(); }
     return ordinalSystem(*adapted, lower, step, offsets);
 }
@@ -207,7 +197,7 @@ FailureOr<IntegerSystem> ordinalRelation(const DifferenceBoundSystem& system,
     }
     auto closure = DifferenceBoundSystem::create(system.dimensions(), supported);
     const bool equivalent = succeeded(closure) && closure->isSubsetOf(system);
-    auto adapted = integerRows(system.dimensions(), equivalent ? supported : atoms);
+    auto adapted = detail::integerDifferenceRows(system.dimensions(), equivalent ? supported : atoms);
     if (failed(adapted)) { return failure(); }
     return ordinalSystem(*adapted, lower, step, offsets);
 }

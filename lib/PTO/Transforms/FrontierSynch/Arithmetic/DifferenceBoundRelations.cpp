@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Closed integer DBMs preserve exact projection; unions remain explicit unions.
-#include "PTO/Transforms/FrontierSynch/Arithmetic/DifferenceBoundRelations.h"
+#include "DifferenceArrangement.h"
 #include <algorithm>
 #include <limits>
 #include <map>
@@ -153,14 +153,19 @@ struct Direction {
     unsigned lhs = 0, rhs = 0;
     std::vector<BoundInteger> thresholds;
 };
-std::vector<Direction> directions(llvm::ArrayRef<DifferenceBoundSystem> lhs,
-                                  llvm::ArrayRef<DifferenceBoundSystem> rhs)
+void count(uint64_t* value)
+{
+    if (value && *value != UINT64_MAX) { ++*value; }
+}
+std::vector<Direction> directions(llvm::ArrayRef<DifferenceBoundSystem> pieces,
+    detail::DifferenceArrangementWork* work)
 {
     std::map<std::pair<unsigned, unsigned>, std::vector<BoundInteger>> values;
-    for (auto pieces : {lhs, rhs}) {
-        for (const auto& piece : pieces) {
-            if (piece.isEmpty()) { continue; }
-            for (const auto& atom : piece.constraints()) { values[{atom.lhs, atom.rhs}].push_back(atom.bound); }
+    for (const auto& piece : pieces) {
+        if (piece.isEmpty()) { continue; }
+        for (const auto& atom : piece.constraints()) {
+            count(work ? &work->thresholdAtoms : nullptr);
+            values[{atom.lhs, atom.rhs}].push_back(atom.bound);
         }
     }
     std::vector<Direction> result;
@@ -177,18 +182,6 @@ bool contained(const DifferenceBoundSystem& region, llvm::ArrayRef<DifferenceBou
     return std::any_of(pieces.begin(), pieces.end(),
                        [&](const auto& piece) { return region.isSubsetOf(piece); });
 }
-FailureOr<bool> canContribute(const DifferenceBoundSystem& region,
-                             llvm::ArrayRef<DifferenceBoundSystem> lhs,
-                             llvm::ArrayRef<DifferenceBoundSystem> rhs)
-{
-    if (contained(region, rhs)) { return false; }
-    for (const auto& piece : lhs) {
-        auto overlap = region.intersect(piece);
-        if (failed(overlap)) { return failure(); }
-        if (!overlap->isEmpty()) { return true; }
-    }
-    return false;
-}
 FailureOr<DifferenceBoundSystem> interval(unsigned dimensions, const Direction& direction, std::size_t choice)
 {
     std::vector<DifferenceBoundConstraint> atoms;
@@ -202,20 +195,19 @@ FailureOr<DifferenceBoundSystem> interval(unsigned dimensions, const Direction& 
     return DifferenceBoundSystem::create(dimensions, atoms);
 }
 FailureOr<std::vector<DifferenceBoundSystem>> arrange(
-    unsigned dimensions, llvm::ArrayRef<DifferenceBoundSystem> lhs,
-    llvm::ArrayRef<DifferenceBoundSystem> rhs, llvm::ArrayRef<Direction> axes)
+    const DifferenceBoundSystem& seed, llvm::ArrayRef<DifferenceBoundSystem> rhs,
+    llvm::ArrayRef<Direction> axes, detail::DifferenceArrangementWork* work)
 {
-    auto universe = DifferenceBoundSystem::create(dimensions, {});
-    if (failed(universe)) { return failure(); }
     struct Frame { DifferenceBoundSystem region; std::size_t axis = 0, next = 0; };
-    std::vector<Frame> stack{{*universe, 0, 0}};
+    std::vector<Frame> stack{{seed, 0, 0}};
     std::vector<DifferenceBoundSystem> output;
-    // The stack enumerates a single arrangement, retaining only one partial
-    // cell per depth. It never repeatedly expands a growing union of pieces.
+    // Every cell stays inside one original left seed. Only right-hand
+    // thresholds matter; never rediscover left membership from the universe.
+    // Different seeds may overlap, as permitted by the exact union interface.
     while (!stack.empty()) {
         auto& current = stack.back();
         if (current.axis == axes.size()) {
-            if (contained(current.region, lhs) && !contained(current.region, rhs)) {
+            if (!contained(current.region, rhs)) {
                 output.push_back(std::move(current.region));
             }
             stack.pop_back();
@@ -223,23 +215,20 @@ FailureOr<std::vector<DifferenceBoundSystem>> arrange(
         }
         const auto& axis = axes[current.axis];
         if (current.next > axis.thresholds.size()) { stack.pop_back(); continue; }
-        auto slice = interval(dimensions, axis, current.next++);
+        count(work ? &work->slices : nullptr);
+        auto slice = interval(seed.dimensions(), axis, current.next++);
         if (failed(slice)) { return failure(); }
         auto next = current.region.intersect(*slice);
         if (failed(next)) { return failure(); }
         if (next->isEmpty()) { continue; }
-        // Exact pruning does not split a union: a partial arrangement cell
-        // contributes nothing if already covered or disjoint from the input.
-        auto useful = canContribute(*next, lhs, rhs);
-        if (failed(useful)) { return failure(); }
-        if (*useful) { stack.push_back({std::move(*next), current.axis + 1, 0}); }
+        if (!contained(*next, rhs)) { stack.push_back({std::move(*next), current.axis + 1, 0}); }
     }
     return output;
 }
 } // namespace
-FailureOr<std::vector<DifferenceBoundSystem>> subtractDifferenceBoundUnions(
+FailureOr<std::vector<DifferenceBoundSystem>> detail::subtractDifferenceArrangement(
     unsigned dimensions, llvm::ArrayRef<DifferenceBoundSystem> lhs,
-    llvm::ArrayRef<DifferenceBoundSystem> rhs)
+    llvm::ArrayRef<DifferenceBoundSystem> rhs, DifferenceArrangementWork* work)
 {
     if (!representableDimensions(dimensions)) { return failure(); }
     for (auto pieces : {lhs, rhs}) {
@@ -257,7 +246,21 @@ FailureOr<std::vector<DifferenceBoundSystem>> subtractDifferenceBoundUnions(
     if (std::all_of(lhs.begin(), lhs.end(), [&](const auto& piece) { return contained(piece, rhs); })) {
         return std::vector<DifferenceBoundSystem>{};
     }
-    const auto axes = directions(lhs, rhs);
-    return arrange(dimensions, lhs, rhs, axes);
+    const auto axes = directions(rhs, work);
+    std::vector<DifferenceBoundSystem> output;
+    for (const auto& seed : lhs) {
+        count(work ? &work->seedVisits : nullptr);
+        if (seed.isEmpty() || contained(seed, rhs)) { continue; }
+        auto pieces = arrange(seed, rhs, axes, work);
+        if (failed(pieces)) { return failure(); }
+        for (auto& piece : *pieces) { output.push_back(std::move(piece)); }
+    }
+    return output;
+}
+FailureOr<std::vector<DifferenceBoundSystem>> subtractDifferenceBoundUnions(
+    unsigned dimensions, llvm::ArrayRef<DifferenceBoundSystem> lhs,
+    llvm::ArrayRef<DifferenceBoundSystem> rhs)
+{
+    return detail::subtractDifferenceArrangement(dimensions, lhs, rhs, nullptr);
 }
 } // namespace mlir::pto::frontiersynch

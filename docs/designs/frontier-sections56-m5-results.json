@@ -1,0 +1,2233 @@
+{
+  "milestone": "M5 retained arithmetic construction contracts",
+  "status": "accepted within documented scope; legacy InsertSync failure retained",
+  "baseline_revision": "d02810a2da0a5c095d1405db19d9cf6aade1d001",
+  "source_sha256": {
+    "include/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.h": "aa2c9be257f4e74338db8547378ccfa4be802831addaf95c0e8df94544d2c2a1",
+    "include/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRecognition.h": "98f4cca1acc4b63118e810e8ec70c63fe5313f8d0f5fbe0bd973e709d2655bbd",
+    "include/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h": "06f9c4dfee59750afb9709c14afab040672b9f12c49c62da237d30b12cf67a72",
+    "include/PTO/Transforms/FrontierSynch/Arithmetic/DifferenceBoundRelations.h": "9554282acb7f608093cc37a573210a56a09225cc79565956e8fc603c8b921808",
+    "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.cpp": "b93cd30c24d6f535d8adf63d2a7a2ea72f0fcc7aa679827fd9f3a8538b3a2c74",
+    "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticHandoffAllocation.cpp": "dde84b6b843a8d4358d9fbafb0c5402cc3492554be9b7bc9b5a3589eaa73a94a",
+    "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticPeriodicImport.cpp": "a5c0495d468e922069b62e6d844c529902d0aff946ba3c4b3510bdedba594348",
+    "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRecognition.cpp": "0bfdd08055b40509192f5e0ff0fd0c4ce823dd004a8131886877d0719ad63bea",
+    "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.cpp": "cbea6d0ec8163bf50ba7ea051de300388d2f3126d0af9d8b7011f2b36eaec038",
+    "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegionalComposition.cpp": "48cd9e2935fcd24ee6347f2c4fc68705d16981524d2b4529a6bf29f97b0a4715",
+    "lib/PTO/Transforms/FrontierSynch/Arithmetic/DifferenceBoundRelations.cpp": "8d5f2e475e3e1d0f9be1fcbe7a5d7fac3d69411f780c785ab88b5103e756ee0d",
+    "test/lit/pto/sync_arithmetic_export_retention.pto": "1c15102c58d3698e5c9e5ce68729692c833e5ced5d5956c21149fcf3b743a100",
+    "test/lit/pto/sync_arithmetic_selectors.pto": "60a1698f312996fc83b6a63bb7f278b4a17500cd97719a93e0864edb7fb56aa1",
+    "test/lit/pto/sync_general_arithmetic_demands.pto": "58c5b74e09f8419d312ab407bc6c3fabe146f8e3ed8d033df31559c2a4be4e57",
+    "tools/pto-test-opt/ArithmeticDemandChecks.cpp": "aa0520dc83df7ddfb18da6e233d2b3d1d6269b196fe6c3dacf850cf519ed50b5",
+    "tools/pto-test-opt/ArithmeticSelectorChecks.cpp": "033a816b3225fbcf019f6c0b0e47c9941c72f37d08329739928f592af96b9718",
+    "tools/pto-test-opt/pto-sync-input-test.cpp": "4b248ba3e2fce8d8b7fe28e7a0d9acfadc3b547130a58446a3ae05027fcb1b49",
+    "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegionalConstruction.h": "a3aa74f14f07f0de8cb181904e9ccba07847294aa7393f8582d01cfcb3aec8fc",
+    "lib/PTO/Transforms/FrontierSynch/Arithmetic/DifferenceArrangement.h": "db8c0c42f32fbd694b2cdda3d90d4cb054733b63482d1cf440f10da66c2517e5",
+    "lib/PTO/Transforms/FrontierSynch/Arithmetic/DifferenceIntegerConversion.h": "09da2f680ac6f94e2cdc9aa0223dcbd9d993c194e594917f94160ebf8d473d27"
+  },
+  "scope": {
+    "recognition": "One configured limits profile retained with normalized whole-primitive evidence; mixed incremental profiles rejected.",
+    "production": "Recognized Differences without nonempty machine-backed pieces use existing DBM reducer. Other classes retain existing integer reducer.",
+    "export": "Owned DBM result and all four converted relation maps retained across regional requests; exactness published only after complete successful conversion.",
+    "subtraction": "Existing DBM union subtraction now seeds original left domains and splits only at right thresholds; overlap between output union members remains allowed.",
+    "limits": "General composition, selectors and allocation remain integer consumers. No new octagonal solver, general linearity claim, admission cutoff or protocol change."
+  },
+  "validation": {
+    "focused": {
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_guards.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_program.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_piecewise_bounds.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_symbolic_siblings.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_composition.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_general_arithmetic_insertion.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_invariant_parameters.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_general_arithmetic_demands.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_insertion.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_demands.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_recurrences.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_periodic_conversion.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_membership.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_extended.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_compaction.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_bases.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_declared_profile.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_storage_selectors.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_export_retention.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_regional_arithmetic_context.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_piecewise_access.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_gm_discharge.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_integer_relations.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_finite_fill.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_scalar_ranges.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_entry_prerequisite.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_dispatch.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_access_first.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_general_arithmetic_selectors.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_selectors.pto",
+          "status": "PASS"
+        }
+      ],
+      "receipt_sha256": "15e6b820314680c911c1615f0549e4b2810089b93a3c279c5da6631434ab0b3b"
+    },
+    "independent_oracles": {
+      "regional_difference_valuations": 96,
+      "regional_checks": "Physical conflicts, native four-kind event order, required closure, covers, absence, adjacency and parameter/residue semantics.",
+      "difference_union_cases": 256,
+      "difference_point_comparisons": 20736,
+      "boundaries": "Overlapping seeds, duplicate and collectively covering right pieces, wide integers, empty zero-dimensional systems, invalid coordinates and machine-piece qualification."
+    },
+    "scaling": {
+      "conversion_systems": [
+        1,
+        16,
+        64,
+        256
+      ],
+      "conversion_work": "Exact systems, atoms and dense coefficient counts; fixed-dimensional row construction, not whole-pipeline linearity.",
+      "arrangement_seeds": [
+        16,
+        64,
+        256,
+        1024
+      ],
+      "arrangement_work": "Fixed right geometry: N seed visits, one right threshold atom, 2N slices, N output members. General arrangement bound still depends on dimension and right thresholds.",
+      "request_reuse": "Production selector failure, weaker query retry and successful selector export retain DBM owner and conversion counts; failed export cannot prepare."
+    },
+    "complete_gate": {
+      "receipt_sha256": "4a1915bc5e20fef67c64e8f3c15fa835038365718a49bbc637297ceb2e501d52",
+      "tests": [
+        {
+          "name": "PTOIR :: pto/insert_sync_slot_transitive.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_physical_refresh.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_composed_phases.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_regional_interfaces.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_guarded_publication.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_family_pipeline.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_crossing_recipe.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_emission_scaling.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_periodic_demands.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_identity_composition.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_boundary_rotation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_prepared_insertion.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_local_access_contracts.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_coordinate_allocation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_expansion.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_frontier_public_pipeline.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_transfer_access_exports.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_varying_rotating.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_empty_invocation_allocation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_region.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_analysis.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_singleton_boundary.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_guarded_rotating_analysis.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/rotating_boundary_certificate.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_mixed_regional.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_forced_overflow.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_oracle_self_validation.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_logical_insertion.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_allocation_profile.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_family_recipe.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_region_expression.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_guards.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_family_emission.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_guarded_analysis.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_modeled_access.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_allocation_module_ownership.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_family_allocation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_program.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_mixed_symbolic_regions.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: vpto/vecscope_sync_verify.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_combined_family_output.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_overflow_id_gap.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_allocation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_hardware_protection.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_piecewise_bounds.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_protection.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: vpto/bisheng_vf_auto_sync_cli.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_physical_allocation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_late_local_barriers.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_repeated_storage.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_mixed_crossing_families.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_contextual_deferred_output.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g2_event_pair_guards.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_self_coverage.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_coverage.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_event_rotation.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_endpoint_families.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_native_scalar_corpus.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recurring_global_numeric.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_mixed_deferred_output.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_evolving_numeric_body.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_allocation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_symbolic_siblings.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_sync_reachability.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_conditional_regions.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g3_faults.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_buf_token_pipe.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_unified_compensation_g2.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_unified_macro_pinning.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g4_count_floor.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_strided_streaming.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_allocation_candidates.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_completion_scoped.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/public_sync_interfaces.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_private_global_numeric.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_qualification.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_order_covered_periodic.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_routed_token_ids.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_pipe_s_self_ordered.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_composition.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_general_arithmetic_insertion.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_unified_model.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/insert_sync_gm_alias_policy.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_mechanism_field.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g2_faults.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_coverage_profile_version.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_invariant_parameters.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_mixed_stride.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/plan_memory_reused_tstore_sync_level2.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/insert_sync_a5_column_broadcast_reuse.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_general_arithmetic_demands.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gemm_access_regions.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/inject_barrier_all_sync_tpush_tpop.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/tstore_fp_insert_sync_effects.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/build_async_session_tile_native.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/tsync_tile_native.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g2_legal.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/bufid_sync_a5_auto.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_ordinary_access_routes.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_rotating_region.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_frontier_scaling.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_periodic_invariant_gm.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_extract_oracle_views.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_affine_disjoint_dynamic_base.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_explicit_namespaces.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_addr_reuse_diag.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g3_legal.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_invocation_prefix.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_stage_profile.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_demands.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_effects_gm_alias.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_conditional_session.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_rotating_analysis.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_regional_allocation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_recurrences.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_carried_relevance_corpus.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_periodic_conversion.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_insertion.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/issue533_loop_zero_trip_sync_regression.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: vpto/intra_block_sync_vpto_llvm.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/named_sync_a5_emitc.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/mgather_gm2ub_a2a3_row_macro_sync_model.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: vpto/async_session_unsupported.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/comm_dynamic_async_scope_invalid.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/mgather_gm2ub_a5_elem_1x1_memref_macro_sync_model.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: vpto/pipe_event_dyn_sync_llvm.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/tgather_compare_macro_sync_model.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/issue428_cube_sync_regression.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/insert_sync_level3_enable.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/mgather_gm2l1_elem_scratch_reuse_sync_a5.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/tprefetch_async_emitc.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/insert_sync_addptr_alias.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/tprefetch_async_invalid_non_1d.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/insert_sync_tile_native_args.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_manual_skip_mixed.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/tscatter_indexed_macro_sync_model.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/mgather_gm2l1_sync_a5.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/tsync_emitc.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/mgather_gm2l1_elem_sync_a5.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/issue454_loop_if_else_loop_carried_sync_regression.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_manual_skip.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounding_repetition.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/async_put_invalid_non_1d.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_descriptor_access_facts.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_allocation_session.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/async_put_get_emitc.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_numeric_template.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_rank_one_transfer_effects.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/logical_sync_ops.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_first_tail_allocation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_set_a5_emitc_physical_ids.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_affine_disjoint_nested.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_membership.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_order_covered_static_cells.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_based_gm_cells.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_affine_disjoint_carried.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_private_state_control_emitc.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_input_translation_failure.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_boundary_presence.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_program_recognition.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_modular_scalar.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_manual_skip_cross_core.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_extended.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_explicit_analysis.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_endpoint_retry.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_order_covered_sequence.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_macro_selectors.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_normalized_control_session.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_overlay_compact.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_singleton_prefix.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_prefix_realization.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_prefix.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_physical_rotation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_cleanup_deferred_output.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_manual_skip_scope.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_control_campaign.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_compaction.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_completion_public.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_result_guarantees.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_rotating_extraction.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_storage_selectors.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic_bases.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_guarded_periodic.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_declared_profile.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_region_digits.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_numerical_region_session.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_explicit_reduction.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/logical_sync_verify.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_protocol_descriptors.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_visit_whole.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_frontier_recognition_boundary.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_contracts.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_bounding_pipeline.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_overlay.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_fixed_protocol_capacity.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_strided_corpus_prefill_norm_pad.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_nested_exports_corpus.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_rotation_extended.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_strided_corpus_input_rmsnorm.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_frontier_descriptor_corpus.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_completion_transfer.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_balanced_compact.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_regional_arithmetic_context.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_completion_children.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_writer_reader_input.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_piecewise_access.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_natural_export_retry.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_crossing_cost_selection.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_alias_select_construction.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_shared_ranges.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_selected_regions.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_guarded_specialization_session.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_phase_minmax.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_export_retention.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_access_bridge.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_gm_discharge.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_step1_audit.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_shared_handoff_allocation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_input_macro_effects.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_visit_session.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_prerequisite_provenance.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_lifetime_provenance.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_access_regions.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_periodic_shared_allocation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_conditional_endpoint_upgrade.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_contextual_local_access.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounding_sequence.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_producer_failure_stages.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_shared_contracts.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_effects_reuse.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_extract_loop_alignment.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_bridge_work.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_effects_carried.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_shared_acc_read_read.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_rotating_region_storage.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_integer_relations.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_descriptor_gm_provenance.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_insert_access_effects.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_evolution.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_independent_gm.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_linear_access_effects.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_class_repetition.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_native_class_certification.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_memberships.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_constraints.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_visit_types.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_predicate_history.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_rotating.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_descriptor_dependencies.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_finite_fill.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_requirement_replacement.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_scalar_ranges.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_completion_inputs.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_prerequisites.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_failed_parity_rollback.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_guarded_compact_matching.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_rejections.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_explicit_residual_order.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_endpoint_audit.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_guarded.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_descriptor_state.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_selectors.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_program_structure_context.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_iteration_predicate_context.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_closed_completion.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_compact_storage_boundary.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_periodic_slice_allocation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_loop_session_cache.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_effects_views.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_regional_session.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_private_state_plan.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_counted_origin_corpus.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_slice_scalar_prerequisite.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_entry_prerequisite.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_allocation_session.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_analysis_session.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_conditional_compact_input.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_bound_symbols.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_linear_access_insertion.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_native_byte_stride_invalid.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_vector_unaligned_stride.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_effects_blocked.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_input_atomic_effects.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_input_effects.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_selected_regions_a5.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_descriptor_state_index32.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_partition_macro.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_runtime_lower_endpoints.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_explicit_access_contract.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_effects_slots.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_visit_input.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_selected_views.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_dispatch.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_scalar_corpus_normalization.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_structured_private_state.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_retained_demand_requests.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_invocation_source_bounds.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_analysis_gm.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_carried_scalar_proofs.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_completion_region.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_sequence_retained_demands.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_arithmetic_access_first.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_phase_index.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_recognition_arithmetic.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_bounded_inactive_emission.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_general_arithmetic_selectors.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_capabilities.pto",
+          "status": "PASS"
+        }
+      ]
+    },
+    "environment_retry": {
+      "reason": "Initial launcher used Python 3.14; extension is Python 3.12. Retry prepended workspace .venv/bin to PATH; no code or expectation changes.",
+      "receipt_sha256": "f9b3be39f1e5be49237cae5a8263a8c0e49266c7997acb9500dcd1c39bf0076c",
+      "tests": [
+        {
+          "name": "PTOIR :: pto/sync_contextual_deferred_output.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_mixed_deferred_output.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_logical_insertion.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_finite_family_pipeline.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_storage_effects_gm_alias.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/issue533_loop_zero_trip_sync_regression.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_overflow_id_gap.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_addr_reuse_diag.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/issue454_loop_if_else_loop_carried_sync_regression.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g3_legal.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_sync_reachability.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_forced_overflow.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_extract_oracle_views.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_affine_disjoint_dynamic_base.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/insert_sync_a5_column_broadcast_reuse.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/insert_sync_slot_transitive.pto",
+          "status": "FAIL"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_self_coverage.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_pipe_s_self_ordered.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_buf_token_pipe.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_oracle_self_validation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_set_a5_emitc_physical_ids.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_affine_disjoint_carried.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g2_event_pair_guards.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g2_faults.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: vpto/async_session_unsupported.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_affine_disjoint_nested.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_private_state_control_emitc.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_coverage_profile_version.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/mgather_gm2ub_a2a3_row_macro_sync_model.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/plan_memory_reused_tstore_sync_level2.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_mechanism_field.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_event_rotation.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: vpto/intra_block_sync_vpto_llvm.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/inject_barrier_all_sync_tpush_tpop.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/async_put_invalid_non_1d.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_routed_token_ids.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/tprefetch_async_invalid_non_1d.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/insert_sync_gm_alias_policy.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: vpto/pipe_event_dyn_sync_llvm.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/tscatter_indexed_macro_sync_model.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/tprefetch_async_emitc.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/public_sync_interfaces.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_unified_model.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/tstore_fp_insert_sync_effects.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g2_legal.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_unified_compensation_g2.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/issue428_cube_sync_regression.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/comm_dynamic_async_scope_invalid.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g3_faults.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/build_async_session_tile_native.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_unified_macro_pinning.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/tgather_compare_macro_sync_model.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/mgather_gm2ub_a5_elem_1x1_memref_macro_sync_model.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/named_sync_a5_emitc.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/bufid_sync_a5_auto.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g1_coverage.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/mgather_gm2l1_elem_scratch_reuse_sync_a5.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/tsync_emitc.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/async_put_get_emitc.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/mgather_gm2l1_sync_a5.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/tsync_tile_native.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: vpto/bisheng_vf_auto_sync_cli.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/sync_gate_g4_count_floor.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/mgather_gm2l1_elem_sync_a5.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/insert_sync_level3_enable.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/insert_sync_addptr_alias.pto",
+          "status": "PASS"
+        },
+        {
+          "name": "PTOIR :: pto/insert_sync_tile_native_args.pto",
+          "status": "PASS"
+        }
+      ]
+    },
+    "combined_gate": {
+      "selected": 307,
+      "passed": 306,
+      "failures": [
+        "PTOIR :: pto/insert_sync_slot_transitive.pto"
+      ],
+      "scope": "Full requested synchronization/rotating-certificate filter, including legacy paths; 240 initial passes plus 66 corrected-environment passes. Not a fresh single all-green run.",
+      "remaining_failure": "Legacy insert_sync_slot_transitive.pto CHECK-NEXT differs from unchanged InsertSync debug output. No expected result relaxed; not the Frontier allocator/reducer."
+    },
+    "primary49": {
+      "status": "complete",
+      "receipt_sha256": "63196004a7e0d637f50cc2dd8762a55a59bd0ce8627915646f068193b81f149a",
+      "binaries": {
+        "baseline": {
+          "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/sections56-arithmetic/baseline/pto-test-opt",
+          "sha256": "b58332ba384f366a6e6cf6d0f40536b8605a2fa8ab58bfbf488b9f887865ade9"
+        },
+        "candidate": {
+          "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "sha256": "bd83f39cb3c21b30cd0ff1d052504756242d92d0c547e5c688876cf199197884"
+        }
+      },
+      "cases": [
+        {
+          "id": "0000",
+          "sha256": "8aa3491afbabdffdc703a5df8090712964e5440e5fcb7bc2de40e0634578c411",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0001",
+          "sha256": "138e4b22cb37800778c21dae6aa677116fd5e045f069b51d755b747526892572",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0002",
+          "sha256": "7fc04f6c61368697a77f88ad873a4a58b3d543f161b568aac24f4c24bbdb12ad",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0003",
+          "sha256": "663d4a5b4f18e88994b573b94c8d0129c3aa9a40c45c8b8cc7e0b6cddea73cef",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0004",
+          "sha256": "924a41d73f8584f6808c5cec69a54390446304255de90d9e9f01287748a6cb03",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0005",
+          "sha256": "c2431f5ba5f9cf3f7d1300abe076c38d8fb91e78fb93d604b67a057358a1a703",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0006",
+          "sha256": "613cd3354a23fbb4273463771b6636af1373d84b93f1e2ecd97920ac103c1bb7",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0007",
+          "sha256": "aa63044e86736e1c2ba2d36807c3cd79cbbdc391118131d26ec1d45752ae431c",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0008",
+          "sha256": "cb5a08db78e56bd05045c7c94dad5f0f8c29a76dfa579b9d1a188e27f2e7f499",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0009",
+          "sha256": "384a210f7e16635e2bfdefbfc45ca7c9567ef50b5d3458164069bb50665fe9ad",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0010",
+          "sha256": "9ec660aea969c9a77b1db51ae44d854b38579292f9b04656525f18912b5b11bf",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0011",
+          "sha256": "88e07acdb5aca0195b9408c4389ecf5e7f34dae559cea445fc26c6b35490b47a",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0034",
+          "sha256": "053f39b6ca12070c1c87f3b970c5ab10c23ee6e6cb5878d7dab1d7a67f59aad2",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0035",
+          "sha256": "8dc5c969a93a5086e9b8e1309932197690f5ebf7d781fe27d7cefccbc2a1a349",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0036",
+          "sha256": "e97ef64cd3baa377053240d2ac075e40d81a5a9095a383a54edab24fcd7e802e",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0037",
+          "sha256": "8f720df29a0ec8a62452e12c62becd7209e8d36a1f5772ea10bb408c86d55a14",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0038",
+          "sha256": "3bfec807cced2bfd378bbac062c7fbe0622897123176926ca7b963e458176c89",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0039",
+          "sha256": "5d3b978c39126b94deae41d72a8a20d2176f8d3ffc8d4fe66fc3dce34d434bf8",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0040",
+          "sha256": "b258009ffc11f2ff9fdfbe1b2431cf7e2fe3b9401fe50889e94abac1dc82334d",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0041",
+          "sha256": "b2bc134f9291b00beb3f824f23051c04e15f7b1dcbae1661093c46133d3ed189",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0042",
+          "sha256": "bf464ba4bcf53d2874bf0c26410a9567487f8db434d67b37ecc905406574d0ee",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0043",
+          "sha256": "d55392748462b0ecdc9d378bd4265ce7dd1af945434309e6e24f4d25cf911589",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0044",
+          "sha256": "e449eab45a551d43b2224176c1ce6d0acb609d1b27689768b359d3050c2a05a9",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0045",
+          "sha256": "81241fa80fe97d40a81f60e440b3c057b46883fdc820485c8be29ed1ad2d3fc3",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0046",
+          "sha256": "6a714623aed4ddddf8afdb6d51f88d8a5403fc1d44ed896bd4fc224edf6659c8",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0047",
+          "sha256": "c38bebe909a21e318ab0b430897edd94320c3b600fc1fe36a97541021cca913d",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0048",
+          "sha256": "88a8bcf8b07f59979f22b1f2a586f20e122474e9d0ea89ee88c11b98f84db321",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0049",
+          "sha256": "4aa2e13e8e527a63a61e3ed18192142cf3d14c11b72fea1af76cd01efe477c07",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0050",
+          "sha256": "8cab94112b406daaa012186be0ba420350d41617fe9b452c3233612d0a66f114",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0051",
+          "sha256": "967dbe255819f90c258519d2bd036874e19ef7e9a401300dd7947c0c9467afa5",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0052",
+          "sha256": "3d3975ad7437296840a86eaf055415c59961ecf084961faee654aafcca0cc4fb",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0053",
+          "sha256": "2d338e046b6019a54c01079e2b0a37437ee7900294f5c4ac0557d5b3c5657c16",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0054",
+          "sha256": "5be31599cbba59d10880b2b0003af557831c3718e3ad56f0ba3479170b9c7f5f",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0055",
+          "sha256": "53b63fb46e0e08e2d1f28c3713afc86ed50043125fe972bf79dcd21dcfa32ff5",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0056",
+          "sha256": "81a312e127649b499f898df5df17b6ff09a1acfb40645557802b8dfc26590ccb",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0057",
+          "sha256": "da61f56ecd3d1a010dc234d03a637e1509b2b55d83d46064b9a9e24f85c05182",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0058",
+          "sha256": "c01e9826a3e043a4f2ace8e27bc39df78a5829ee9d16f0d7c362112e956dbeb8",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0059",
+          "sha256": "8182c1ae61c53710cdb360cc9dee0100c95a84f4e63139286f4126e935d8072d",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0060",
+          "sha256": "fe1f31d1fba82dc0df560f05c78fa95fe2bf6d4c0cecdadd2cb50bfa7103d446",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0061",
+          "sha256": "c47c6a58772cfdb889f53a072b050c07fe1920ec23bed88dd6205d42b2325655",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0062",
+          "sha256": "72cb0c179b53f43511c9afe3c5cbe48c6564822132ca2ff753817943292fab36",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0063",
+          "sha256": "35c4f74fe04033c12885866735398ec0bb60252290b5f3c2d3f4ddad1cfaf16d",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0064",
+          "sha256": "a9764af4f5fcedc42b9befb3681709c227a2aa1c0318a8792fd429cb94d461a6",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0065",
+          "sha256": "894f8df3d631ca1c23b598f5b8fb5d3b6643d201f0e900c970f19e4d04d72be3",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0066",
+          "sha256": "79839518b7cd766cda991aa6311dbe9b1ae313a4de4978c897b360058d55c408",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0067",
+          "sha256": "89581a9d6f1e5d3319c25ee3c23945148fc2a80588c7b87655f6092192024597",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0068",
+          "sha256": "a73c7b63174fca917a048064d65ec33c1910bdd8a61de6062bd78daef5445124",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0069",
+          "sha256": "9b685df0952b6176e8f7ef2ee2a93078ae89117e8c77610b9fc7c707f95c01ec",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        },
+        {
+          "id": "0070",
+          "sha256": "b2039a34bdf1fa7094198b3bf9a75225fd5d43b855a77440ac0c4b5dfae6b1e3",
+          "logical_byte_equal": true,
+          "physical_byte_equal": true
+        }
+      ],
+      "scope": "Pinned primary PyPTO-lib modules; immediate M4 comparison, logical and six-ID split output; no device execution"
+    }
+  },
+  "timing": {
+    "diagnostic": {
+      "baseline_revision": "d02810a2da0a5c095d1405db19d9cf6aade1d001",
+      "tools": {
+        "baseline": "2325f075e9f16ab74cd591979793404afa7baebddac8ba3897eabb4fe6f237f1",
+        "candidate": "fe6c6cfc1ef74a49df2b7ff4d9f7b8975e71365f70d04db11f58948e43b6efb9"
+      },
+      "timeout_seconds": 90,
+      "runs": [
+        {
+          "fixture": "regional-exports",
+          "pair": 0,
+          "tool": "baseline",
+          "seconds": 0.08332239696756005,
+          "status": 0
+        },
+        {
+          "fixture": "regional-exports",
+          "pair": 0,
+          "tool": "candidate",
+          "seconds": 0.10515956720337272,
+          "status": 0
+        },
+        {
+          "fixture": "regional-exports",
+          "pair": 1,
+          "tool": "baseline",
+          "seconds": 0.08269554516300559,
+          "status": 0
+        },
+        {
+          "fixture": "regional-exports",
+          "pair": 1,
+          "tool": "candidate",
+          "seconds": 0.10513076931238174,
+          "status": 0
+        },
+        {
+          "fixture": "regional-exports",
+          "pair": 2,
+          "tool": "baseline",
+          "seconds": 0.08463488798588514,
+          "status": 0
+        },
+        {
+          "fixture": "regional-exports",
+          "pair": 2,
+          "tool": "candidate",
+          "seconds": 0.10536553617566824,
+          "status": 0
+        }
+      ]
+    },
+    "diagnostic_scope": "Three serial interleaved certify-regions runs including test-owned repeated exports. Approximately 83 to 105 ms: regression retained, not production planning-only timing.",
+    "production": [
+      {
+        "pair": 0,
+        "tool": "baseline",
+        "seconds": 0.15874455496668816,
+        "status": 0
+      },
+      {
+        "pair": 0,
+        "tool": "candidate",
+        "seconds": 0.12784201093018055,
+        "status": 0
+      },
+      {
+        "pair": 1,
+        "tool": "baseline",
+        "seconds": 0.12789297988638282,
+        "status": 0
+      },
+      {
+        "pair": 1,
+        "tool": "candidate",
+        "seconds": 0.1263373871333897,
+        "status": 0
+      },
+      {
+        "pair": 2,
+        "tool": "baseline",
+        "seconds": 0.12760271783918142,
+        "status": 0
+      },
+      {
+        "pair": 2,
+        "tool": "candidate",
+        "seconds": 0.1255012908950448,
+        "status": 0
+      }
+    ],
+    "production_scope": "Extracted request_exports fixture through ordinary public analysis. Byte-identical output; roughly neutral around 127 ms, with a cold baseline outlier. No speedup claim.",
+    "production_output_byte_equal": true
+  },
+  "source_build": {
+    "incremental": true,
+    "llvm_rebuilt": false,
+    "mirror_exceptions": [
+      "include/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.h",
+      "include/PTO/Transforms/FrontierSynch/Arithmetic/DifferenceBoundRelations.h",
+      "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticDemandAnalysis.cpp"
+    ],
+    "mirror_exception_scope": "Only signature whitespace and complexity comments differ from compiled mirror. Executable tokens and tests agree; not a byte-identical source snapshot."
+  },
+  "reviews": {
+    "architecture": "Final scoped M5 closure ACCEPT: source and receipts inspected, no architecture blocker. Legacy failure, retry history and diagnostic regression remain explicit.",
+    "correctness": "Final scoped M5 closure ACCEPT: independently checked all20 source hashes, exact67-test retry coverage,306/307 combined result and all49 immediate-M4 byte-equality results. Legacy failure remains open."
+  },
+  "device_compiler_run": false,
+  "device_execution_run": false,
+  "compliance": {
+    "command": "check_changed_code.py --repo . --base HEAD",
+    "exit_code": 1,
+    "findings": [
+      {
+        "path": "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegionalConstruction.h",
+        "line": 40,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "    if (!source.error.empty() || !source.exactMinimum) { return; }\n    AnalysisProfileScope adapter(profile.ledger, \"arithmetic-difference-export\", profile.region);\n    adapter.constructed();\n    std::vector<std::pair<GeneralArithmeticRelation*, GeneralArithmeticRelation>> staged;\n    for (auto pair : {std::make_pair(&source.generators, &target.generators),"
+      },
+      {
+        "path": "lib/PTO/Transforms/FrontierSynch/Arithmetic/DifferenceBoundRelations.cpp",
+        "line": 253,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "        if (seed.isEmpty() || contained(seed, rhs)) { continue; }\n        auto pieces = arrange(seed, rhs, axes, work);\n        if (failed(pieces)) { return failure(); }\n        for (auto& piece : *pieces) { output.push_back(std::move(piece)); }\n    }"
+      },
+      {
+        "path": "tools/pto-test-opt/ArithmeticDemandChecks.cpp",
+        "line": 817,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "        if (failed(exported) || exported->size() != count || cost.differenceExportSystems != count ||\n            cost.differenceExportAtoms != atoms || cost.differenceExportCoefficients != 2 * atoms) { return false; }\n        for (const auto& [key, pieces] : *exported) {\n            if (pieces.size() != 1 || !pieces.front().congruences().empty() ||\n                key.source.residues != std::vector<uint64_t>{0} ||"
+      },
+      {
+        "path": "tools/pto-test-opt/ArithmeticDemandChecks.cpp",
+        "line": 820,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "            if (pieces.size() != 1 || !pieces.front().congruences().empty() ||\n                key.source.residues != std::vector<uint64_t>{0} ||\n                key.target.residues != std::vector<uint64_t>{1}) { return false; }\n            for (int x = -2; x <= 3; ++x) {\n                for (int y = -2; y <= 3; ++y) {"
+      },
+      {
+        "path": "tools/pto-test-opt/ArithmeticDemandChecks.cpp",
+        "line": 840,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "    if (failed(emptyExport) || !emptyExport->empty()) { return false; }\n    auto empty = fs::detail::integerDifferenceRows(0, {{0, 0, B(-1)}});\n    auto universe = fs::detail::integerDifferenceRows(0, {});\n    B wide(1);\n    for (unsigned bit = 0; bit < 100; ++bit) { wide *= B(2); }"
+      },
+      {
+        "path": "tools/pto-test-opt/ArithmeticDemandChecks.cpp",
+        "line": 846,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "    if (failed(empty) || !empty->isEmpty() || failed(universe) || universe->isEmpty() ||\n        failed(wideSystem) || wideSystem->constraints().size() != 1 ||\n        wideSystem->constraints().front().bound != wide ||\n        succeeded(fs::detail::integerDifferenceRows(0, {{1, 0, B(0)}}))) { return false; }\n    llvm::outs() << \"difference exports: exact rows, wide/empty/invalid, 1/16/64/256 linear fixed-dimension row work\\n\";"
+      },
+      {
+        "path": "tools/pto-test-opt/ArithmeticDemandChecks.cpp",
+        "line": 870,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "        if (adapter == ledger->stages.end() || !ledger->activeStages.empty()) {\n            retained.analysis.error = \"difference adapter work was not attributed separately\";\n        }\n        const auto& cost = retained.analysis.cost;\n        if (!retained.differenceDemands || cost.differenceReductions != 1 || cost.integerReductions ||"
+      },
+      {
+        "path": "tools/pto-test-opt/ArithmeticSelectorChecks.cpp",
+        "line": 119,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "    if (failed(universe) || failed(nonpositive) || failed(positive)) { return false; }\n    auto covered = fs::subtractDifferenceBoundUnions(1, {*universe}, {*nonpositive, *positive});\n    if (failed(covered) || !covered->empty()) { return false; }\n    for (unsigned pattern = 0; pattern < 256; ++pattern) {\n        std::vector<System> left, right;"
+      },
+      {
+        "path": "tools/pto-test-opt/ArithmeticSelectorChecks.cpp",
+        "line": 121,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "    if (failed(covered) || !covered->empty()) { return false; }\n    for (unsigned pattern = 0; pattern < 256; ++pattern) {\n        std::vector<System> left, right;\n        for (unsigned i = 0; i < 2; ++i) {\n            const auto offset = int64_t((pattern >> (2 * i)) % 4) - 2;"
+      },
+      {
+        "path": "tools/pto-test-opt/ArithmeticSelectorChecks.cpp",
+        "line": 129,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "            if (failed(seed) || failed(cut)) { return false; }\n            left.push_back(*seed); right.push_back(*cut);\n        }\n        if (pattern % 3 == 0) { right.push_back(right.front()); }\n        auto result = fs::subtractDifferenceBoundUnions(2, left, right);"
+      },
+      {
+        "path": "tools/pto-test-opt/ArithmeticSelectorChecks.cpp",
+        "line": 138,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "                if (contains(*result, point) != (contains(left, point) && !contains(right, point))) { return false; }\n            }\n        }\n    }\n    for (unsigned count : {16U, 64U, 256U, 1024U}) {"
+      },
+      {
+        "path": "tools/pto-test-opt/ArithmeticSelectorChecks.cpp",
+        "line": 154,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "        if (failed(result) || result->size() != count || work.seedVisits != count ||\n            work.thresholdAtoms != 1 || work.slices != 2 * count) { return false; }\n    }\n    llvm::outs() << \"seeded DBM subtraction: 20736 point checks; 16/64/256/1024 seeds, one axis, two slices per seed\\n\";\n    return true;"
+      },
+      {
+        "path": "tools/pto-test-opt/ArithmeticSelectorChecks.cpp",
+        "line": 327,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "    if (!closureAndProjection() || !largeConstantsAndEmpty() || !subtraction() || !seededSubtraction()) {\n        llvm::errs() << \"exact difference-bound primitive checks failed\\n\";\n        return 1;\n    }\n    if (!signedResiduesAndTags() || !selectorValidation() || !selectorLargeConstants() ||"
+      },
+      {
+        "path": "tools/pto-test-opt/pto-sync-input-test.cpp",
+        "line": 969,
+        "rule": "G.FMT.11-CPP",
+        "decision": "False positive: control body is braced; regex stops at a nested call parenthesis.",
+        "evidence": "  if (succeeded(invalidPreparation) || arena->size() != beforeFailedPreparation ||\n      failedAdapter.differenceDemands != dbm) {\n    return function.emitError(\"failed integer export entered preparation or discarded DBM evidence\");\n  }\n  error.clear();"
+      }
+    ],
+    "unresolved_findings": [],
+    "scope": "C++17 source, tests and ownership reviewed; no new compiler warnings. Earlier two line-length findings fixed. No EChecker/SecK or release-hardening qualification claimed."
+  }
+}

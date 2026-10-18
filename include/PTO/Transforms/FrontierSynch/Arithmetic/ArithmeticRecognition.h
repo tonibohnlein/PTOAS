@@ -100,6 +100,8 @@ struct NormalizedPiece {
     std::shared_ptr<const IntegerSystem> machineSystem;
 };
 struct ArithmeticRecognition {
+    // Fixed admission profile, retained with the normalized whole-primitive certificate.
+    std::optional<ArithmeticLimits> configuredLimits;
     RecognitionState state = RecognitionState::Applicable;
     ArithmeticClass arithmeticClass = ArithmeticClass::Differences;
     unsigned observedDimensions = 0;

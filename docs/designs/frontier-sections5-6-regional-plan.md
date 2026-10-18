@@ -1,6 +1,6 @@
 # Sections 5–6: regional fallback and reusable certificates
 
-Baseline: `4710959d9`. Status: M1–M4 accepted; M5 remains open.
+Baseline: `4710959d9`. Status: M1–M5 implemented and accepted within the approved scope.
 
 The implementation preserves exact minimum demands, original cuts, matching and
 established realization guarantees on exact paths. Completion fallback reports
@@ -265,3 +265,90 @@ fixture-local observation including process/interpreter overhead, not an
 end-to-end compiler or device speedup claim. Interpreted arithmetic falls from
 3,603 to 2,175 evaluations with 39 trace events in each version; both pass the
 independent conflict/order oracle.
+
+## M5 implementation and qualification
+
+Arithmetic recognition retains the configured pipe/dimension/period/coefficient
+profile with its normalized whole-primitive certificate. Incremental recognition
+under a different profile refuses the result instead of publishing mixed evidence.
+Observed dimensions include imported machine-congruence locals; a recognized
+class is not a promise about the size of later projections or differences.
+
+Regional construction uses the existing difference-bound reducer only for the
+recognized Differences class without nonempty machine-backed pieces. The owner
+retains that immutable result. It converts all four completed relations once for
+the existing integer regional interface, preserving event identities, residues,
+parameter schema, adjacency and exactness. Later query, selector and preparation
+exports share the retained mathematics. Unsupported classes retain the existing
+integer reducer; an unavailable export does not authorize conservative replacement.
+
+The first timing comparison exposed a DBM subtraction regression. The shared DBM
+subtractor now seeds its arrangement with each original left domain and uses only
+right-hand threshold axes. Every output remains inside its seed; fixing all
+right-hand atoms decides membership exactly. Overlapping outputs remain valid
+union members. This removes universe reconstruction and repeated left-membership
+intersections. Seed, threshold and slice visits have an optional shared observer.
+
+The common DBM-to-integer adapter replaces the handoff and periodic import row
+converters. Conversion counts systems, finite DBM atoms and dense coefficients
+separately. At fixed dimension, row construction is proportional to the supplied
+atoms; relation-map insertion is additionally logarithmic in its key count. A closed
+D-dimensional DBM can contain O(D²) atoms and each exported dense row has D
+coefficients. No general reduction or feasibility query is performed by this
+adapter. Integer normalization remains charged implementation work.
+
+Octagons, bounded coefficients and machine primitives still use the general
+integer policy. Downstream symbolic composition, selectors and allocation remain
+integer consumers, with their existing projection/subtraction/witness costs.
+This milestone does not claim a new octagonal solver or a uniformly cheap general
+relation construction. The existing arithmetic-to-periodic admission checks
+remain authoritative for difference-only coordinates and endpoint validity.
+
+| Previous production operation | Replacement | Remaining boundary |
+|---|---|---|
+| Unconditional general-integer regional reduction | Qualified DBM reduction with retained owner, otherwise integer reduction | General composition remains integer |
+| Separate handoff and periodic DBM row converters | One checked arbitrary-precision adapter | Endpoint expression availability remains separate |
+| Class label without retained admission profile | Fixed profile plus normalized primitive evidence | Extraction and relation construction are separately charged |
+
+The [M5 receipt](frontier-sections56-m5-results.json) retains the focused 31/31
+arithmetic gate, 96 independent regional valuations, 20,736 subtraction point
+comparisons and geometric conversion/seed-work checks. Both reviewers accepted
+the focused source/runtime evidence and final qualification within this scope.
+
+Three interleaved diagnostic export/retry runs regress from about 83 to 105 ms.
+That measurement includes audit and test-owned repeated requests; it is not a
+production-only planning measurement. The production fixture is byte-identical
+and roughly neutral around 127 ms, with a cold baseline outlier. No speedup is
+claimed. The DBM owner and exact export contract are established; downstream
+integer adapters can still cost more than direct integer construction.
+
+## Final qualification and remaining limits
+
+The requested broad synchronization filter selected 307 tests. The first run
+passed 240; 67 failures were rerun with the workspace Python 3.12 ahead of the
+system Python 3.14, matching the existing extension ABI. That rerun passed 66.
+Together they give 306/307 passing, without a timeout. This is a complete gate
+plus a corrected-environment failure rerun, not a fresh single all-green run.
+The sole remaining legacy `insert_sync_slot_transitive.pto` failure is a
+`CHECK-NEXT` mismatch in unchanged InsertSync debug output. Its expectation was
+not relaxed. Frontier's repeated-phase and semantic oracles pass.
+
+All 49 pinned primary PyPTO-lib modules pass logical compilation and six-ID
+allocation. Both outputs are byte-identical against the immediate M4 baseline.
+That comparison qualifies this milestone's tested regression scope, not all
+possible programs or device execution. The broad lit gate exercises C++ emission
+where requested; the primary campaign does not request corpus-wide C++ or device
+compilation.
+
+The native incremental build uses the source mirror. Three source files differ
+from it only in signature whitespace or corrected complexity comments; executable
+tokens and tests agree. The receipt lists these exceptions instead of claiming a
+byte-identical source snapshot. The changed-code checker reports 14 nested-call
+brace false positives, each inspected and recorded with its already-braced body.
+No EChecker/SecK, device compiler, or device execution qualification is claimed.
+
+The approved scope remains qualified: pending children owning local notifications,
+new coordinator protocols, general protocol synthesis, unrestricted arithmetic
+composition and uniformly cheap symbolic selectors are not implemented here.
+Absent loss evidence remains unavailable, not zero. Missing exact exports do not
+authorize weakening retained exact mathematics.

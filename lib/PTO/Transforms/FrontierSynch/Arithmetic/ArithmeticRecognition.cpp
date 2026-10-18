@@ -40,6 +40,15 @@ void reject(ArithmeticRecognition& output, ArithmeticIssue issue, std::size_t re
 }
 bool configured(const ArithmeticLimits& limits, ArithmeticRecognition& output)
 {
+    if (output.configuredLimits) {
+        const auto& previous = *output.configuredLimits;
+        if (previous.pipes != limits.pipes || previous.dimensions != limits.dimensions ||
+            previous.period != limits.period || previous.coefficient != limits.coefficient) {
+            reject(output, ArithmeticIssue::InvalidConfiguration);
+            output.pieces.clear();
+            return false;
+        }
+    } else { output.configuredLimits = limits; }
     if (limits.pipes && limits.period && limits.coefficient) { return true; }
     reject(output, ArithmeticIssue::InvalidConfiguration, 0, 0, true);
     output.pieces.clear();

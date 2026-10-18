@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "DifferenceIntegerConversion.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticHandoffAllocation.h"
 #include "ArithmeticHandoffProof.h"
 #include "ArithmeticUnaryExtrema.h"
@@ -547,36 +548,14 @@ ArithmeticCoordinateHandoffAllocation buildArithmeticCoordinateHandoffAllocation
     }
     return result;
 }
-namespace {
-FailureOr<GeneralArithmeticRelation> convert(const ArithmeticRelation& relation)
-{
-    GeneralArithmeticRelation result;
-    for (const auto& [key, pieces] : relation) {
-        for (const auto& piece : pieces) {
-            SmallVector<IntegerConstraint> rows;
-            if (piece.isEmpty()) { continue; }
-            for (const auto& atom : piece.constraints()) {
-                IntegerConstraint row{std::vector<BoundInteger>(piece.dimensions(), BoundInteger(0)), atom.bound};
-                if (atom.lhs > piece.dimensions() || atom.rhs > piece.dimensions()) { return failure(); }
-                if (atom.lhs) { row.coefficients[atom.lhs - 1] += 1; }
-                if (atom.rhs) { row.coefficients[atom.rhs - 1] -= 1; }
-                rows.push_back(std::move(row));
-            }
-            auto system = IntegerSystem::create(piece.dimensions(), rows);
-            if (failed(system)) { return failure(); }
-            append(result, key, {*system});
-        }
-    }
-    return result;
-}
-} // namespace
 ArithmeticHandoffAllocation buildArithmeticHandoffAllocation(
     const ArithmeticDemandAnalysis& analysis, ArrayRef<uint32_t> pipes, unsigned maxWidth, AllocationProfile* profile)
 {
     GeneralArithmeticDemandAnalysis converted;
     converted.period = analysis.period; converted.parameterCount = analysis.parameterCount;
     converted.exactMinimum = analysis.exactMinimum; converted.error = analysis.error;
-    auto demands = convert(analysis.minimumDemands), required = convert(analysis.requiredOrder);
+    auto demands = detail::exportDifferenceRelation(analysis.minimumDemands);
+    auto required = detail::exportDifferenceRelation(analysis.requiredOrder);
     if (failed(demands) || failed(required)) {
         ArithmeticHandoffAllocation result; result.error = "completed arithmetic DBM conversion failed"; return result;
     }

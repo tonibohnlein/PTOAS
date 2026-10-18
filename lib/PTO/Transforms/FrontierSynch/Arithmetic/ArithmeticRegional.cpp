@@ -8,6 +8,7 @@
 // Exact arithmetic child interfaces for sequence composition.
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "ArithmeticByteCover.h"
+#include "ArithmeticRegionalConstruction.h"
 #include "ArithmeticImportedPrimitives.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "../Shared/CountedLoop.h"
@@ -979,7 +980,10 @@ FailureOr<RegionalAnalysis> analyzeArithmeticRegionImpl(ArithmeticRegionContext 
     // adapters can fail independently of the mathematical reduction.
     auto reduce = [&]() {
         const auto protection = structuredProtection(input.accesses());
-        state->analysis = analyzeGeneralArithmeticDemandsWithProtection(state->program, protection, demandProfile);
+        detail::constructRegionalArithmetic(*state, protection, demandProfile);
+        // A failed adapter does not erase successfully retained DBM mathematics.
+        if (retained && state->differenceDemands && state->differenceDemands->exactMinimum &&
+            state->differenceDemands->error.empty()) { *retained = state; }
         if (!state->analysis.error.empty()) { error = state->analysis.error; return false; }
         if (!state->analysis.exactMinimum) { error = "regional exact reduction is unavailable"; return false; }
         if (retained) { *retained = state; }
@@ -1039,6 +1043,7 @@ FailureOr<RegionalAnalysis> exportSpecializedArithmeticRegion(
     auto state = std::make_shared<State>(allocationPolicy);
     state->input = demands.input; state->inputOwner = demands.inputOwner; state->indexOwner = demands.indexOwner;
     state->entryConstants = demands.entryConstants;
+    state->differenceDemands = demands.differenceDemands;
     state->program = demands.program; state->analysis = demands.analysis; state->arena = expressions;
     auto exported = initializeExports(state, *demands.input, error, selectors,
         StorageExportRequest::SymbolicAllowed, parameterBinding);
@@ -1087,6 +1092,7 @@ FailureOr<RegionalAnalysis> exportArithmeticRegion(
     state->input = demands.input;
     state->inputOwner = inputOwner ? std::move(inputOwner) : demands.inputOwner;
     state->indexOwner = demands.indexOwner;
+    state->differenceDemands = demands.differenceDemands;
     state->program = demands.program; state->analysis = demands.analysis;
     state->arena = expressions;
     auto exported = initializeExports(state, *demands.input, error, selectors,
@@ -1104,7 +1110,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegionImpl(
     std::shared_ptr<ArithmeticRegionalPreparation>* created)
 {
     const bool valid = demands.input && !demands.program.specializedEntry && expressions &&
-        expressions->constructionError().empty() && demands.analysis.exactMinimum &&
+        expressions->constructionError().empty() && demands.analysis.exactMinimum && demands.analysis.error.empty() &&
         (!inputOwner || inputOwner.get() == demands.input);
     if (!valid) { error = "arithmetic preparation requires its retained original context"; return failure(); }
     RegionExpressions::Transaction transaction(*expressions);
@@ -1112,6 +1118,7 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareArithmeticRegionImpl(
     state->input = demands.input;
     state->inputOwner = inputOwner ? std::move(inputOwner) : demands.inputOwner;
     state->indexOwner = demands.indexOwner;
+    state->differenceDemands = demands.differenceDemands;
     state->program = demands.program; state->analysis = demands.analysis;
     state->arena = expressions; state->selectors.period = state->program.primitives.period;
     if (!state->initialize()) { error = state->error; return failure(); }

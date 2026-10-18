@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Independent finite physical-conflict DAGs for the symbolic demand backend.
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticSelectors.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegionalConstruction.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisProfile.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
@@ -797,12 +798,109 @@ int runChecks(Analyze analyze, llvm::StringRef name)
     return 0;
 }
 } // namespace
+bool checkDifferenceExportScaling()
+{
+    using B = fs::BoundInteger;
+    for (unsigned count : {1U, 16U, 64U, 256U}) {
+        fs::ArithmeticRelation source;
+        uint64_t atoms = 0;
+        for (unsigned i = 0; i < count; ++i) {
+            auto system = fs::DifferenceBoundSystem::create(2, {{1, 2, B(i)}, {0, 1, B(0)}});
+            if (failed(system)) { return false; }
+            fs::ArithmeticRelationKey key{{i, fs::ArithmeticEvent::Completion, {0}},
+                {i + 1, fs::ArithmeticEvent::Start, {1}}, {}};
+            atoms += system->constraints().size();
+            source[key].push_back(*system);
+        }
+        fs::ArithmeticAnalysisCost cost;
+        auto exported = fs::detail::exportDifferenceRelation(source, &cost);
+        if (failed(exported) || exported->size() != count || cost.differenceExportSystems != count ||
+            cost.differenceExportAtoms != atoms || cost.differenceExportCoefficients != 2 * atoms) { return false; }
+        for (const auto& [key, pieces] : *exported) {
+            if (pieces.size() != 1 || !pieces.front().congruences().empty() ||
+                key.source.residues != std::vector<uint64_t>{0} ||
+                key.target.residues != std::vector<uint64_t>{1}) { return false; }
+            for (int x = -2; x <= 3; ++x) {
+                for (int y = -2; y <= 3; ++y) {
+                    bool actual = true;
+                    for (const auto& row : pieces.front().constraints()) {
+                        actual &= row.coefficients[0] * B(x) + row.coefficients[1] * B(y) <= row.bound;
+                    }
+                    const bool expected = x >= 0 && int64_t(x) - y <= int64_t(key.source.site);
+                    if (actual != expected) { return false; }
+                }
+            }
+        }
+    }
+    fs::ArithmeticRelation emptyRelation;
+    auto emptyDBM = fs::DifferenceBoundSystem::create(0, {{0, 0, B(-1)}});
+    if (failed(emptyDBM)) { return false; }
+    emptyRelation[{}].push_back(*emptyDBM);
+    auto emptyExport = fs::detail::exportDifferenceRelation(emptyRelation);
+    if (failed(emptyExport) || !emptyExport->empty()) { return false; }
+    auto empty = fs::detail::integerDifferenceRows(0, {{0, 0, B(-1)}});
+    auto universe = fs::detail::integerDifferenceRows(0, {});
+    B wide(1);
+    for (unsigned bit = 0; bit < 100; ++bit) { wide *= B(2); }
+    auto wideSystem = fs::detail::integerDifferenceRows(1, {{1, 0, wide}});
+    if (failed(empty) || !empty->isEmpty() || failed(universe) || universe->isEmpty() ||
+        failed(wideSystem) || wideSystem->constraints().size() != 1 ||
+        wideSystem->constraints().front().bound != wide ||
+        succeeded(fs::detail::integerDifferenceRows(0, {{1, 0, B(0)}}))) { return false; }
+    llvm::outs() << "difference exports: exact rows, wide/empty/invalid, 1/16/64/256 linear fixed-dimension row work\n";
+    return true;
+}
 int runArithmeticDemandChecks()
 {
     return runChecks(fs::analyzeArithmeticDemands, "arithmetic demand");
 }
 int runGeneralArithmeticDemandChecks()
 {
+    if (!checkDifferenceExportScaling()) { return 1; }
+    auto regional = [](const fs::ArithmeticProgram& program) {
+        fs::ArithmeticRegionalRelations retained;
+        retained.program = program;
+        fs::StructuredProtection protection;
+        auto ledger = std::make_shared<fs::AnalysisLedger>();
+        ledger->profiling = true;
+        fs::detail::constructRegionalArithmetic(retained, protection, {ledger, 17});
+        const auto adapter = llvm::find_if(ledger->stages, [](const auto& record) {
+            return record.stage == "arithmetic-difference-export" && record.region == 17 && record.work.size() == 3;
+        });
+        if (adapter == ledger->stages.end() || !ledger->activeStages.empty()) {
+            retained.analysis.error = "difference adapter work was not attributed separately";
+        }
+        const auto& cost = retained.analysis.cost;
+        if (!retained.differenceDemands || cost.differenceReductions != 1 || cost.integerReductions ||
+            !cost.differenceExportSystems || !cost.differenceExportAtoms ||
+            !program.recognition.configuredLimits) {
+            retained.analysis.error = "qualified regional arithmetic did not retain its difference construction";
+        }
+        // A fresh export owner shares immutable mathematics; it does not reduce
+        // or convert again. Mutating the wrapper cannot invalidate its source.
+        auto exported = retained;
+        if (exported.differenceDemands != retained.differenceDemands ||
+            exported.analysis.cost.differenceExportSystems != cost.differenceExportSystems) {
+            retained.analysis.error = "regional difference mathematics was reconstructed by an owner copy";
+        }
+        auto machine = program;
+        auto active = llvm::find_if(machine.recognition.pieces, [](const auto& piece) { return !piece.empty; });
+        if (active != machine.recognition.pieces.end()) {
+            active->machineSystem = std::make_shared<const fs::IntegerSystem>();
+            if (fs::detail::supportsDifferenceConstruction(machine)) {
+                retained.analysis.error = "machine primitives entered the difference construction";
+            }
+        }
+        auto mixedProfile = program.recognition;
+        auto limits = *mixedProfile.configuredLimits;
+        ++limits.dimensions;
+        fs::finishArithmeticRecognition(program.primitives, limits, mixedProfile);
+        if (mixedProfile.state == fs::RecognitionState::Applicable || !mixedProfile.pieces.empty()) {
+            retained.analysis.error = "incremental recognition accepted mixed class profiles";
+        }
+        return retained.analysis;
+    };
+    if (runChecks(regional, "regional difference export")) { return 1; }
     if (!checkDemandProfiles() || !checkNumericalUnionMergeCache() || !checkNumericalUnionDifferenceCache() ||
         !checkImplicationCertificates() ||
         !checkLatticeImplicationCertificates() || !checkOptionalInclusionCertificates() ||

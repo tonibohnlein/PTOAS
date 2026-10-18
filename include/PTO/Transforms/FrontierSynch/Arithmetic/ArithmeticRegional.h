@@ -21,6 +21,8 @@ struct ArithmeticRegionalRelations {
     std::shared_ptr<const PhaseIndex> indexOwner;
     SmallVector<std::pair<Value, int64_t>> entryConstants;
     ArithmeticProgram program;
+    // Optional immutable DBM mathematics; exports share it and the converted view.
+    std::shared_ptr<const ArithmeticDemandAnalysis> differenceDemands;
     GeneralArithmeticDemandAnalysis analysis;
     ArithmeticStorageSelectors selectors;
     std::vector<ArithmeticOccurrenceDomain> occurrences;

@@ -52,12 +52,12 @@ private:
     void tighten(unsigned lhs, unsigned rhs, const BoundInteger& value);
     void close();
 };
-// Computes (union lhs) minus (union rhs) with one threshold arrangement over
-// all occurring ordered differences. No convex approximation or successive
-// exponentially branching piece subtraction. Schemas, tags and residue tuples
+// Computes (union lhs) minus (union rhs) with a threshold arrangement inside
+// each original lhs seed, using rhs ordered differences. Outputs may overlap.
+// No convex approximation or successive exponentially branching subtraction. Schemas, tags and residue tuples
 // must already agree; their validation/partitioning belongs to the caller.
-// With n numeric coordinates fixed, M thresholds produce at most
-// (M+1)^(n*(n+1)) arrangement cells. Constants use arbitrary-precision integers.
+// With n numeric coordinates fixed, L lhs seeds and M rhs thresholds produce
+// at most L*(M+1)^(n*(n+1)) arrangement cells. Constants use arbitrary-precision integers.
 // Failure means malformed dimensions or coordinates, never "probably empty".
 FailureOr<std::vector<DifferenceBoundSystem>> subtractDifferenceBoundUnions(
     unsigned dimensions, llvm::ArrayRef<DifferenceBoundSystem> lhs,

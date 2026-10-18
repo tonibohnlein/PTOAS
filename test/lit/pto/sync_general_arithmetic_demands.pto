@@ -6,5 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-sync-input-test --general-arithmetic-demand-checks | FileCheck %s
+// CHECK: difference exports: exact rows, wide/empty/invalid, 1/16/64/256 linear fixed-dimension row work
+// CHECK: regional difference export physical-conflict oracle passed 96 parameter valuations
 // CHECK: general arithmetic demand physical-conflict oracle passed 96 parameter valuations
 module {}

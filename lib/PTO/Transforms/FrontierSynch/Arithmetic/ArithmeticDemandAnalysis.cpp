@@ -205,6 +205,9 @@ public:
     }
     void complete()
     {
+        if constexpr (std::is_same_v<System, DifferenceBoundSystem>) {
+            accumulateCost(result.cost.differenceReductions, 1);
+        } else { accumulateCost(result.cost.integerReductions, 1); }
         AnalysisProfileScope reduction(profile.ledger, "arithmetic-demand-reduction", profile.region);
         reduction.constructed();
         auto timed = [&](StringRef stage, auto&& build) {
@@ -1294,9 +1297,9 @@ std::shared_ptr<ArithmeticDemandAnalysis> reduceDifferenceArithmeticDemands(
     return state.reduced;
 }
 ArithmeticDemandAnalysis analyzeArithmeticDemandsWithProtection(const ArithmeticProgram& program,
-                                                               const StructuredProtection& protection)
+    const StructuredProtection& protection, ArithmeticDemandProfile profile)
 {
-    return analyze<DifferencePolicy>(program, &protection);
+    return analyze<DifferencePolicy>(program, &protection, std::move(profile));
 }
 FailureOr<GeneralArithmeticRelation> completeGeneralArithmeticNativeOrder(
     GeneralArithmeticRelation native, unsigned pipeCount, unsigned parameterCount,

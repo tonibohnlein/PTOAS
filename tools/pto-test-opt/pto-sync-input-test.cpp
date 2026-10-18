@@ -951,6 +951,26 @@ LogicalResult checkArithmeticRequests(func::FuncOp function, pto::GMAliasPolicy 
   if (inconsistentExports) {
     return function.emitError("arithmetic stronger and weaker exports disagree in the common arena");
   }
+  const auto& dbm = demands->differenceDemands;
+  const auto& construction = demands->analysis.cost;
+  if (!dbm || construction.differenceReductions != 1 || construction.integerReductions ||
+      !construction.differenceExportSystems ||
+      queries->arithmeticRelations->differenceDemands != dbm ||
+      weaker->arithmeticRelations->differenceDemands != dbm ||
+      selected->arithmeticRelations->differenceDemands != dbm ||
+      selected->arithmeticRelations->analysis.cost.differenceExportSystems != construction.differenceExportSystems) {
+    return function.emitError("arithmetic export failure/retry reconstructed or lost retained DBM mathematics");
+  }
+  llvm::outs() << "regional-difference-contract: whole-primitives retained adapter-once export-retry-shared\n";
+  auto failedAdapter = *demands;
+  failedAdapter.analysis.error = "test unavailable integer adapter";
+  const auto beforeFailedPreparation = arena->size();
+  auto invalidPreparation = prepareArithmeticRegion(failedAdapter, arena, {}, error, input);
+  if (succeeded(invalidPreparation) || arena->size() != beforeFailedPreparation ||
+      failedAdapter.differenceDemands != dbm) {
+    return function.emitError("failed integer export entered preparation or discarded DBM evidence");
+  }
+  error.clear();
   std::shared_ptr<const ArithmeticRegionalPreparation> endpointTemplate;
   auto first = prepareRetainedArithmeticRegion(demands, arena, {}, error, endpointTemplate, input);
   auto second = prepareRetainedArithmeticRegion(demands, arena, {}, error, endpointTemplate, input);
@@ -2743,7 +2763,33 @@ int main(int argc, char **argv) {
             }
           }
           llvm::json::Object implicationCost;
+          if (const auto& owned = result.analysis.mathematical) {
+            if (const auto& regional = owned->arithmeticRegionalDemands) {
+              const auto& recognition = regional->program.recognition;
+              implicationCost["recognized_class"] = pto::frontiersynch::recognitionName(recognition.arithmeticClass);
+              implicationCost["observed_dimensions"] = recognition.observedDimensions;
+              implicationCost["observed_coefficient"] = recognition.observedCoefficient;
+              implicationCost["normalized_pieces"] = recognition.pieces.size();
+              implicationCost["retained_difference_mathematics"] = bool(regional->differenceDemands);
+              if (recognition.configuredLimits) {
+                const auto& limits = *recognition.configuredLimits;
+                implicationCost["configured_pipes"] = limits.pipes;
+                implicationCost["configured_dimensions"] = limits.dimensions;
+                implicationCost["configured_period"] = limits.period;
+                implicationCost["configured_coefficient"] = limits.coefficient;
+              }
+            }
+          }
           if (arithmeticCost) {
+            implicationCost["difference_reductions"] = arithmeticCost->differenceReductions;
+            implicationCost["integer_reductions"] = arithmeticCost->integerReductions;
+            implicationCost["difference_export_systems"] = arithmeticCost->differenceExportSystems;
+            implicationCost["difference_export_atoms"] = arithmeticCost->differenceExportAtoms;
+            implicationCost["difference_export_coefficients"] = arithmeticCost->differenceExportCoefficients;
+            implicationCost["primitive_pieces"] = arithmeticCost->primitivePieces;
+            implicationCost["projections"] = arithmeticCost->projections;
+            implicationCost["relation_compositions"] = arithmeticCost->relationCompositions;
+            implicationCost["cover_subtractions"] = arithmeticCost->differences;
             implicationCost["import_query_requests"] = arithmeticCost->importQueryRequests;
             implicationCost["import_query_hits"] = arithmeticCost->importQueryHits;
             implicationCost["import_query_builds"] = arithmeticCost->importQueryBuilds;

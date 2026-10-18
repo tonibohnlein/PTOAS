@@ -41,6 +41,9 @@ struct ArithmeticDemandProfile {
 };
 struct ArithmeticAnalysisCost {
     uint64_t primitivePieces = 0;
+    // Actual reductions and adapter work, not inferred complexity from a class label.
+    uint64_t differenceReductions = 0, integerReductions = 0;
+    uint64_t differenceExportSystems = 0, differenceExportAtoms = 0, differenceExportCoefficients = 0;
     uint64_t importQueryRequests = 0, importQueryHits = 0, importQueryBuilds = 0;
     uint64_t pieceJoins = 0;
     uint64_t projections = 0;
@@ -149,7 +152,7 @@ std::shared_ptr<ArithmeticDemandAnalysis> reduceDifferenceArithmeticDemands(
 // unfolding, IR mutation, hardware-protection inference or endpoint synthesis.
 class StructuredProtection;
 ArithmeticDemandAnalysis analyzeArithmeticDemandsWithProtection(const ArithmeticProgram& program,
-                                                               const StructuredProtection& protection);
+    const StructuredProtection& protection, ArithmeticDemandProfile profile = {});
 GeneralArithmeticDemandAnalysis analyzeGeneralArithmeticDemandsWithProtection(const ArithmeticProgram& program,
     const StructuredProtection& protection, ArithmeticDemandProfile profile = {});
 ArithmeticDemandAnalysis analyzeArithmeticDemands(const ArithmeticProgram& program);
