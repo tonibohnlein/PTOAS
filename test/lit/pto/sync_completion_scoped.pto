@@ -87,12 +87,12 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
     } {test.region_root}
     return
   }
-  func.func @retained() attributes {test.scoped_completion = array<i64: 3, 3, 3, 1>, test.local_barriers = 1 : i64} {
+  func.func @retained() attributes {test.scoped_completion = array<i64: 3, 3, 3, 1>, test.local_barriers = 1 : i64, test.loss_internal = "zero"} {
     %addr = arith.constant 0 : i64
     %one = arith.constant 1.0 : f32
     %tile = pto.alloc_tile addr = %addr : !tile
-    "pto.texpands"(%one, %tile) {test.region_root, test.exact_child} : (f32, !tile) -> ()
-    "pto.tadds"(%tile, %one, %tile) {test.region_root, test.exact_child} : (!tile, f32, !tile) -> ()
+    "pto.texpands"(%one, %tile) {test.region_root, test.exact_child, test.loss_cell = 0 : i64} : (f32, !tile) -> ()
+    "pto.tadds"(%tile, %one, %tile) {test.region_root, test.exact_child, test.loss_cell = 0 : i64} : (!tile, f32, !tile) -> ()
     return
   }
   func.func @eventful_candidate() attributes {test.scoped_completion = array<i64: 3, 3, 3, 1>, test.eventful_child} {
@@ -102,6 +102,18 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
     %tile = pto.alloc_tile addr = %addr : !tile
     "pto.texpands"(%one, %tile) {test.region_root, test.exact_child} : (f32, !tile) -> ()
     %read = "pto.tgetval"(%tile, %zero) {test.region_root, test.exact_child} : (!tile, index) -> f32
+    return
+  }
+  func.func @strengthening_child() attributes {test.scoped_completion = array<i64: 3, 3, 3, 1>,
+                                               test.loss_internal = "quadratic"} {
+    %addr = arith.constant 0 : i64
+    %other = arith.constant 64 : i64
+    %one = arith.constant 1.0 : f32
+    %x = pto.alloc_tile addr = %addr : !tile
+    %y = pto.alloc_tile addr = %other : !tile
+    "pto.texpands"(%one, %x) {test.region_root, test.exact_child, test.loss_cell = 0 : i64} : (f32, !tile) -> ()
+    "pto.texpands"(%one, %y) {test.region_root, test.exact_child, test.loss_cell = 1 : i64} : (f32, !tile) -> ()
+    "pto.tadds"(%x, %one, %x) {test.region_root, test.exact_child, test.loss_cell = 0 : i64} : (!tile, f32, !tile) -> ()
     return
   }
   func.func @mixed_parent() attributes {test.production_parent} {

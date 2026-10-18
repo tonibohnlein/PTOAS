@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Algebraic graph bounds on an actual borrowed fixed occurrence frame. Synthetic
 // lower/upper pairs exercise certification; they do not assert extra input facts.
+#include "PTO/Transforms/FrontierSynch/Shared/CompletionLoss.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompactOrderBounds.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace mlir;
@@ -83,6 +84,14 @@ bool check(scf::ForOp loop, const pto::SyncInput& input, const fs::PhaseIndex& i
         !equal.certificate.exactOriginalCovers ||
         equal.bounds.guarantee != fs::InputOrderGuarantee::InputOrderEquivalent ||
         failed(fs::validateBoundingRegionalResult(equal.bounds, error))) { return false; }
+    fs::CompletionLossValue composed, missingPlacement;
+    if (!composed.appendPeriodic(equal.certificate, true) || composed.bound != 0 ||
+        composed.payloads != 4 * payloads.size() ||
+        missingPlacement.appendPeriodic(equal.certificate, false)) { return false; }
+    auto uncertain = fs::buildCompactOrderBounds(domain, upper, {}, 4);
+    fs::CompletionLossValue conservative;
+    if (!conservative.appendPeriodic(uncertain.certificate, true) ||
+        conservative.bound != uncertain.certificate.excess) { return false; }
     auto foreign = fs::captureCompactFixedBodyContext(loop, input, index, arena, trips, error);
     auto foreignGraph = fs::bindPeriodicExcessGraph(foreign, equal.lowerGraph->analysis(),
                                                    fs::ReductionQuality::Covers, error);

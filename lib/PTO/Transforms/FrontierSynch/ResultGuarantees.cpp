@@ -42,6 +42,7 @@ ResultGuarantees completionGuarantees(const CompletionRegion& completion)
     result.realization = RealizationOrder::CompletionCoverage;
     result.completionClasses = completion.transfer().summary.all.size();
     result.completedExit = completion.completesInvocation();
+    result.realizedLoss = completion.lossReport();
     result.inlineChildren = completion.inlineChildren();
     result.eventfulInlineChildren = completion.eventfulInlineChildren();
     result.readinessCuts = completion.constructionWork().readinessCuts;
@@ -51,7 +52,19 @@ ResultGuarantees completionGuarantees(const CompletionRegion& completion)
     result.descendantClosedChildren = children.closedDescendants;
     return result;
 }
-RealizationOrder explicitOrder(const ExplicitAnalysis& analysis)
+const char* realizationName(RealizationOrder value)
+{
+    switch (value) {
+        case RealizationOrder::Unestablished: return "not-established";
+        case RealizationOrder::CoversSelectedOrder: return "covers-selected-order";
+        case RealizationOrder::Equivalent: return "equivalent-to-selected-order";
+        case RealizationOrder::MayStrengthen: return "may-strengthen-selected-order";
+        case RealizationOrder::CompletionCoverage: return "covers-modeled-order";
+    }
+    llvm_unreachable("invalid realization guarantee");
+}
+} // namespace
+RealizationOrder explicitRealizationOrder(const ExplicitAnalysis& analysis)
 {
     const auto& ranks = analysis.reduction;
     for (const auto& edge : ranks.retained) {
@@ -66,18 +79,6 @@ RealizationOrder explicitOrder(const ExplicitAnalysis& analysis)
     }
     return RealizationOrder::Equivalent;
 }
-const char* realizationName(RealizationOrder value)
-{
-    switch (value) {
-        case RealizationOrder::Unestablished: return "not-established";
-        case RealizationOrder::CoversSelectedOrder: return "covers-selected-order";
-        case RealizationOrder::Equivalent: return "equivalent-to-selected-order";
-        case RealizationOrder::MayStrengthen: return "may-strengthen-selected-order";
-        case RealizationOrder::CompletionCoverage: return "covers-modeled-order";
-    }
-    llvm_unreachable("invalid realization guarantee");
-}
-} // namespace
 ResultGuarantees describeResultGuarantees(const AnalysisOutcome& outcome)
 {
     if (outcome.completion) { return completionGuarantees(*outcome.completion); }
@@ -98,7 +99,7 @@ ResultGuarantees describeResultGuarantees(const PreparedLogicalPlan& plan)
         result.realization = source->compactDemands->placementMayStrengthen ?
             RealizationOrder::MayStrengthen : RealizationOrder::CoversSelectedOrder;
     } else if (source->concreteDemands()) {
-        result.realization = explicitOrder(*source->concreteDemands());
+        result.realization = explicitRealizationOrder(*source->concreteDemands());
     } else if ((source->arithmeticDemands && source->arithmeticDemands->adjacentLocalDemands) ||
                (source->generalArithmeticDemands && source->generalArithmeticDemands->adjacentLocalDemands)) {
         result.realization = RealizationOrder::Equivalent;
@@ -119,7 +120,8 @@ DictionaryAttr encodeResultGuarantees(MLIRContext* context, const ResultGuarante
         *value.reduction == ReductionQuality::Partial ? "partial" : "generators"));
     report.set("realization_order", b.getStringAttr(realizationName(value.realization)));
     report.set("selected_order_bounds", b.getBoolAttr(value.selectedOrderBounds));
-    report.set("realized_loss_bound", b.getStringAttr("unavailable"));
+    report.set("realized_loss_bound", value.realizedLoss ? Attribute(value.realizedLoss) :
+        Attribute(b.getStringAttr("unavailable")));
     report.set("invocation_exit", b.getStringAttr(value.completedExit ? "completed" : "not-certified-completed"));
     if (value.completion) {
         NamedAttrList completion;

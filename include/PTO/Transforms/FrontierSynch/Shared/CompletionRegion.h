@@ -9,6 +9,7 @@
 #ifndef PTO_FRONTIERSYNCH_COMPLETIONREGION_H
 #define PTO_FRONTIERSYNCH_COMPLETIONREGION_H
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionTransfer.h"
+#include "PTO/Transforms/FrontierSynch/Shared/CompletionLoss.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
 #include <memory>
 #include "llvm/ADT/DenseSet.h"
@@ -68,6 +69,8 @@ public:
     const ConstructionWork& constructionWork() const { return work; }
     std::shared_ptr<const CompletionSourceSnapshot> sourceOwner() const { return source; }
     uint64_t inlineChildren() const { return inlinePlans.size(); }
+    std::shared_ptr<const CompletionLossCertificate> lossCertificate() const { return loss; }
+    DictionaryAttr lossReport() const { return loss->encode(original->getContext()); }
     bool usesEventResources() const;
     bool returnsPendingEvents() const { return pendingEvents; }
     uint64_t eventfulInlineChildren() const;
@@ -102,6 +105,7 @@ private:
     func::FuncOp original;
     std::shared_ptr<const SyncInput> input;
     CompletionTransferResult result;
+    std::shared_ptr<const CompletionLossCertificate> loss;
     ConstructionWork work;
     std::vector<std::shared_ptr<const ClosedCompletionChild>> children;
     DenseSet<Operation*> importedCalls;

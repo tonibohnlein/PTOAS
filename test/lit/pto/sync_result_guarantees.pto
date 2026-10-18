@@ -25,7 +25,8 @@
 // COMPLETION-SAME: storage_classes = 1
 // COMPLETION-SAME: invocation_exit = "completed"
 // COMPLETION-SAME: realization_order = "covers-modeled-order"
-// COMPLETION-SAME: realized_loss_bound = "unavailable"
+// COMPLETION-SAME: realized_loss_bound = {
+// COMPLETION-SAME: kind = "regional-ci-ceiling"
 // COMPLETION-SAME: reduction = "unavailable"
 // COMPLETION-SAME: selected_order = "covering"
 // COMPLETION-LABEL: func.func @nonadjacent

@@ -11,6 +11,7 @@
 #include <set>
 #include <random>
 #include <tuple>
+bool runCompletionLossChecks();
 namespace fs = mlir::pto::frontiersynch;
 namespace {
 unsigned bits(const fs::CompletionFacts& facts)
@@ -136,6 +137,7 @@ bool check(std::vector<fs::CompletionVertex> graph)
 } // namespace
 int runCompletionTransferChecks()
 {
+    if (!runCompletionLossChecks()) { return 1; }
     uint64_t checked = 0;
     const fs::CompletionSummary empty{facts(0), facts(0), facts(0), true};
     for (unsigned modes = 0; modes < 256; ++modes) {

@@ -14,9 +14,11 @@
 #include <optional>
 #include <memory>
 namespace mlir::pto::frontiersynch {
+struct ExplicitAnalysis;
 struct AnalysisOutcome;
 struct PreparedLogicalPlan;
 enum class RealizationOrder { Unestablished, CoversSelectedOrder, Equivalent, MayStrengthen, CompletionCoverage };
+RealizationOrder explicitRealizationOrder(const ExplicitAnalysis& analysis);
 struct ResultGuarantees {
     // The unchanged modeled effects and alias/admission contract, not a claim
     // that inferred access summaries equal all concrete original effects.
@@ -26,8 +28,7 @@ struct ResultGuarantees {
     RealizationOrder realization = RealizationOrder::Unestablished;
     bool selectedOrderBounds = false;
     bool completedExit = false;
-    // No generic realized-loss bound is currently exported by these paths.
-    // In particular, missing bounds do not mean zero loss.
+    DictionaryAttr realizedLoss; // Missing is unavailable, never zero.
     bool completion = false;
     std::size_t completionClasses = 0;
     uint64_t eventFreeChildren = 0, completedChildren = 0, descendantClosedChildren = 0;

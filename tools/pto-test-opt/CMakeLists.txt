@@ -95,6 +95,7 @@ add_llvm_executable(pto-sync-input-test
   FiniteAllocationQueryChecks.cpp
   NumericalHierarchyChecks.cpp
   CompletionTransferChecks.cpp
+  CompletionLossChecks.cpp
   CompletionRegionChecks.cpp
   CompletionInputChecks.cpp
   ClosedCompletionChecks.cpp

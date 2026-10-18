@@ -20,6 +20,7 @@
 using namespace mlir;
 namespace fs = pto::frontiersynch;
 LogicalResult runCompletionInputChecks(func::FuncOp function);
+LogicalResult checkEmittedCompletionLoss(func::FuncOp function, const fs::CompletionRegion& region);
 namespace {
 std::string render(Operation* operation)
 {
@@ -194,6 +195,18 @@ LogicalResult scopedChecks(func::FuncOp function)
     snapshots.attempts[1][fs::AnalysisBackend::Sequence].mathematical =
         std::make_shared<fs::MathematicalResult>();
     if (!snapshots.ownsCompletion(owner)) { return function.emitError("issued completion owner was invalidated"); }
+    if (auto expectation = function->getAttrOfType<StringAttr>("test.loss_internal")) {
+        bool found = false;
+        for (const auto& atom : owner->lossCertificate()->partition()) {
+            if (atom.payloads && *atom.payloads > 1) {
+                found = true;
+                if (atom.exactRealizedOrder != (expectation.getValue() == "zero")) {
+                    return function.emitError("loss certificate promoted demand exactness into realization equality");
+                }
+            }
+        }
+        if (!found) { return function.emitError("loss certificate lost retained child partition"); }
+    }
     const auto& summary = owner->transfer().summary;
     const auto expected = function->getAttrOfType<DenseI64ArrayAttr>("test.scoped_completion");
     SmallVector<int64_t> observed{summary.all[0], summary.exposed[0], summary.suffix[0], summary.transparent};
@@ -248,7 +261,7 @@ LogicalResult scopedChecks(func::FuncOp function)
         }
     }
     auto expectedBarriers = function->getAttrOfType<IntegerAttr>("test.local_barriers");
-    if (expectedBarriers) {
+    if (expectedBarriers || function->hasAttr("test.loss_internal")) {
         auto fragment = fs::CompletionInlineChild::qualify(owner);
         auto whole = fs::CompletionRegion::buildWithChildren(function, input, *index, {fragment}, error, source);
         if (!whole || !whole->completesInvocation()) { return failure(); }
@@ -284,7 +297,12 @@ LogicalResult scopedChecks(func::FuncOp function)
         }
         int64_t barriers = 0;
         function.walk([&](pto::BarrierOp barrier) { barriers += !barrier->hasAttr("pto.completion_boundary"); });
-        if (barriers != expectedBarriers.getInt()) { return function.emitError("retained child barriers changed"); }
+        if (expectedBarriers && barriers != expectedBarriers.getInt()) {
+            return function.emitError("retained child barriers changed");
+        }
+        if (function->hasAttr("test.loss_internal") && failed(checkEmittedCompletionLoss(function, *owner))) {
+            return function.emitError("emitted loss exceeds the retained regional certificate");
+        }
     }
     if (fs::CompletionInlineChild::qualify(std::make_shared<fs::FiniteAnalysis>(nullptr, fs::ExplicitAnalysis{}))) {
         return function.emitError("malformed finite ownership was accepted");

@@ -28,6 +28,8 @@ public:
     static std::shared_ptr<const CompletionInlineChild> qualify(std::shared_ptr<FiniteAnalysis> finite);
     static std::shared_ptr<const CompletionInlineChild> qualify(std::shared_ptr<const CompletionRegion> completion);
     const CompletionSummary& summary() const { return effects; }
+    std::optional<uint64_t> payloadCount() const;
+    bool exactRealizedOrder() const;
     bool usesEvents() const;
     bool returnsPendingEvents() const;
     CompletionSummary classifiedSummary(const CompletionStorage& storage, const PhaseIndex& index) const;

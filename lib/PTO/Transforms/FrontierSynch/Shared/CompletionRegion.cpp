@@ -48,23 +48,29 @@ public:
         for (const auto& child : inlinePlans) { inlineEnds[child->roots().back()] = child.get(); }
     }
     std::vector<CompletionVertex> graph;
-    std::vector<Operation*> anchors;
+    std::vector<Operation*> anchors, lastAnchors;
     std::vector<bool> eventUse, pendingEvents;
+    std::vector<CompletionLossAtom> loss;
     std::size_t vertex(Operation* anchor)
     {
         auto id = graph.size();
         auto empty = CompletionFacts(storage.size(), 0);
         graph.push_back({{empty, empty, empty, true}, {}, false});
         anchors.push_back(anchor);
+        lastAnchors.push_back(anchor);
         eventUse.push_back(false);
         pendingEvents.push_back(false);
+        loss.push_back({id, 0, true});
         if (!anchor) { return id; }
         graph[id].requiresEntryCompletion = readiness.protects(anchor);
         if (auto child = children.find(anchor); child != children.end()) {
             graph[id].summary = storage.liftCoarse(child->second->summary());
+            loss[id] = {id, std::nullopt, false};
             eventUse[id] = child->second->resourceClosure() != ClosedCompletionChild::ResourceClosure::Empty;
             return id;
         }
+        const auto count = index.phasesFor(anchor).size();
+        loss[id] = {id, count, count <= 1};
         auto modes = storage.effects(index.phasesFor(anchor));
         graph[id].summary = {modes, modes, modes, true};
         if (auto barrier = dyn_cast<BarrierOp>(anchor); barrier && barrier.getPipe().getPipe() == PIPE::PIPE_ALL) {
@@ -91,6 +97,8 @@ public:
                 at -= imported->roots().size() - 1;
                 auto id = vertex(imported->roots().front());
                 graph[id].summary = imported->classifiedSummary(storage, index);
+                loss[id] = {id, imported->payloadCount(), imported->exactRealizedOrder()};
+                lastAnchors[id] = imported->roots().back();
                 eventUse[id] = imported->usesEvents();
                 pendingEvents[id] = imported->returnsPendingEvents();
                 graph[id].successors = {next};
@@ -174,6 +182,7 @@ public:
     std::unique_ptr<const CompletionStorage> storage;
     std::string body;
     std::vector<Operation*> inventory;
+    DenseMap<Operation*, uint64_t> ordinals;
     Operation* originalModule = nullptr;
     DictionaryAttr moduleAttributes;
     bool unchanged() const
@@ -211,6 +220,7 @@ std::shared_ptr<const CompletionSourceSnapshot> CompletionRegion::captureSource(
     source->facts = index.sourceFacts();
     source->storage = std::make_unique<CompletionStorage>(source->input->instructions());
     source->body = text(function); source->inventory = operations(function);
+    for (auto [id, op] : llvm::enumerate(source->inventory)) { source->ordinals[op] = id; }
     source->originalModule = function->getParentOp();
     source->moduleAttributes = source->originalModule->getAttrDictionary();
     return source;
@@ -393,6 +403,17 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
     work.readinessOperationVisits = readiness->operationVisits();
     work.readinessUseVisits = readiness->useVisits();
     owner->work = work;
+    for (auto [id, atom] : llvm::enumerate(builder.loss)) {
+        if (builder.anchors[id]) {
+            atom.firstOperation = owner->source->ordinals.find(builder.anchors[id])->second;
+            atom.lastOperation = owner->source->ordinals.find(builder.lastAnchors[id])->second;
+        }
+    }
+    std::vector<std::vector<std::size_t>> successors;
+    for (const auto& vertex : builder.graph) { successors.push_back(vertex.successors); }
+    owner->loss = std::make_shared<const CompletionLossCertificate>(
+        std::move(builder.loss), std::move(successors), entry, exit);
+    if (!owner->loss->valid()) { error = "completion loss partition is malformed"; return {}; }
     owner->result = buildCompletionTransfer(builder.graph, entry, exit, owner->source->storage->size());
     if (!owner->result.error.empty()) { error = owner->result.error; return {}; }
     if (existingOnly) {

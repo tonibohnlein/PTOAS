@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Preserve a qualified exact child's barriers through the common materializer.
 #include "CompletionInlineChild.h"
+#include "PTO/Transforms/FrontierSynch/ResultGuarantees.h"
 #include "CompletionStorage.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
@@ -112,6 +113,16 @@ std::shared_ptr<const CompletionInlineChild> CompletionInlineChild::qualify(std:
     // not reconstruct which effects they complete; it conservatively carries all.
     child->effects = {{modes}, {modes}, {modes}, true};
     return child;
+}
+std::optional<uint64_t> CompletionInlineChild::payloadCount() const
+{
+    if (finite && finite->concrete()) { return finite->concrete()->occurrences.size(); }
+    return std::nullopt;
+}
+bool CompletionInlineChild::exactRealizedOrder() const
+{
+    return finite && finite->concrete() &&
+        explicitRealizationOrder(*finite->concrete()) == RealizationOrder::Equivalent;
 }
 bool CompletionInlineChild::usesEvents() const
 {

@@ -67,10 +67,12 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeLogicalRes
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeResult(
     std::shared_ptr<BoundedLifetimeDemandResult> demands, std::string& error,
     bool completeInvocation = false);
+// Use the same prerequisite index that qualified program recognition.
 // The optional output is assigned only after whole-invocation exact demand
 // analysis succeeds; endpoint/physical export failures leave it available.
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeInsertion(
-    func::FuncOp function, const SyncInput& input, const ProgramRecognition& program, std::string& error,
+    func::FuncOp function, const SyncInput& input, const ProgramRecognition& program,
+    const PhaseIndex& index, std::string& error,
     std::shared_ptr<BoundedLifetimeDemandResult>* demands = nullptr);
 } // namespace mlir::pto::frontiersynch
 #endif

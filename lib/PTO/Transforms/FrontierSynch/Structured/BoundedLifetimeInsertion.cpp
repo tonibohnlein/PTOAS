@@ -477,7 +477,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeResult(
     return prepared;
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeInsertion(
-    func::FuncOp function, const SyncInput& input, const ProgramRecognition& program, std::string& error,
+    func::FuncOp function, const SyncInput& input, const ProgramRecognition& program,
+    const PhaseIndex& index, std::string& error,
     std::shared_ptr<BoundedLifetimeDemandResult>* demands)
 {
     if (demands) {
@@ -499,10 +500,6 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeInsertion(
     }
     auto loop = dyn_cast<scf::ForOp>(selected->anchor);
     if (llvm::any_of(input.instructions(), [&](const auto* p) { return !loop->isProperAncestor(p->elementOp); })) {
-        return failure();
-    }
-    PhaseIndex index;
-    if (failed(index.build(function, input))) {
         return failure();
     }
     auto analyzed = cachedBoundedLifetimeRegion(function, *selected, index, input, error);

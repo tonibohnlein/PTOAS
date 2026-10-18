@@ -1,0 +1,2567 @@
+{
+  "milestone": "M5",
+  "baseline": "338cc1923",
+  "plan_baseline": "d6a920bf74785377998b35aa1c313198ce982e9b",
+  "scope": "Qualified regional loss certificate; no device execution",
+  "draft_manifest": "frontier-sections56-path-draft-pin.json",
+  "native_tools": {
+    "pto-test-opt": "a9fce4c6afb68ad3535b564e3d34e5198551f65018ec35af91f764974d6ea325",
+    "pto-sync-input-test": "3f2a69826b607a019379266421af0d9a41bb2d3606768b40c86ff7f788c17f47",
+    "PTOASCompiler": "197e85887323d4d92f3aca1e3ca75d9a7a7406dcbc9a14e1470ebce78ca158e7"
+  },
+  "full_gate": {
+    "selected": 344,
+    "counts": {
+      "PASS": 341,
+      "FAIL": 3
+    },
+    "nonpassing": [
+      {
+        "name": "PTOIR :: pto/multi_tile_two_regions_two_gets_sync.pto",
+        "code": "FAIL"
+      },
+      {
+        "name": "PTOIR :: pto/insert_sync_slot_transitive.pto",
+        "code": "FAIL"
+      },
+      {
+        "name": "PTOIR :: pto/multi_tile_same_region_two_gets_sync.pto",
+        "code": "FAIL"
+      }
+    ],
+    "log_sha256": "6723641686845cee8b47a9bf63df8eaa38cd30cd14319e8aed1fb8f1657a83b1",
+    "json_sha256": "22f74023c5d674b37aa8452b2fb8bf64ccdc1e4eda13e42b150bf5906f7dcd83"
+  },
+  "timings": {
+    "baseline": "338cc1923",
+    "flags": [
+      "--mlir-disable-threading",
+      "--pto-frontier-analysis",
+      "--pto-frontier-allocate=eligible-ids=2,5"
+    ],
+    "tool_hashes": {
+      "baseline": "7dca89c03ee41efa11e83ea72f2e261e7cb44ea62050a2c057b9f65d2c86f0f0",
+      "candidate": "a9fce4c6afb68ad3535b564e3d34e5198551f65018ec35af91f764974d6ea325"
+    },
+    "cases": {
+      "nested": {
+        "input_sha256": "7f361f9a57e1c55cd3e1a166802cff2f7120277f4d74cb81d8a528da83d73ab2",
+        "runs": {
+          "baseline": [
+            {
+              "seconds": 0.11919824266806245,
+              "sha256": "1a4c4537a8a330b282fe927be1560419d6373a53e85063324af0e882b5c54267",
+              "barriers": 4,
+              "sets": 3,
+              "arithmetic": 16
+            },
+            {
+              "seconds": 0.12044828804209828,
+              "sha256": "1a4c4537a8a330b282fe927be1560419d6373a53e85063324af0e882b5c54267",
+              "barriers": 4,
+              "sets": 3,
+              "arithmetic": 16
+            },
+            {
+              "seconds": 0.12067380594089627,
+              "sha256": "1a4c4537a8a330b282fe927be1560419d6373a53e85063324af0e882b5c54267",
+              "barriers": 4,
+              "sets": 3,
+              "arithmetic": 16
+            }
+          ],
+          "candidate": [
+            {
+              "seconds": 0.1203055907972157,
+              "sha256": "7a318537818cebae7f754c7212dca36b3295a507249e22627740c4f32012502a",
+              "barriers": 4,
+              "sets": 3,
+              "arithmetic": 16
+            },
+            {
+              "seconds": 0.12173930136486888,
+              "sha256": "7a318537818cebae7f754c7212dca36b3295a507249e22627740c4f32012502a",
+              "barriers": 4,
+              "sets": 3,
+              "arithmetic": 16
+            },
+            {
+              "seconds": 0.12181414104998112,
+              "sha256": "7a318537818cebae7f754c7212dca36b3295a507249e22627740c4f32012502a",
+              "barriers": 4,
+              "sets": 3,
+              "arithmetic": 16
+            }
+          ]
+        },
+        "median_candidate_over_baseline": 1.0094497318634614
+      },
+      "children8": {
+        "input_sha256": "1ecaaed8946656291f5dbc66acbfe2f1845de3a5f317393f81cc0b237098b746",
+        "runs": {
+          "baseline": [
+            {
+              "seconds": 0.11998331733047962,
+              "sha256": "83e87ef0e07e23ab0a21ff2aebf432c79362d157306b335ac989b82354c5a8ca",
+              "barriers": 9,
+              "sets": 8,
+              "arithmetic": 24
+            },
+            {
+              "seconds": 0.12028535129502416,
+              "sha256": "83e87ef0e07e23ab0a21ff2aebf432c79362d157306b335ac989b82354c5a8ca",
+              "barriers": 9,
+              "sets": 8,
+              "arithmetic": 24
+            },
+            {
+              "seconds": 0.12255461793392897,
+              "sha256": "83e87ef0e07e23ab0a21ff2aebf432c79362d157306b335ac989b82354c5a8ca",
+              "barriers": 9,
+              "sets": 8,
+              "arithmetic": 24
+            }
+          ],
+          "candidate": [
+            {
+              "seconds": 0.12174316635355353,
+              "sha256": "cdc4678aaae5ee298f4eb4d460dc1ac4b2d5fb9e1f0bbef514e8ac10827de2a6",
+              "barriers": 9,
+              "sets": 8,
+              "arithmetic": 24
+            },
+            {
+              "seconds": 0.12531049037352204,
+              "sha256": "cdc4678aaae5ee298f4eb4d460dc1ac4b2d5fb9e1f0bbef514e8ac10827de2a6",
+              "barriers": 9,
+              "sets": 8,
+              "arithmetic": 24
+            },
+            {
+              "seconds": 0.12033819314092398,
+              "sha256": "cdc4678aaae5ee298f4eb4d460dc1ac4b2d5fb9e1f0bbef514e8ac10827de2a6",
+              "barriers": 9,
+              "sets": 8,
+              "arithmetic": 24
+            }
+          ]
+        },
+        "median_candidate_over_baseline": 1.0146674476271282
+      },
+      "children32": {
+        "input_sha256": "02ec7b924559f438729bf5ec40ff4af6e00cde8ab4366f0cb7b59be6d1941d15",
+        "runs": {
+          "baseline": [
+            {
+              "seconds": 0.12761028902605176,
+              "sha256": "d828a2fa2d499b664d0c8fe683ad58c2dfedbcd5a6f77452ce970c23dfd538a4",
+              "barriers": 33,
+              "sets": 32,
+              "arithmetic": 72
+            },
+            {
+              "seconds": 0.12593189906328917,
+              "sha256": "d828a2fa2d499b664d0c8fe683ad58c2dfedbcd5a6f77452ce970c23dfd538a4",
+              "barriers": 33,
+              "sets": 32,
+              "arithmetic": 72
+            },
+            {
+              "seconds": 0.12695031194016337,
+              "sha256": "d828a2fa2d499b664d0c8fe683ad58c2dfedbcd5a6f77452ce970c23dfd538a4",
+              "barriers": 33,
+              "sets": 32,
+              "arithmetic": 72
+            }
+          ],
+          "candidate": [
+            {
+              "seconds": 0.12817182578146458,
+              "sha256": "2133a737d50f60171b671baac08ac3bd7538761510ab88fca2b56c9648a7904c",
+              "barriers": 33,
+              "sets": 32,
+              "arithmetic": 72
+            },
+            {
+              "seconds": 0.12848856300115585,
+              "sha256": "2133a737d50f60171b671baac08ac3bd7538761510ab88fca2b56c9648a7904c",
+              "barriers": 33,
+              "sets": 32,
+              "arithmetic": 72
+            },
+            {
+              "seconds": 0.12755069183185697,
+              "sha256": "2133a737d50f60171b671baac08ac3bd7538761510ab88fca2b56c9648a7904c",
+              "barriers": 33,
+              "sets": 32,
+              "arithmetic": 72
+            }
+          ]
+        },
+        "median_candidate_over_baseline": 1.0047292510157562
+      },
+      "children128": {
+        "input_sha256": "6a6be366200537c76c045ce98842ed897b161ca66fa39d71099916e812785c39",
+        "runs": {
+          "baseline": [
+            {
+              "seconds": 0.19193700095638633,
+              "sha256": "1a8331d77ac61db713f70a8179ecaa3ae10907a8ebb2fd2d4217d875c9c29936",
+              "barriers": 129,
+              "sets": 128,
+              "arithmetic": 264
+            },
+            {
+              "seconds": 0.19461335195228457,
+              "sha256": "1a8331d77ac61db713f70a8179ecaa3ae10907a8ebb2fd2d4217d875c9c29936",
+              "barriers": 129,
+              "sets": 128,
+              "arithmetic": 264
+            },
+            {
+              "seconds": 0.19278069585561752,
+              "sha256": "1a8331d77ac61db713f70a8179ecaa3ae10907a8ebb2fd2d4217d875c9c29936",
+              "barriers": 129,
+              "sets": 128,
+              "arithmetic": 264
+            }
+          ],
+          "candidate": [
+            {
+              "seconds": 0.1939254249446094,
+              "sha256": "7d8f91f7546ee6e7ef0c963d28f5d6abbb381b7e0ceeb93a3502fb143be9d34b",
+              "barriers": 129,
+              "sets": 128,
+              "arithmetic": 264
+            },
+            {
+              "seconds": 0.19339472008869052,
+              "sha256": "7d8f91f7546ee6e7ef0c963d28f5d6abbb381b7e0ceeb93a3502fb143be9d34b",
+              "barriers": 129,
+              "sets": 128,
+              "arithmetic": 264
+            },
+            {
+              "seconds": 0.19366111513227224,
+              "sha256": "7d8f91f7546ee6e7ef0c963d28f5d6abbb381b7e0ceeb93a3502fb143be9d34b",
+              "barriers": 129,
+              "sets": 128,
+              "arithmetic": 264
+            }
+          ]
+        },
+        "median_candidate_over_baseline": 1.0045669472907914
+      }
+    }
+  },
+  "primary": {
+    "scope": "Pinned49 primaryPyPTO-lib; d6a920bf baseline; logical+six-IDordinary allocation; no device execution",
+    "tools": {
+      "baseline": {
+        "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/sections56-path-completion/baseline/pto-test-opt",
+        "sha256": "bd83f39cb3c21b30cd0ff1d052504756242d92d0c547e5c688876cf199197884"
+      },
+      "candidate": {
+        "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+        "sha256": "a9fce4c6afb68ad3535b564e3d34e5198551f65018ec35af91f764974d6ea325"
+      }
+    },
+    "cases": [
+      {
+        "id": "0000",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0000/prepare.stdout",
+        "sha256": "8aa3491afbabdffdc703a5df8090712964e5440e5fcb7bc2de40e0634578c411",
+        "name": "pypto_lib__hello_world__0",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26909568114206195
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26585524808615446
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26395630231127143
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.265963411424309
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0001",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0001/prepare.stdout",
+        "sha256": "138e4b22cb37800778c21dae6aa677116fd5e045f069b51d755b747526892572",
+        "name": "pypto_lib__matmul__0",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2639989438466728
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2644415767863393
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2662534178234637
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2640201449394226
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0002",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0002/prepare.stdout",
+        "sha256": "7fc04f6c61368697a77f88ad873a4a58b3d543f161b568aac24f4c24bbdb12ad",
+        "name": "pypto_lib__gemm__0",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26834216713905334
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26423946768045425
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26406290009617805
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26414662692695856
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0003",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0003/prepare.stdout",
+        "sha256": "663d4a5b4f18e88994b573b94c8d0129c3aa9a40c45c8b8cc7e0b6cddea73cef",
+        "name": "pypto_lib__layer_norm__0",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2659615180455148
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2680710628628731
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2640868662856519
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26672858092933893
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0004",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0004/prepare.stdout",
+        "sha256": "924a41d73f8584f6808c5cec69a54390446304255de90d9e9f01287748a6cb03",
+        "name": "pypto_lib__rms_norm__0",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2639780370518565
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26413574628531933
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2662559002637863
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26584369828924537
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0005",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0005/prepare.stdout",
+        "sha256": "c2431f5ba5f9cf3f7d1300abe076c38d8fb91e78fb93d604b67a057358a1a703",
+        "name": "pypto_lib__rope__0",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2649822672829032
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2661364870145917
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26616046810522676
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26414415519684553
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0006",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0006/prepare.stdout",
+        "sha256": "613cd3354a23fbb4273463771b6636af1373d84b93f1e2ecd97920ac103c1bb7",
+        "name": "pypto_lib__softmax__0",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26398912305012345
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2663749223574996
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2664681593887508
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2657045307569206
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0007",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0007/prepare.stdout",
+        "sha256": "aa63044e86736e1c2ba2d36807c3cd79cbbdc391118131d26ec1d45752ae431c",
+        "name": "pypto_lib__gemm_eltwise__0",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2640274162404239
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2641066829673946
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2661164063028991
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2641485850326717
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0008",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0008/prepare.stdout",
+        "sha256": "cb5a08db78e56bd05045c7c94dad5f0f8c29a76dfa579b9d1a188e27f2e7f499",
+        "name": "pypto_lib__qkv_proj__0",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26812446489930153
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2660070532001555
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26927551813423634
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26406591618433595
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0009",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0009/prepare.stdout",
+        "sha256": "384a210f7e16635e2bfdefbfc45ca7c9567ef50b5d3458164069bb50665fe9ad",
+        "name": "pypto_lib__qkv_proj__1",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2639707839116454
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26612156396731734
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.265682035125792
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26431886618956923
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0010",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0010/prepare.stdout",
+        "sha256": "9ec660aea969c9a77b1db51ae44d854b38579292f9b04656525f18912b5b11bf",
+        "name": "pypto_lib__qkv_proj__2",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.265401144977659
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26654677279293537
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2641210751608014
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26516826497390866
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0011",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0011/prepare.stdout",
+        "sha256": "88e07acdb5aca0195b9408c4389ecf5e7f34dae559cea445fc26c6b35490b47a",
+        "name": "pypto_lib__topk__0",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26909514516592026
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26583275105804205
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2660352289676666
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26410269225016236
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0034",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0034/prepare.stdout",
+        "sha256": "053f39b6ca12070c1c87f3b970c5ab10c23ee6e6cb5878d7dab1d7a67f59aad2",
+        "name": "pypto_lib__prefill_fwd__0",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.41627856623381376
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2641906011849642
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.416144791059196
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26617652690038085
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0035",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0035/prepare.stdout",
+        "sha256": "8dc5c969a93a5086e9b8e1309932197690f5ebf7d781fe27d7cefccbc2a1a349",
+        "name": "pypto_lib__prefill_fwd__1",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.41891956981271505
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2642782758921385
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.41666977433487773
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2656583469361067
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0036",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0036/prepare.stdout",
+        "sha256": "e97ef64cd3baa377053240d2ac075e40d81a5a9095a383a54edab24fcd7e802e",
+        "name": "pypto_lib__prefill_fwd__2",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.5693159191869199
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26405799901112914
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.6178373810835183
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2642013137228787
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0037",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0037/prepare.stdout",
+        "sha256": "8f720df29a0ec8a62452e12c62becd7209e8d36a1f5772ea10bb408c86d55a14",
+        "name": "pypto_lib__prefill_fwd__3",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.6191297629848123
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2641394231468439
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.6158136068843305
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26467896392568946
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0038",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0038/prepare.stdout",
+        "sha256": "3bfec807cced2bfd378bbac062c7fbe0622897123176926ca7b963e458176c89",
+        "name": "pypto_lib__prefill_fwd__4",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.5736177740618587
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2644511661492288
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.5651949271559715
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26449396880343556
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0039",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0039/prepare.stdout",
+        "sha256": "5d3b978c39126b94deae41d72a8a20d2176f8d3ffc8d4fe66fc3dce34d434bf8",
+        "name": "pypto_lib__prefill_fwd__5",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.5682969549670815
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.2654674449004233
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.5669664070010185
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26413435814902186
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0040",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0040/prepare.stdout",
+        "sha256": "b258009ffc11f2ff9fdfbe1b2431cf7e2fe3b9401fe50889e94abac1dc82334d",
+        "name": "pypto_lib__prefill_fwd__6",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3732454562559724
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26402192609384656
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.36451877700164914
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.26575502660125494
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0041",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0041/prepare.stdout",
+        "sha256": "b2bc134f9291b00beb3f824f23051c04e15f7b1dcbae1661093c46133d3ed189",
+        "name": "pypto_lib__prefill_fwd__7",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.4192609158344567
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31518067978322506
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.4662168216891587
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31424062233418226
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0042",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0042/prepare.stdout",
+        "sha256": "bf464ba4bcf53d2874bf0c26410a9567487f8db434d67b37ecc905406574d0ee",
+        "name": "pypto_lib__prefill_fwd__8",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.47099812095984817
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3154500089585781
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.46438975585624576
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31424271734431386
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0043",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0043/prepare.stdout",
+        "sha256": "d55392748462b0ecdc9d378bd4265ce7dd1af945434309e6e24f4d25cf911589",
+        "name": "pypto_lib__prefill_fwd__9",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.4693642030470073
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.314431173261255
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.46501933177933097
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31668516900390387
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0044",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0044/prepare.stdout",
+        "sha256": "e449eab45a551d43b2224176c1ce6d0acb609d1b27689768b359d3050c2a05a9",
+        "name": "pypto_lib__prefill_fwd__10",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.46791539434343576
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31483757216483355
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.4657471999526024
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3141920929774642
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0045",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0045/prepare.stdout",
+        "sha256": "81241fa80fe97d40a81f60e440b3c057b46883fdc820485c8be29ed1ad2d3fc3",
+        "name": "pypto_lib__prefill_fwd__11",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.8713843189179897
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3141707517206669
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.8687514392659068
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3143576579168439
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": false,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": false
+      },
+      {
+        "id": "0046",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0046/prepare.stdout",
+        "sha256": "6a714623aed4ddddf8afdb6d51f88d8a5403fc1d44ed896bd4fc224edf6659c8",
+        "name": "pypto_lib__prefill_fwd__12",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.8707193657755852
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31687632482498884
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.866395769175142
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31634821090847254
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": false,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": false
+      },
+      {
+        "id": "0047",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0047/prepare.stdout",
+        "sha256": "c38bebe909a21e318ab0b430897edd94320c3b600fc1fe36a97541021cca913d",
+        "name": "pypto_lib__prefill_fwd__13",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.825049709994346
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31436943681910634
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.8206446119584143
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3143317769281566
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": false,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": false
+      },
+      {
+        "id": "0048",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0048/prepare.stdout",
+        "sha256": "88a8bcf8b07f59979f22b1f2a586f20e122474e9d0ea89ee88c11b98f84db321",
+        "name": "pypto_lib__prefill_fwd__14",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.8220695839263499
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3162043388001621
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.8712336248718202
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3142492068000138
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": false,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": false
+      },
+      {
+        "id": "0049",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0049/prepare.stdout",
+        "sha256": "4aa2e13e8e527a63a61e3ed18192142cf3d14c11b72fea1af76cd01efe477c07",
+        "name": "pypto_lib__prefill_fwd__15",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3185203983448446
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3148546479642391
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3156469948589802
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31477072602137923
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0050",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0050/prepare.stdout",
+        "sha256": "8cab94112b406daaa012186be0ba420350d41617fe9b452c3233612d0a66f114",
+        "name": "pypto_lib__prefill_fwd__16",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 2.024077326990664
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3143953257240355
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 2.0695612970739603
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3147782818414271
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0051",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0051/prepare.stdout",
+        "sha256": "967dbe255819f90c258519d2bd036874e19ef7e9a401300dd7947c0c9467afa5",
+        "name": "pypto_lib__prefill_fwd__17",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.9780788351781666
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31421698490157723
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 2.018667794764042
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3143616318702698
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0052",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0052/prepare.stdout",
+        "sha256": "3d3975ad7437296840a86eaf055415c59961ecf084961faee654aafcca0cc4fb",
+        "name": "pypto_lib__prefill_fwd__18",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31867694901302457
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3161783372052014
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3669306547380984
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3171849250793457
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0053",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0053/prepare.stdout",
+        "sha256": "2d338e046b6019a54c01079e2b0a37437ee7900294f5c4ac0557d5b3c5657c16",
+        "name": "pypto_lib__prefill_fwd__19",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.32225105399265885
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31421745428815484
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3643333869986236
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3643978638574481
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0054",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0054/prepare.stdout",
+        "sha256": "5be31599cbba59d10880b2b0003af557831c3718e3ad56f0ba3479170b9c7f5f",
+        "name": "pypto_lib__prefill_fwd__20",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 2.0209713550284505
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3141520149074495
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.868437466211617
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3142266971990466
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0055",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0055/prepare.stdout",
+        "sha256": "53b63fb46e0e08e2d1f28c3713afc86ed50043125fe972bf79dcd21dcfa32ff5",
+        "name": "pypto_lib__prefill_fwd__21",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.8234298690222204
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3154679639264941
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.8186088637448847
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31418156204745173
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0056",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0056/prepare.stdout",
+        "sha256": "81a312e127649b499f898df5df17b6ff09a1acfb40645557802b8dfc26590ccb",
+        "name": "pypto_lib__prefill_fwd__22",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.6209578248672187
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3644121871329844
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.718367772642523
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3673985041677952
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0057",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0057/prepare.stdout",
+        "sha256": "da61f56ecd3d1a010dc234d03a637e1509b2b55d83d46064b9a9e24f85c05182",
+        "name": "pypto_lib__prefill_fwd__23",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.6207400071434677
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31441884860396385
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.668641206342727
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3166044829413295
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0058",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0058/prepare.stdout",
+        "sha256": "c01e9826a3e043a4f2ace8e27bc39df78a5829ee9d16f0d7c362112e956dbeb8",
+        "name": "pypto_lib__prefill_fwd__24",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3193388869985938
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3158976538106799
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3149169129319489
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3144966312684119
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": false,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": false
+      },
+      {
+        "id": "0059",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0059/prepare.stdout",
+        "sha256": "8182c1ae61c53710cdb360cc9dee0100c95a84f4e63139286f4126e935d8072d",
+        "name": "pypto_lib__prefill_fwd__25",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3178142849355936
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3141475929878652
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31572186993435025
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3177988473325968
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": false,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": false
+      },
+      {
+        "id": "0060",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0060/prepare.stdout",
+        "sha256": "fe1f31d1fba82dc0df560f05c78fa95fe2bf6d4c0cecdadd2cb50bfa7103d446",
+        "name": "pypto_lib__prefill_fwd__26",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3165689776651561
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3145924280397594
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31496419617906213
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31603078404441476
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": false,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": false
+      },
+      {
+        "id": "0061",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0061/prepare.stdout",
+        "sha256": "c47c6a58772cfdb889f53a072b050c07fe1920ec23bed88dd6205d42b2325655",
+        "name": "pypto_lib__prefill_fwd__27",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3150651748292148
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3162410561926663
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31415624218061566
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3162535768933594
+          }
+        },
+        "logical_byte_equal": false,
+        "logical_equal_except_recognition": false,
+        "physical_byte_equal": false,
+        "physical_equal_except_recognition": false
+      },
+      {
+        "id": "0062",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0066/prepare.stdout",
+        "sha256": "72cb0c179b53f43511c9afe3c5cbe48c6564822132ca2ff753817943292fab36",
+        "name": "pypto_lib__prefill_fwd__32",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.5223990129306912
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31483294162899256
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.567760996054858
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31423073960468173
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0063",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0067/prepare.stdout",
+        "sha256": "35c4f74fe04033c12885866735398ec0bb60252290b5f3c2d3f4ddad1cfaf16d",
+        "name": "pypto_lib__prefill_fwd__33",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.5227682320401073
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.314501681830734
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 1.5694115278311074
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3142932872287929
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0064",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0070/prepare.stdout",
+        "sha256": "a9764af4f5fcedc42b9befb3681709c227a2aa1c0318a8792fd429cb94d461a6",
+        "name": "pypto_lib__prefill_fwd__36",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3200475526973605
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31422109296545386
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31440444476902485
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31818719673901796
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0065",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0071/prepare.stdout",
+        "sha256": "894f8df3d631ca1c23b598f5b8fb5d3b6643d201f0e900c970f19e4d04d72be3",
+        "name": "pypto_lib__prefill_fwd__37",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.314064331818372
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31422530906274915
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31427393201738596
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31739636277779937
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0066",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0072/prepare.stdout",
+        "sha256": "79839518b7cd766cda991aa6311dbe9b1ae313a4de4978c897b360058d55c408",
+        "name": "pypto_lib__prefill_fwd__38",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3183991922996938
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31415030267089605
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31677863700315356
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3159394208341837
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0067",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0073/prepare.stdout",
+        "sha256": "89581a9d6f1e5d3319c25ee3c23945148fc2a80588c7b87655f6092192024597",
+        "name": "pypto_lib__prefill_fwd__39",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3151015709154308
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31423237500712276
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31689036218449473
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31560660572722554
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0068",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0076/prepare.stdout",
+        "sha256": "a73c7b63174fca917a048064d65ec33c1910bdd8a61de6062bd78daef5445124",
+        "name": "pypto_lib__prefill_fwd__42",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31660126289352775
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3141445079818368
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3141567436978221
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31498762825503945
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0069",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0077/prepare.stdout",
+        "sha256": "9b685df0952b6176e8f7ef2ee2a93078ae89117e8c77610b9fc7c707f95c01ec",
+        "name": "pypto_lib__prefill_fwd__43",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3172861901111901
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31588091934099793
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3158273799344897
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31438334099948406
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      },
+      {
+        "id": "0070",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/storage-recognition-loop/m2-corpus/0084/prepare.stdout",
+        "sha256": "b2039a34bdf1fa7094198b3bf9a75225fd5d43b855a77440ac0c4b5dfae6b1e3",
+        "name": "pypto_lib__rms_norm_test__0",
+        "family": "pypto-lib",
+        "baseline": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3178094387985766
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.3167898189276457
+          }
+        },
+        "candidate": {
+          "logical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31403598422184587
+          },
+          "physical": {
+            "status": "success",
+            "exit": 0,
+            "seconds": 0.31588204903528094
+          }
+        },
+        "logical_byte_equal": true,
+        "logical_equal_except_recognition": true,
+        "physical_byte_equal": true,
+        "physical_equal_except_recognition": true
+      }
+    ],
+    "status": "complete"
+  },
+  "changed_primary_traces": {
+    "scope": "Finite executions: payload preservation, physical causal reuse, no added payload order; not independent effect recovery",
+    "cases": [
+      {
+        "case": "0045",
+        "arguments": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0045",
+        "arguments": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "payloads": 5,
+        "candidate_commands": 7,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0045",
+        "arguments": [
+          128,
+          0,
+          0,
+          0
+        ],
+        "payloads": 110,
+        "candidate_commands": 133,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0046",
+        "arguments": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0046",
+        "arguments": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "payloads": 5,
+        "candidate_commands": 7,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0046",
+        "arguments": [
+          128,
+          0,
+          0,
+          0
+        ],
+        "payloads": 110,
+        "candidate_commands": 133,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0047",
+        "arguments": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0047",
+        "arguments": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "payloads": 5,
+        "candidate_commands": 7,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0047",
+        "arguments": [
+          128,
+          0,
+          0,
+          0
+        ],
+        "payloads": 110,
+        "candidate_commands": 133,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0048",
+        "arguments": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0048",
+        "arguments": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "payloads": 5,
+        "candidate_commands": 7,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0048",
+        "arguments": [
+          128,
+          0,
+          0,
+          0
+        ],
+        "payloads": 110,
+        "candidate_commands": 133,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0058",
+        "arguments": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0058",
+        "arguments": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "payloads": 6,
+        "candidate_commands": 3,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0058",
+        "arguments": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          2,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0058",
+        "arguments": [
+          128,
+          0,
+          0,
+          0,
+          0,
+          2,
+          0,
+          0
+        ],
+        "payloads": 132,
+        "candidate_commands": 45,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0058",
+        "arguments": [
+          128,
+          0,
+          0,
+          0,
+          1,
+          2,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0059",
+        "arguments": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0059",
+        "arguments": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "payloads": 6,
+        "candidate_commands": 3,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0059",
+        "arguments": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          2,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0059",
+        "arguments": [
+          128,
+          0,
+          0,
+          0,
+          0,
+          2,
+          0,
+          0
+        ],
+        "payloads": 132,
+        "candidate_commands": 45,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0059",
+        "arguments": [
+          128,
+          0,
+          0,
+          0,
+          1,
+          2,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0060",
+        "arguments": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0060",
+        "arguments": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "payloads": 6,
+        "candidate_commands": 3,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0060",
+        "arguments": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          2,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0060",
+        "arguments": [
+          128,
+          0,
+          0,
+          0,
+          0,
+          2,
+          0,
+          0
+        ],
+        "payloads": 132,
+        "candidate_commands": 45,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0060",
+        "arguments": [
+          128,
+          0,
+          0,
+          0,
+          1,
+          2,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0061",
+        "arguments": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0061",
+        "arguments": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "payloads": 6,
+        "candidate_commands": 3,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0061",
+        "arguments": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          2,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0061",
+        "arguments": [
+          128,
+          0,
+          0,
+          0,
+          0,
+          2,
+          0,
+          0
+        ],
+        "payloads": 132,
+        "candidate_commands": 45,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      },
+      {
+        "case": "0061",
+        "arguments": [
+          128,
+          0,
+          0,
+          0,
+          1,
+          2,
+          0,
+          0
+        ],
+        "payloads": 0,
+        "candidate_commands": 1,
+        "physical_reuse": true,
+        "payload_order_subset_of_baseline": true
+      }
+    ]
+  },
+  "construction": {
+    "geometric_children": [
+      8,
+      32,
+      128
+    ],
+    "loss_atoms": [
+      37,
+      109,
+      397
+    ],
+    "random_ci_oracles": 4000,
+    "emitted_loss": [
+      {
+        "actual": 0,
+        "bound": 0
+      },
+      {
+        "actual": 1,
+        "bound": 3
+      }
+    ]
+  },
+  "limits": [
+    "No device compiler or execution",
+    "Periodic strengthened fold adapter is tested; general production children require separate upper-realization evidence",
+    "Physical corpus traces do not independently recover storage effects",
+    "Combined physical-output completion remains unavailable"
+  ],
+  "legacy_baseline_comparison": [
+    {
+      "test": "insert_sync_slot_transitive",
+      "flags": [
+        "--mlir-disable-threading",
+        "--pto-insert-sync"
+      ],
+      "insert_sync_output_byte_equal": true,
+      "baseline_sha256": "9377fb1ed33b1847dcb02dae240009a9756b114c44492f1b5e27021349d59f2c",
+      "candidate_sha256": "9377fb1ed33b1847dcb02dae240009a9756b114c44492f1b5e27021349d59f2c"
+    },
+    {
+      "test": "multi_tile_same_region_two_gets_sync",
+      "flags": [
+        "--mlir-disable-threading",
+        "--pto-plan-memory",
+        "--pto-insert-sync"
+      ],
+      "insert_sync_output_byte_equal": true,
+      "baseline_sha256": "0c8ac95835fe6c15e6d56ce90a8a56014bf0a6cda90bca731eb50203964fa3bb",
+      "candidate_sha256": "0c8ac95835fe6c15e6d56ce90a8a56014bf0a6cda90bca731eb50203964fa3bb"
+    },
+    {
+      "test": "multi_tile_two_regions_two_gets_sync",
+      "flags": [
+        "--mlir-disable-threading",
+        "--pto-plan-memory",
+        "--pto-insert-sync"
+      ],
+      "insert_sync_output_byte_equal": true,
+      "baseline_sha256": "8b883e1ab0ebb529a5ed428a1ccfe2caec80759141fb2cf99ffd562e6960f192",
+      "candidate_sha256": "8b883e1ab0ebb529a5ed428a1ccfe2caec80759141fb2cf99ffd562e6960f192"
+    }
+  ],
+  "initial_complete_gate": {
+    "passed": 338,
+    "failed": 6,
+    "subsequent_fixes": "Shared prerequisite index in sequence test; exact phase comparison specialization checked separately from periodicity; fresh complete gate repeated"
+  },
+  "compliance": {
+    "prefilter_false_positive_brace_matches": 20,
+    "new_warnings": 0,
+    "existing_rebuilt_warning": "SessionProducers.cpp covered-switch-default",
+    "diff_check": "pass"
+  },
+  "review": {
+    "architecture": "accepted with documented scope and three existing legacy failures",
+    "correctness": "accepted with documented scope and three existing legacy failures"
+  }
+}

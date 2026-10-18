@@ -244,7 +244,17 @@ bool logicalPhaseInputs(MLIRContext* context)
     if (!endpoint || e.constantValue(e.substitute(*endpoint, caller)) != 0 ||
         !storage || storage->firstWriters.size() != 1 ||
         e.constantValue(e.substitute(storage->firstWriters.front().event.ordinal, caller)) != 6) { return false; }
-    for (auto unavailable : {unsupported, boolean}) {
+    // Comparison specialization is now supported, but its representative is
+    // not a periodicity certificate: i<2 changes in the next period. Verify
+    // both facts instead of expecting every Boolean input to be unsupported.
+    fs::PhaseNormalization normalizer(loop, *index, e);
+    if (normalizer.periodic(guard, 2)) { return false; }
+    auto comparison = body;
+    comparison.firstPayloads[0].push_back({{0, iv}, boolean});
+    if (!fs::detail::bindLogicalPhase(comparison, index, loop, 0, 2) ||
+        e.constantValue(comparison.firstPayloads[0].front().present) != 1 ||
+        e.constantValue(comparison.firstPayloads[0].front().event.ordinal) != 0) { return false; }
+    for (auto unavailable : {unsupported}) {
         auto eager = body;
         eager.firstPayloads[0].push_back({{0, unavailable}, e.boolean(true)});
         if (fs::detail::bindLogicalPhase(eager, index, loop, 0, 2)) { return false; }

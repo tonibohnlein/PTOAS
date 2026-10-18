@@ -719,10 +719,13 @@ LogicalResult runStructuredInsertionChecks(func::FuncOp function, pto::GMAliasPo
         }
         if (!accepted) { llvm::errs() << error << "\n"; }
     } else if (function->hasAttr("test.bounded_lifetime_insertion")) {
-        auto program = fs::recognizeProgram(function,input);
+        fs::PhaseIndex index;
+        if (failed(index.build(function, input))) { return failure(); }
+        auto program = fs::recognizeProgram(function, input, index);
         std::string error;
         if (succeeded(program)) {
-            auto prepared = fs::prepareBoundedLifetimeInsertion(function,input,*program,error,&boundedDemands);
+            auto prepared = fs::prepareBoundedLifetimeInsertion(
+                function, input, *program, index, error, &boundedDemands);
             accepted = succeeded(prepared) && succeeded(fs::insertLogicalSynchronization(function,**prepared));
         }
         if (!accepted) { llvm::errs() << error << "\n"; }
@@ -1523,7 +1526,9 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
     if (function->hasAttr("test.symbolic_arithmetic_siblings")) {
         return success(checkSymbolicArithmeticSiblings(function, input));
     }
-    auto program = fs::recognizeProgram(function, input);
+    auto sharedIndex = std::make_shared<fs::PhaseIndex>();
+    if (failed(sharedIndex->build(function, input))) { return failure(); }
+    auto program = fs::recognizeProgram(function, input, *sharedIndex);
     if (failed(program)) { return failure(); }
     std::string before;
     llvm::raw_string_ostream original(before);
@@ -1537,13 +1542,14 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
         const auto& entry = program->nodes[node];
         if (entry.kind != fs::StructureKind::ExplicitRun && entry.kind != fs::StructureKind::Loop) { continue; }
         auto child = fs::analyzeSequenceRegion(function, input, *program, node,
-            std::make_shared<fs::RegionExpressions>());
+            std::make_shared<fs::RegionExpressions>(), sharedIndex);
         if (!child.error.empty()) { continue; }
         auto childPlan = fs::prepareSequenceInsertion(child);
         if (!entry.loops.empty()) { regionScope &= failed(childPlan); }
         else if (succeeded(childPlan)) { regionScope &= !(**childPlan).completeInvocation; }
     }
-    auto analysis = fs::analyzeSequence(function, input, *program);
+    auto analysis = fs::analyzeSequenceRegion(function, input, *program, 0,
+        std::make_shared<fs::RegionExpressions>(), sharedIndex);
     if (function->hasAttr("test.boundary_summary_only")) {
         llvm::outs() << llvm::json::Value(
                             llvm::json::Object{
@@ -1568,16 +1574,14 @@ LogicalResult runSequenceAnalysisChecks(func::FuncOp function, pto::GMAliasPolic
     for (const auto& node : program->nodes) {
         if (!node.boundedDemands) { continue; }
         ++boundedRegions; boundedRecords += node.boundedDemands->analysis.sourceDemands.size();
-        fs::PhaseIndex index;
-        if (failed(index.build(function, input))) { return failure(); }
         std::string diagnostic;
-        auto again = fs::cachedBoundedLifetimeRegion(function, node, index, input, diagnostic);
+        auto again = fs::cachedBoundedLifetimeRegion(function, node, *sharedIndex, input, diagnostic);
         boundedCacheStable &= succeeded(again) && *again == node.boundedDemands;
         // A fresh modeled input cannot borrow another input's result, even
         // when it describes the same unchanged original IR.
         pto::SyncInput other(policy);
         if (failed(other.build(function))) { return failure(); }
-        auto foreign = fs::cachedBoundedLifetimeRegion(function, node, index, other, diagnostic);
+        auto foreign = fs::cachedBoundedLifetimeRegion(function, node, *sharedIndex, other, diagnostic);
         boundedCacheStable &= failed(foreign) && !diagnostic.empty();
     }
     // Reuse this actual analysis: copied recognition objects must not inherit
