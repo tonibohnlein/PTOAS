@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
 #include "ModuloLaneSpan.h"
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
@@ -17,7 +18,7 @@ std::pair<uint32_t, uint32_t> regionalAllocationDirection(
 }
 bool exportConstantRegionalLanes(RegionalAllocationGroup& group)
 {
-    if (!group.budget || group.budget > 6) { return false; }
+    if (!group.budget || group.budget > NativeEventIdCount) { return false; }
     if (!group.lanes.empty()) { return group.lanes.size() == group.budget; }
     std::vector<RegionalAllocationLane> lanes(group.budget);
     for (const auto& member : group.members) {
@@ -52,7 +53,7 @@ std::shared_ptr<RegionalAllocationSummary> exportPeriodicSharedLanes(
     for (const auto& cycle : allocation.cycles) {
         // Enumerate physical lanes only; never expand a numerical distance,
         // source ordinal domain, or trip count to make an export fit.
-        if (!cycle.laneCount || cycle.laneCount > 6) { return {}; }
+        if (!cycle.laneCount || cycle.laneCount > NativeEventIdCount) { return {}; }
         const auto& first = periodic.generators[assignment->records[cycle.firstPhase]];
         RegionalAllocationGroup group{periodic.payloads[first.source].pipe,
             periodic.payloads[first.target].pipe, cycle.laneCount, {}};

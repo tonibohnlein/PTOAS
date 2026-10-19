@@ -8,12 +8,14 @@
 // Exercise the production ordered-span allocator and its exported lane bounds.
 #ifndef PTO_REPEATED_ORDERED_ALLOCATION_CHECKS_H
 #define PTO_REPEATED_ORDERED_ALLOCATION_CHECKS_H
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "llvm/ADT/BitVector.h"
 namespace {
 bool checkOrderedLaneAllocation(mlir::func::FuncOp function, mlir::Operation* anchor,
                                 mlir::scf::ForOp loop, unsigned count, unsigned width,
                                 unsigned trips, unsigned mode, uint64_t& queries)
 {
+    constexpr auto capacity = static_cast<unsigned>(fs::NativeEventIdCount);
     auto arena = std::make_shared<fs::RegionExpressions>();
     auto& e = *arena;
     const auto zero = e.constant(0), yes = e.boolean(true);
@@ -96,8 +98,9 @@ bool checkOrderedLaneAllocation(mlir::func::FuncOp function, mlir::Operation* an
     if (mode == 3) {
         const auto& witness = outcome.overCapacity;
         if (result || outcome.status != fs::RepeatedLaneAllocationStatus::CertifiedOverCapacity ||
-            !witness || witness->spans.size() != 7 || !cost.orderedOverCapacity || cost.matrixPairs ||
-            cost.orderedWitnessQueries > 21 || cost.orderedReuseQueries > 2 * count + 6) { return false; }
+            !witness || witness->spans.size() != capacity + 1 || !cost.orderedOverCapacity || cost.matrixPairs ||
+            cost.orderedWitnessQueries > capacity * (capacity + 1) / 2 ||
+            cost.orderedReuseQueries > 2 * count + capacity) { return false; }
         // Validate the finite witness against the independent unfolded graph,
         // not the production suffix-query callback or stored negative IDs.
         const auto reach = graph(count * trips);
@@ -116,7 +119,7 @@ bool checkOrderedLaneAllocation(mlir::func::FuncOp function, mlir::Operation* an
     }
     if (!result || result->groups.size() != 1) { return false; }
     if (trips > delay && (mode == 0 || mode == 4 || mode == 5) && (!cost.orderedAccepted || cost.matrixPairs ||
-        cost.orderedReuseQueries > 2 * count + 6)) { return false; }
+        cost.orderedReuseQueries > 2 * count + capacity)) { return false; }
     if (trips && (mode == 1 || mode == 6) && (cost.orderedAccepted || !cost.matrixPairs)) { return false; }
     queries += cost.orderedReuseQueries;
     const auto& palette = result->groups.front();
@@ -174,9 +177,10 @@ bool checkOrderedLaneAllocation(mlir::func::FuncOp function, mlir::Operation* an
 }
 bool checkOrderedLaneAllocations(mlir::func::FuncOp function, mlir::Operation* anchor, mlir::scf::ForOp loop)
 {
+    constexpr auto capacity = static_cast<unsigned>(fs::NativeEventIdCount);
     uint64_t queries = 0;
     for (unsigned count : {1U, 2U, 7U, 16U, 64U, 256U}) {
-        for (unsigned width = 1; width <= 6; ++width) {
+        for (unsigned width = 1; width <= capacity; ++width) {
             for (unsigned trips : {0U, 1U, 2U, 7U}) {
                 if (!checkOrderedLaneAllocation(function, anchor, loop, count, width, trips, 0, queries)) {
                     llvm::errs() << "ordered repeated allocation mismatch "
@@ -199,16 +203,17 @@ bool checkOrderedLaneAllocations(mlir::func::FuncOp function, mlir::Operation* a
     }
     if (!checkOrderedLaneAllocation(function, anchor, loop, 2, 3, 7, 1, queries) ||
         !checkOrderedLaneAllocation(function, anchor, loop, 2, 3, 7, 2, queries) ||
-        !checkOrderedLaneAllocation(function, anchor, loop, 2, 7, 8, 3, queries) ||
+        !checkOrderedLaneAllocation(function, anchor, loop, 2, capacity + 1, 8, 3, queries) ||
         !checkOrderedLaneAllocation(function, anchor, loop, 8, 1, 7, 4, queries) ||
         !checkOrderedLaneAllocation(function, anchor, loop, 2, 3, 7, 6, queries)) { return false; }
     for (unsigned count : {2U, 7U, 64U, 256U}) {
-        if (!checkOrderedLaneAllocation(function, anchor, loop, count, 7, 8, 3, queries)) { return false; }
+        if (!checkOrderedLaneAllocation(function, anchor, loop, count, capacity + 1, 8, 3, queries)) { return false; }
     }
-    if (!checkOrderedLaneAllocation(function, anchor, loop, 2, 7, 8, 7, queries) ||
-        !checkOrderedLaneAllocation(function, anchor, loop, 2, 7, 8, 8, queries) ||
-        !checkOrderedLaneAllocation(function, anchor, loop, 2, 7, 1, 9, queries)) { return false; }
-    llvm::outs() << "ordered repeated allocation: 185 finite/scaling cases, " << queries << " threshold queries\n";
+    if (!checkOrderedLaneAllocation(function, anchor, loop, 2, capacity + 1, 8, 7, queries) ||
+        !checkOrderedLaneAllocation(function, anchor, loop, 2, capacity + 1, 8, 8, queries) ||
+        !checkOrderedLaneAllocation(function, anchor, loop, 2, capacity + 1, 1, 9, queries)) { return false; }
+    llvm::outs() << "ordered repeated allocation: native-width finite/scaling cases, "
+                 << queries << " threshold queries\n";
     return true;
 }
 } // namespace

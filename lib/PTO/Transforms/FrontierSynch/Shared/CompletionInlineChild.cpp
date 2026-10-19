@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Preserve a qualified exact child's barriers through the common materializer.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "CompletionInlineChild.h"
 #include "PTO/Transforms/FrontierSynch/ResultGuarantees.h"
 #include "CompletionStorage.h"
@@ -58,7 +59,8 @@ bool eventFree(const PreparedLogicalPlan& plan)
 }
 std::shared_ptr<const CompletionInlineChild> CompletionInlineChild::qualify(std::shared_ptr<FiniteAnalysis> finite)
 {
-    return qualify(std::move(finite), {0,1,2,3,4,5});
+    // Automatic import retains the established default-pool qualification.
+    return qualify(std::move(finite), defaultEventIds());
 }
 std::shared_ptr<const CompletionInlineChild> CompletionInlineChild::qualify(
     std::shared_ptr<FiniteAnalysis> finite, ArrayRef<int64_t> eligibleIds)
@@ -161,7 +163,7 @@ std::shared_ptr<const CompletionInlineChild> CompletionInlineChild::qualifyVisit
         if (!loop->isProperAncestor(endpoint.before)) { return {}; }
     }
     auto assignment = decodePhysicalAllocationCertificate(function,
-        plan->allocationCertificate, {0,1,2,3,4,5});
+        plan->allocationCertificate, defaultEventIds());
     if (failed(assignment)) { return {}; }
     // The child is the whole loop, not one iteration. Outer visits are distinct
     // logical invocations; physical separation remains the parent's obligation.
@@ -243,7 +245,7 @@ std::optional<CompletionInlineChild::ResourceFootprint> CompletionInlineChild::r
     if (eventAssignment) {
         for (const auto& record : eventAssignment->records) {
             for (auto id : record.ids) {
-                if (id < 0 || id > 5) { return std::nullopt; }
+                if (!isNativeEventId(id)) { return std::nullopt; }
                 // Final palette renaming retains these disjointness obligations.
                 const auto mask = 1u << id;
                 result[{record.sourcePipe, record.targetPipe}] |= uint8_t(mask);
@@ -299,7 +301,7 @@ LogicalResult appendChildPalettes(const PhysicalAllocationPlan& assignment, cons
         std::set<int64_t> slots;
         for (const auto* member : members) {
             for (auto id : member->ids) {
-                if (id < 0 || id > 5) { return failure(); }
+                if (!isNativeEventId(id)) { return failure(); }
                 slots.insert(id);
             }
         }

@@ -300,18 +300,18 @@ bool signedOverlappingSelectors(MLIRContext& context, unsigned route = 0, bool d
     if (failed(prepared)) { return false; }
     if (route == 2) {
         (*prepared)->allocationCertificate = certificate(&context, 2);
-        if (failed(fs::planPhysicalFamilyOutput(function, **prepared, {1, 3}))) { return false; }
+        if (failed(fs::planPhysicalFamilyOutput(function, **prepared, {6, 7}))) { return false; }
     }
     if (failed(fs::insertLogicalSynchronization(function, **prepared))) { return false; }
-    if (route == 1 && failed(fs::allocateExecutedFamilyCounters(function, certificate(&context, 2), {1, 3}))) {
+    if (route == 1 && failed(fs::allocateExecutedFamilyCounters(function, certificate(&context, 2), {6, 7}))) {
         return false;
     }
     Values values; Trace actual, expected;
     uint64_t published = 0, consumed = 0;
     for (int64_t i = -5; i < 6; i += 2) {
-        if (i <= 3) { expected.emplace_back(true, route ? (published++ % 2 ? 3 : 1) : static_cast<uint64_t>(i)); }
+        if (i <= 3) { expected.emplace_back(true, route ? (published++ % 2 ? 7 : 6) : static_cast<uint64_t>(i)); }
         if (i >= -3) {
-            expected.emplace_back(false, route ? (consumed++ % 2 ? 3 : 1) : static_cast<uint64_t>(i - 2));
+            expected.emplace_back(false, route ? (consumed++ % 2 ? 7 : 6) : static_cast<uint64_t>(i - 2));
         }
     }
     auto result = execute(function.front(), values, actual);

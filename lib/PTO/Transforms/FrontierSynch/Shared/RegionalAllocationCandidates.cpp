@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "RegionalAllocationCandidates.h"
 #include "CertifiedAllocationCandidates.h"
 #include "mlir/IR/Diagnostics.h"
@@ -31,7 +32,7 @@ LogicalResult selectRegionalAllocationCandidate(func::FuncOp function,
         })) { return failure(); }
     std::set<int64_t> unique;
     for (auto id : eligibleIds) {
-        if (id < 0 || id > 5 || !unique.insert(id).second) { return failure(); }
+        if (!isNativeEventId(id) || !unique.insert(id).second) { return failure(); }
     }
     if (failed(normalizeLogicalFamilies(plan))) {
         return failure();

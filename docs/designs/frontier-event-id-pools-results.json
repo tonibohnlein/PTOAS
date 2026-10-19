@@ -1,0 +1,827 @@
+{
+  "baseline_revision": "c44c1df43cef6c7d8d515b9d665f69fa60b1e107",
+  "contract": {
+    "native_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "default_combined_pool": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "selection_options": [
+      "allocation-ids",
+      "eligible-ids"
+    ],
+    "automatic_completion_child_qualification_pool": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "device_qualification": false
+  },
+  "compiler": {
+    "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+    "sha256": "a25c298d0f7fa80537239a19ec6e8c352faa9ae47e3ba760c3080e691eddadf3"
+  },
+  "source_files": [
+    {
+      "path": "include/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticHandoffAllocation.h",
+      "sha256": "5df8dbcf5d7806a5e242a0cc3dac8293655a82f15ec057b26225d18878c677a6"
+    },
+    {
+      "path": "include/PTO/Transforms/FrontierSynch/Shared/EventIdPool.h",
+      "sha256": "0328c7de03b16144d523086d077a530f13c6fa524a50c3b80ae6f98ba911424f"
+    },
+    {
+      "path": "include/PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h",
+      "sha256": "3fa20ce928d256c3f6cb04229c59a88a4be4a6aa6038381da10d9ae016cf09e1"
+    },
+    {
+      "path": "include/PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h",
+      "sha256": "f91b859a1faf48de9b8a7d0d19ca238ad66df96a86fca4010fa9879692b9741a"
+    },
+    {
+      "path": "include/PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h",
+      "sha256": "a136feba4e0cca1ed9e0d4b64de3e512c5ff70a3321f86c6e421b98cbea60779"
+    },
+    {
+      "path": "include/PTO/Transforms/FrontierSynch/Structured/RotatingBoundary.h",
+      "sha256": "8f9fbd3be8f0ba6de381bf21e252ee94dffc38fb8703a0e0322eb32620978ddb"
+    },
+    {
+      "path": "include/PTO/Transforms/FrontierSynch/Structured/StorageLaneAllocation.h",
+      "sha256": "ce46f89b25f45c7bb7a167a9b33a01d3d16f665ea536819548b7a5a12127c959"
+    },
+    {
+      "path": "include/PTO/Transforms/Passes.td",
+      "sha256": "7f676e2b81030cdd17bb72acef8bdf6ad4fa1e501a0817d9b7b1fe3a623dbfdf"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/AnalysisRequest.cpp",
+      "sha256": "e67a6e197fe06f1fe1b50eaef1f6dd71a40e3bff4a3619c174990e46204a592f"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticHandoffAllocation.cpp",
+      "sha256": "2790a0e8f46f8552ee0f71e2a15dd350b68c0007a95779b0c15503433b4cc9ab"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.cpp",
+      "sha256": "4698ed02cc90f72f3ef6d90dd29ce1c0d19ce3b9214dbb2a6187a5605a3f11d2"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Arithmetic/GeneralArithmeticAllocation.cpp",
+      "sha256": "51aa260bf938aa44c64b86db9ac33458f18ffd370d14feb5a22a7d1f16dbffca"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Finite/FiniteAllocationDecode.cpp",
+      "sha256": "4f0703b12eb1da2bae5c8cfee63881d6a1173c7d1cbd4f083ddbf1907d12082e"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/FrontierAnalysis.cpp",
+      "sha256": "452694049b948bcacbc369b42f0a166c7d64011de7a2c8f820995361afb32720"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/README.md",
+      "sha256": "5a65c647c022ef2651654f9511c4132d1beb796eed56cf6fbc626131f1a31fec"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/AllocationCertificate.cpp",
+      "sha256": "59ea3333c9aeb9e5cb6de89381c1e76b46fe88694cf945ad93847d36997edc9d"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/CompletionInlineChild.cpp",
+      "sha256": "d9f95caf1b313a09aec70fc855d57bf0740eb13f756ed1ec7473bfc733ef8ec2"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.cpp",
+      "sha256": "9517073921a64b10b7e0f02cbfc1d588242eebbeabb9d099e8f4d2c599b3a32e"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.cpp",
+      "sha256": "db7210a0dbb469e4776e7fd6bc9e669bae3be3ac0cabbafa038348a96e8a77b9"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.cpp",
+      "sha256": "602fa960a2b6afa35ec07ef06a5e3581f49752072be95af302cdc5cc1bffe400"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/PhysicalExecutedCounters.cpp",
+      "sha256": "ab67cc26c66effeef2c6c8f73b83ac4b303053ee26011779cb3401ce95fdfbbd"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/PrefixLifetimes.cpp",
+      "sha256": "8c6ec8c966672dc6a6ccdf53d307aa9e1d57036bfcb45043fa68c4ad0d1e9280"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/RegionalAllocationCandidates.cpp",
+      "sha256": "006f973ade06eeebb80e7ec6cd206116f0dd748f276b186031ba979a4e97d478"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/RegionalLaneCertificate.cpp",
+      "sha256": "3688937703ef126076d49c1b3379a37154d7e980b666c842401b5be0de243cf8"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.cpp",
+      "sha256": "0c0fd83cd73a95b9480501027183523a3506b9641129a8996293e01988d183de"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedAllocation.cpp",
+      "sha256": "1a76a7a23e4d0d94fb3b0d5c9e7582a96536873dd47f4264d4c25d7d1085cea1"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedLaneAllocation.cpp",
+      "sha256": "a6b2df6114fc3cbc10aaf42e5fad2aafe653050817365980b56e8ac33c803934"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeRegionalAllocation.cpp",
+      "sha256": "acb7d836e67ea1cb46d7b7707015c4822ae904996678aaf5d91b41821c61cfa5"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.cpp",
+      "sha256": "405c5ef8da3373cb4f02c2fe813f9c104a2835f7935ea633afad6c0d3846d83c"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.cpp",
+      "sha256": "8001a158537590039f85fae5ccaa78579ebfb02569b25974a993c06b6308e4be"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Structured/StorageLaneAllocation.cpp",
+      "sha256": "fa6bf8809e6be15c3247b893bfb55d6aaf748938b2681a92a51e188655f8b204"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Structured/VaryingRotatingAllocation.cpp",
+      "sha256": "ffb021c763a372eec268d5e46ca1b5bdb9cf03e315ee4d2de9bbbdfb9624dc04"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRegional.cpp",
+      "sha256": "0fbd1bbef8c8ad4a5c148b2372f90a24e3bd9eb3c584a2df225316fa41c670bb"
+    },
+    {
+      "path": "test/lit/pto/Inputs/check_finite_family_pipeline.py",
+      "sha256": "6091cefb48e0b693cc221a8b4de7d85fa9952bd197867651803e17be4e32d4c8"
+    },
+    {
+      "path": "test/lit/pto/Inputs/check_physical_allocation.py",
+      "sha256": "51535217fcc1d68e566771c859f706cc375246755cbb72bee9e8fdb82bc18d74"
+    },
+    {
+      "path": "test/lit/pto/sync_allocation_candidates.pto",
+      "sha256": "76c16ab1f7eb75dd196849f1bf16746d66ebfebc651ab0af8ee1d9fe576447f8"
+    },
+    {
+      "path": "tools/pto-test-opt/AllocationPreparationChecks.cpp",
+      "sha256": "79a26c5b337fe17f863ed15a6e98fc6a49c96d25c75488429506852f79899604"
+    },
+    {
+      "path": "tools/pto-test-opt/CompletionRegionChecks.cpp",
+      "sha256": "ca4dd96e02e93d79729f0f4c73ec62d0ad32f16bb2eefdcbd93a56bae153aedc"
+    },
+    {
+      "path": "tools/pto-test-opt/EndpointOrderChecks.h",
+      "sha256": "22eabfa68958d0b14bcc29ef1ef6f0b18581f225a25259675ae066e3b5602c19"
+    },
+    {
+      "path": "tools/pto-test-opt/FamilyProtocolChecks.h",
+      "sha256": "8801c97608b5d43b01113b4cfc32cf08f890b340caafadc06f5330ccd2b1f66f"
+    },
+    {
+      "path": "tools/pto-test-opt/GeneralArithmeticAllocationChecks.cpp",
+      "sha256": "837707d42de650e626e73cb8b79de306175cb13e5af369583414ee98d207ded4"
+    },
+    {
+      "path": "tools/pto-test-opt/PhysicalExecutedCounterChecks.cpp",
+      "sha256": "84fb08059fbb6eb61823e1dace7bbccd7391ecdde1e22e5e0194feb8ca9b42c6"
+    },
+    {
+      "path": "tools/pto-test-opt/RepeatedOrderedAllocationChecks.h",
+      "sha256": "251a1772e2f8d12a845aa5eafd9553723806422dca6138de5148aaf6d82216a8"
+    },
+    {
+      "path": "tools/pto-test-opt/StorageLaneAllocationChecks.cpp",
+      "sha256": "beb30218def2c55569512ab5409e6edfa484834a8c94fee8eca6192573efe474"
+    }
+  ],
+  "build": {
+    "result": "pass",
+    "workers": 2,
+    "llvm_rebuilt": false,
+    "logs": [
+      {
+        "path": ".local/event-id-pool/build.log",
+        "sha256": "cface3840344221299617de7f473dabb7a696682b33bba1aa29b4165c80fdcf1"
+      },
+      {
+        "path": ".local/event-id-pool/build-final.log",
+        "sha256": "0d16f5d715d9a54629056887bc23518f05daeb5aa4adf3dd0b103d32fee855c5"
+      },
+      {
+        "path": ".local/event-id-pool/build-tests.log",
+        "sha256": "9847ad92e88cd4b1f4c7dcd53466aed33439743d08c3be16b98242390e456667"
+      },
+      {
+        "path": ".local/event-id-pool/build-format.log",
+        "sha256": "3202fb5fe1e4c7a79994bd4bbed41348c57969bbdc9845b03c0c821a1a50c444"
+      }
+    ],
+    "new_warnings_in_changed_files": 0,
+    "inherited_warnings": [
+      "ProgramRecognition.cpp:604 covered-switch-default",
+      "SessionProducers.cpp:1239 covered-switch-default",
+      "Shared/SequenceBoundary.cpp:148 covered-switch-default"
+    ]
+  },
+  "tests": {
+    "focused": {
+      "passed": 9,
+      "total": 9,
+      "receipt": {
+        "path": ".local/event-id-pool/focused.json",
+        "sha256": "1af6b7c10c9c4580a6d710544b3031dbb5b804bcee8d799fad919111125c58bc"
+      }
+    },
+    "selected_gate": {
+      "passed": 341,
+      "total": 347,
+      "failures": [
+        "PTOIR :: pto/insert_sync_slot_transitive.pto",
+        "PTOIR :: pto/multi_tile_same_region_two_gets_sync.pto",
+        "PTOIR :: pto/multi_tile_two_regions_two_gets_sync.pto",
+        "PTOIR :: pto/sync_allocation_candidates.pto",
+        "PTOIR :: pto/sync_bounded_lifetime_provenance.pto",
+        "PTOIR :: pto/sync_prepared_insertion.pto"
+      ],
+      "receipt": {
+        "path": ".local/event-id-pool/full-gate.json",
+        "sha256": "56ad8e36e04b81f6a6204f9e4ac8287a6515c94eb60323033cf254b43fa6f978"
+      }
+    },
+    "corrected_test_rerun": {
+      "passed": 3,
+      "failures": [],
+      "receipt": {
+        "path": ".local/event-id-pool/corrected-final.json",
+        "sha256": "1ac12ab966686c3c91a8a74a05f551fcd8a1e9706ea5d832101b45192570467f"
+      }
+    },
+    "aggregate": {
+      "passed": 344,
+      "total": 347,
+      "remaining_failures": [
+        "PTOIR :: pto/insert_sync_slot_transitive.pto",
+        "PTOIR :: pto/multi_tile_same_region_two_gets_sync.pto",
+        "PTOIR :: pto/multi_tile_two_regions_two_gets_sync.pto"
+      ],
+      "scope": "Complete selected run plus affected test reruns; not a second fresh full run."
+    },
+    "capacity_cases": {
+      "terminal_publications": [
+        7,
+        8
+      ],
+      "six_pool": "refused without mutation",
+      "eight_pool": "success, saved/combined/C++",
+      "arithmetic_executed_families": [
+        7,
+        8
+      ],
+      "high_id_pools": [
+        [
+          6,
+          7
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ]
+      ],
+      "out_of_range_id": 8,
+      "out_of_range_table_width": 9
+    }
+  },
+  "primary_corpus": {
+    "cases": 49,
+    "combined_compilations": 98,
+    "six_equal_immediate_baseline": 49,
+    "six_equal_eight": 49,
+    "receipt": {
+      "path": ".local/event-id-pool/primary/results.json",
+      "sha256": "e600670c56fcdcc900934e0148c41dce311882704a949d9b3aefc92d48694aa6"
+    },
+    "inputs": [
+      {
+        "id": "0000",
+        "name": "pypto_lib__hello_world__0",
+        "input_sha256": "8aa3491afbabdffdc703a5df8090712964e5440e5fcb7bc2de40e0634578c411",
+        "physical_output_sha256": "c99a4f6012a9670e160418b8872ad56b529110669ed5ebde627840ddb29a4320"
+      },
+      {
+        "id": "0001",
+        "name": "pypto_lib__matmul__0",
+        "input_sha256": "138e4b22cb37800778c21dae6aa677116fd5e045f069b51d755b747526892572",
+        "physical_output_sha256": "63dc1d44a8ac33ce08ab8df78322b37c41c5a00c0d7a64247199c0ea99d19d16"
+      },
+      {
+        "id": "0002",
+        "name": "pypto_lib__gemm__0",
+        "input_sha256": "7fc04f6c61368697a77f88ad873a4a58b3d543f161b568aac24f4c24bbdb12ad",
+        "physical_output_sha256": "df007d33af17a395dd2836925d5eea1d1a4e76cc53c71967147b632e1f33c8a9"
+      },
+      {
+        "id": "0003",
+        "name": "pypto_lib__layer_norm__0",
+        "input_sha256": "663d4a5b4f18e88994b573b94c8d0129c3aa9a40c45c8b8cc7e0b6cddea73cef",
+        "physical_output_sha256": "981d87462cec07fc134a8db3f4b059cbe6b6a492d2400de4cbb1eafea31a9af5"
+      },
+      {
+        "id": "0004",
+        "name": "pypto_lib__rms_norm__0",
+        "input_sha256": "924a41d73f8584f6808c5cec69a54390446304255de90d9e9f01287748a6cb03",
+        "physical_output_sha256": "12a7460e5b1da6f0ea0956b625ba5d1b3acac30a27ea8e26a0012068b73bc08b"
+      },
+      {
+        "id": "0005",
+        "name": "pypto_lib__rope__0",
+        "input_sha256": "c2431f5ba5f9cf3f7d1300abe076c38d8fb91e78fb93d604b67a057358a1a703",
+        "physical_output_sha256": "b05771150f419d1820c1854c23a80d33085413066058083b5c7b78a38664bc6f"
+      },
+      {
+        "id": "0006",
+        "name": "pypto_lib__softmax__0",
+        "input_sha256": "613cd3354a23fbb4273463771b6636af1373d84b93f1e2ecd97920ac103c1bb7",
+        "physical_output_sha256": "f88da048566327356a4dec6601c9bd7f14ce56e94e7f4a5ba7f2d530727f9d1f"
+      },
+      {
+        "id": "0007",
+        "name": "pypto_lib__gemm_eltwise__0",
+        "input_sha256": "aa63044e86736e1c2ba2d36807c3cd79cbbdc391118131d26ec1d45752ae431c",
+        "physical_output_sha256": "7eabf16559d6cfbe66d62ff8bcb69f8ad9266ac8a555ae035c736062a1896171"
+      },
+      {
+        "id": "0008",
+        "name": "pypto_lib__qkv_proj__0",
+        "input_sha256": "cb5a08db78e56bd05045c7c94dad5f0f8c29a76dfa579b9d1a188e27f2e7f499",
+        "physical_output_sha256": "5a037bcdc4a7d5e7aac26652d372613a8a5fe215441c1c576d1dc0989a3cf784"
+      },
+      {
+        "id": "0009",
+        "name": "pypto_lib__qkv_proj__1",
+        "input_sha256": "384a210f7e16635e2bfdefbfc45ca7c9567ef50b5d3458164069bb50665fe9ad",
+        "physical_output_sha256": "709153bd838b106495a076175a5c7b0f115ace7e2ac10ad05723a71e40b59a3d"
+      },
+      {
+        "id": "0010",
+        "name": "pypto_lib__qkv_proj__2",
+        "input_sha256": "9ec660aea969c9a77b1db51ae44d854b38579292f9b04656525f18912b5b11bf",
+        "physical_output_sha256": "933711fc8659b5e9f37fd75d13f52477f89df08f0fe246bcd1e85abaf6104a7b"
+      },
+      {
+        "id": "0011",
+        "name": "pypto_lib__topk__0",
+        "input_sha256": "88e07acdb5aca0195b9408c4389ecf5e7f34dae559cea445fc26c6b35490b47a",
+        "physical_output_sha256": "d42b818b786dd333e95a8637c034f508753b21c2053fca946e1b6210a7f4f903"
+      },
+      {
+        "id": "0034",
+        "name": "pypto_lib__prefill_fwd__0",
+        "input_sha256": "053f39b6ca12070c1c87f3b970c5ab10c23ee6e6cb5878d7dab1d7a67f59aad2",
+        "physical_output_sha256": "ebe878ea9de9a8e2ca592da0c00578e8c555c76b37b2c230a5fa32858ca56542"
+      },
+      {
+        "id": "0035",
+        "name": "pypto_lib__prefill_fwd__1",
+        "input_sha256": "8dc5c969a93a5086e9b8e1309932197690f5ebf7d781fe27d7cefccbc2a1a349",
+        "physical_output_sha256": "bcea313cf8099a7881f39e9b845e228aafdb219fc7d5fb2168260e1cb0068a57"
+      },
+      {
+        "id": "0036",
+        "name": "pypto_lib__prefill_fwd__2",
+        "input_sha256": "e97ef64cd3baa377053240d2ac075e40d81a5a9095a383a54edab24fcd7e802e",
+        "physical_output_sha256": "a3b87f7052ba536554faece35c61f4ddb80051ab1501af686b94a42a7b7efb88"
+      },
+      {
+        "id": "0037",
+        "name": "pypto_lib__prefill_fwd__3",
+        "input_sha256": "8f720df29a0ec8a62452e12c62becd7209e8d36a1f5772ea10bb408c86d55a14",
+        "physical_output_sha256": "ae68c3fe97bbab563fa57f8de057ad730dfb06d6ae7c4d8ac459bcb44cf9d636"
+      },
+      {
+        "id": "0038",
+        "name": "pypto_lib__prefill_fwd__4",
+        "input_sha256": "3bfec807cced2bfd378bbac062c7fbe0622897123176926ca7b963e458176c89",
+        "physical_output_sha256": "3df79f99504974d477995b4fb2bba93eec3e6497bd289822b1064293307d8c8c"
+      },
+      {
+        "id": "0039",
+        "name": "pypto_lib__prefill_fwd__5",
+        "input_sha256": "5d3b978c39126b94deae41d72a8a20d2176f8d3ffc8d4fe66fc3dce34d434bf8",
+        "physical_output_sha256": "d34d9bace2d2c8b7605da5637a3535398b55b98bf3e82273cf26fb84fac239c6"
+      },
+      {
+        "id": "0040",
+        "name": "pypto_lib__prefill_fwd__6",
+        "input_sha256": "b258009ffc11f2ff9fdfbe1b2431cf7e2fe3b9401fe50889e94abac1dc82334d",
+        "physical_output_sha256": "2d0e9c3e31a648f74254032d4c1524e2c42ddf8403f18f18125b6a6e4f9ac06c"
+      },
+      {
+        "id": "0041",
+        "name": "pypto_lib__prefill_fwd__7",
+        "input_sha256": "b2bc134f9291b00beb3f824f23051c04e15f7b1dcbae1661093c46133d3ed189",
+        "physical_output_sha256": "94b71b68586dbc97b40c1d87dc6f6156865602a4066fb5734e1cb375456b6238"
+      },
+      {
+        "id": "0042",
+        "name": "pypto_lib__prefill_fwd__8",
+        "input_sha256": "bf464ba4bcf53d2874bf0c26410a9567487f8db434d67b37ecc905406574d0ee",
+        "physical_output_sha256": "e59fb3e180a5963d7857b440b41ee670831d18a8f037fee8311f2de2fb9952e0"
+      },
+      {
+        "id": "0043",
+        "name": "pypto_lib__prefill_fwd__9",
+        "input_sha256": "d55392748462b0ecdc9d378bd4265ce7dd1af945434309e6e24f4d25cf911589",
+        "physical_output_sha256": "a3bca1598c1ed37fbc270de7e8a847e26b8e8ec01daec4f2307d396a7efba548"
+      },
+      {
+        "id": "0044",
+        "name": "pypto_lib__prefill_fwd__10",
+        "input_sha256": "e449eab45a551d43b2224176c1ce6d0acb609d1b27689768b359d3050c2a05a9",
+        "physical_output_sha256": "76fdd1c401a4982ba1a3ece5ccf2f744198eb95bf82cc44572d96c8045f1ef5c"
+      },
+      {
+        "id": "0045",
+        "name": "pypto_lib__prefill_fwd__11",
+        "input_sha256": "81241fa80fe97d40a81f60e440b3c057b46883fdc820485c8be29ed1ad2d3fc3",
+        "physical_output_sha256": "65940ffd28820c4bb58b98ee21d7aaa12704e599485ebc9cfa1e051b78ae2b8d"
+      },
+      {
+        "id": "0046",
+        "name": "pypto_lib__prefill_fwd__12",
+        "input_sha256": "6a714623aed4ddddf8afdb6d51f88d8a5403fc1d44ed896bd4fc224edf6659c8",
+        "physical_output_sha256": "199377f53369586c8aff856252f95f2d5855c773de814aa7f61145f9c7031376"
+      },
+      {
+        "id": "0047",
+        "name": "pypto_lib__prefill_fwd__13",
+        "input_sha256": "c38bebe909a21e318ab0b430897edd94320c3b600fc1fe36a97541021cca913d",
+        "physical_output_sha256": "2f7a7ea6427e92457998269ecae0c55d082fa18d43c216bd87dfd546920345a9"
+      },
+      {
+        "id": "0048",
+        "name": "pypto_lib__prefill_fwd__14",
+        "input_sha256": "88a8bcf8b07f59979f22b1f2a586f20e122474e9d0ea89ee88c11b98f84db321",
+        "physical_output_sha256": "c2e228f187838c24711016304e352f9aceff009f57d61fa8139e0352bc5ac323"
+      },
+      {
+        "id": "0049",
+        "name": "pypto_lib__prefill_fwd__15",
+        "input_sha256": "4aa2e13e8e527a63a61e3ed18192142cf3d14c11b72fea1af76cd01efe477c07",
+        "physical_output_sha256": "96e6a9657dfc28a397987d1c7bf3abcf3f8aa7949bd36dd699dc62f4a4608de1"
+      },
+      {
+        "id": "0050",
+        "name": "pypto_lib__prefill_fwd__16",
+        "input_sha256": "8cab94112b406daaa012186be0ba420350d41617fe9b452c3233612d0a66f114",
+        "physical_output_sha256": "5bf224c50aa136c75104d3c69708bde2f9081799994d62735aad9e44cbcc0e50"
+      },
+      {
+        "id": "0051",
+        "name": "pypto_lib__prefill_fwd__17",
+        "input_sha256": "967dbe255819f90c258519d2bd036874e19ef7e9a401300dd7947c0c9467afa5",
+        "physical_output_sha256": "b9e889fbfe43fdaff168e7353fcaba812038a42e678bac8783e48f5967ca13d1"
+      },
+      {
+        "id": "0052",
+        "name": "pypto_lib__prefill_fwd__18",
+        "input_sha256": "3d3975ad7437296840a86eaf055415c59961ecf084961faee654aafcca0cc4fb",
+        "physical_output_sha256": "def55ba5dcf8138502b04bfc46aa7c9a776ab3f079a29b634f14252ad431abe7"
+      },
+      {
+        "id": "0053",
+        "name": "pypto_lib__prefill_fwd__19",
+        "input_sha256": "2d338e046b6019a54c01079e2b0a37437ee7900294f5c4ac0557d5b3c5657c16",
+        "physical_output_sha256": "6c5790f379142dcf8469548ca9c3c9da240e5b05b15b8aec2e847e3d1047cefe"
+      },
+      {
+        "id": "0054",
+        "name": "pypto_lib__prefill_fwd__20",
+        "input_sha256": "5be31599cbba59d10880b2b0003af557831c3718e3ad56f0ba3479170b9c7f5f",
+        "physical_output_sha256": "ed2b2b6056544541a9156b92eee5b19b5f6b59673b0f77dfd4a9bd08ab2424f2"
+      },
+      {
+        "id": "0055",
+        "name": "pypto_lib__prefill_fwd__21",
+        "input_sha256": "53b63fb46e0e08e2d1f28c3713afc86ed50043125fe972bf79dcd21dcfa32ff5",
+        "physical_output_sha256": "ac078aca73310508313228f2ee5a590e000c6628b37fa6b34fa70446cd291505"
+      },
+      {
+        "id": "0056",
+        "name": "pypto_lib__prefill_fwd__22",
+        "input_sha256": "81a312e127649b499f898df5df17b6ff09a1acfb40645557802b8dfc26590ccb",
+        "physical_output_sha256": "93990651bc387aafbf1cf6313d5eda99cc97f525dd27cad56595bcd3c4539a01"
+      },
+      {
+        "id": "0057",
+        "name": "pypto_lib__prefill_fwd__23",
+        "input_sha256": "da61f56ecd3d1a010dc234d03a637e1509b2b55d83d46064b9a9e24f85c05182",
+        "physical_output_sha256": "3d6f8a89465b210c005157c7f395f0623cb42ee1c0d173c1d9ef830516b29f4e"
+      },
+      {
+        "id": "0058",
+        "name": "pypto_lib__prefill_fwd__24",
+        "input_sha256": "c01e9826a3e043a4f2ace8e27bc39df78a5829ee9d16f0d7c362112e956dbeb8",
+        "physical_output_sha256": "4ecb7cc9e7b76c6a0266957d8f65fdef031d96f0505eb08b52a4d1697a4adaec"
+      },
+      {
+        "id": "0059",
+        "name": "pypto_lib__prefill_fwd__25",
+        "input_sha256": "8182c1ae61c53710cdb360cc9dee0100c95a84f4e63139286f4126e935d8072d",
+        "physical_output_sha256": "9d8f94196e48a67a444680d624d6c61f30d4dc591fc31babe1c5f68bde13d235"
+      },
+      {
+        "id": "0060",
+        "name": "pypto_lib__prefill_fwd__26",
+        "input_sha256": "fe1f31d1fba82dc0df560f05c78fa95fe2bf6d4c0cecdadd2cb50bfa7103d446",
+        "physical_output_sha256": "ddf957aa38e34a7b2d485249ceb6326aa2348b899e2b2080b462f5d8199f7f0c"
+      },
+      {
+        "id": "0061",
+        "name": "pypto_lib__prefill_fwd__27",
+        "input_sha256": "c47c6a58772cfdb889f53a072b050c07fe1920ec23bed88dd6205d42b2325655",
+        "physical_output_sha256": "5039c2d9d2f7a446511a0e444132e5d9161452c6bc4c6351d6469b0523a97f6d"
+      },
+      {
+        "id": "0062",
+        "name": "pypto_lib__prefill_fwd__32",
+        "input_sha256": "72cb0c179b53f43511c9afe3c5cbe48c6564822132ca2ff753817943292fab36",
+        "physical_output_sha256": "4b9590e302b3a8e7da41d6d345a894dd19d3521aad4e0364738d9ec733751167"
+      },
+      {
+        "id": "0063",
+        "name": "pypto_lib__prefill_fwd__33",
+        "input_sha256": "35c4f74fe04033c12885866735398ec0bb60252290b5f3c2d3f4ddad1cfaf16d",
+        "physical_output_sha256": "5418142dbd8f15a272c41bd61e7bb7d640ce7abc8a1f33ae5fbe4412ddda40e0"
+      },
+      {
+        "id": "0064",
+        "name": "pypto_lib__prefill_fwd__36",
+        "input_sha256": "a9764af4f5fcedc42b9befb3681709c227a2aa1c0318a8792fd429cb94d461a6",
+        "physical_output_sha256": "6ef561807e20cd640b5d9f3279fea13cc7fe80c25cbd54bd6482dbef6aaa8996"
+      },
+      {
+        "id": "0065",
+        "name": "pypto_lib__prefill_fwd__37",
+        "input_sha256": "894f8df3d631ca1c23b598f5b8fb5d3b6643d201f0e900c970f19e4d04d72be3",
+        "physical_output_sha256": "687a579917b828797a4b6692e381cb13102ad25bc7ef113ff5fd646092432abc"
+      },
+      {
+        "id": "0066",
+        "name": "pypto_lib__prefill_fwd__38",
+        "input_sha256": "79839518b7cd766cda991aa6311dbe9b1ae313a4de4978c897b360058d55c408",
+        "physical_output_sha256": "e8adc52f88c0e01c1c44323b5b314440c22306dcc8f60f444ca5e47ff5af4092"
+      },
+      {
+        "id": "0067",
+        "name": "pypto_lib__prefill_fwd__39",
+        "input_sha256": "89581a9d6f1e5d3319c25ee3c23945148fc2a80588c7b87655f6092192024597",
+        "physical_output_sha256": "d6d2d4c4d466121e79fed2988745e17727b94fc51e054d7ba07639677336e7c6"
+      },
+      {
+        "id": "0068",
+        "name": "pypto_lib__prefill_fwd__42",
+        "input_sha256": "a73c7b63174fca917a048064d65ec33c1910bdd8a61de6062bd78daef5445124",
+        "physical_output_sha256": "6cb6d1a0e5e26c460dc8f9793ee5cc565188e00fceecdc03326b448844333c73"
+      },
+      {
+        "id": "0069",
+        "name": "pypto_lib__prefill_fwd__43",
+        "input_sha256": "9b685df0952b6176e8f7ef2ee2a93078ae89117e8c77610b9fc7c707f95c01ec",
+        "physical_output_sha256": "d1c36a04170e26aeeb80ceda7d81d2f9ceab0c1f9cefa34a7a841a3afa74c825"
+      },
+      {
+        "id": "0070",
+        "name": "pypto_lib__rms_norm_test__0",
+        "input_sha256": "b2039a34bdf1fa7094198b3bf9a75225fd5d43b855a77440ac0c4b5dfae6b1e3",
+        "physical_output_sha256": "d83a38736ce8e570f2e49bd4fe1b0b4cd61bb7d46af3e248ad64099c306b862d"
+      }
+    ]
+  },
+  "kernel_comparison": {
+    "scope": "Same candidate compiler, three interleaved process pairs; prepared IR to combined physical output.",
+    "pairs_per_case": 3,
+    "six_equal_eight": 9,
+    "cleanup": [
+      "canonicalize",
+      "cse"
+    ],
+    "cpu_workers": 1,
+    "timeout_seconds": 120,
+    "memory_limit_bytes": 4294967296,
+    "receipt": {
+      "path": ".local/event-id-pool/kernels/results.json",
+      "sha256": "798fcafecf762271b4d29e60e2601c66d4c53b2b9a903fc471812683f5efb14b"
+    },
+    "cases": [
+      {
+        "function": "gemm_tile",
+        "input_sha256": "7fc04f6c61368697a77f88ad873a4a58b3d543f161b568aac24f4c24bbdb12ad",
+        "byte_equal": true,
+        "six_seconds": [
+          0.12718239473178983,
+          0.12747216131538153,
+          0.12735071079805493
+        ],
+        "eight_seconds": [
+          0.12567563401535153,
+          0.13022164907306433,
+          0.12691605277359486
+        ],
+        "six_median_seconds": 0.12735071079805493,
+        "eight_median_seconds": 0.12691605277359486,
+        "physical_output_sha256": "cf042f95ff5276bb9b7713f26c30a62261fb75a12593cce2b59e3bcbdb1e682e"
+      },
+      {
+        "function": "layer_norm_rows",
+        "input_sha256": "663d4a5b4f18e88994b573b94c8d0129c3aa9a40c45c8b8cc7e0b6cddea73cef",
+        "byte_equal": true,
+        "six_seconds": [
+          0.12254543229937553,
+          0.12104047602042556,
+          0.12245496874675155
+        ],
+        "eight_seconds": [
+          0.12097071902826428,
+          0.1204653256572783,
+          0.12155999802052975
+        ],
+        "six_median_seconds": 0.12245496874675155,
+        "eight_median_seconds": 0.12097071902826428,
+        "physical_output_sha256": "16ffeb7ccc062658183cfd752bedd344e60f0d3a2b7a0aa2529060f9f6ddc65a"
+      },
+      {
+        "function": "rms_norm_rows",
+        "input_sha256": "924a41d73f8584f6808c5cec69a54390446304255de90d9e9f01287748a6cb03",
+        "byte_equal": true,
+        "six_seconds": [
+          0.12416864931583405,
+          0.12406675098463893,
+          0.1223696549423039
+        ],
+        "eight_seconds": [
+          0.12240016413852572,
+          0.12446293607354164,
+          0.12387000909075141
+        ],
+        "six_median_seconds": 0.12406675098463893,
+        "eight_median_seconds": 0.12387000909075141,
+        "physical_output_sha256": "61d006aae01851e72925f89bc4cf27675dbc776555dddfb4fcdcb78a1745a71a"
+      },
+      {
+        "function": "softmax_rows",
+        "input_sha256": "613cd3354a23fbb4273463771b6636af1373d84b93f1e2ecd97920ac103c1bb7",
+        "byte_equal": true,
+        "six_seconds": [
+          0.11832383088767529,
+          0.11904398119077086,
+          0.12022012611851096
+        ],
+        "eight_seconds": [
+          0.12136589223518968,
+          0.11952457996085286,
+          0.11906022299081087
+        ],
+        "six_median_seconds": 0.11904398119077086,
+        "eight_median_seconds": 0.11952457996085286,
+        "physical_output_sha256": "86571f5cbe77a8af174b28c9c7bebca7011a78304fbdacbc1623e3c8183f2370"
+      },
+      {
+        "function": "topk_block",
+        "input_sha256": "88e07acdb5aca0195b9408c4389ecf5e7f34dae559cea445fc26c6b35490b47a",
+        "byte_equal": true,
+        "six_seconds": [
+          0.12849312694743276,
+          0.13100619381293654,
+          0.1213320828974247
+        ],
+        "eight_seconds": [
+          0.12178826564922929,
+          0.12301798816770315,
+          0.12175140110775828
+        ],
+        "six_median_seconds": 0.12849312694743276,
+        "eight_median_seconds": 0.12178826564922929,
+        "physical_output_sha256": "66af26f4eb1e6a09b7651aa0daa96e8efef8a5de1858279ae676d20723928192"
+      },
+      {
+        "function": "gate_up_proj",
+        "input_sha256": "e97ef64cd3baa377053240d2ac075e40d81a5a9095a383a54edab24fcd7e802e",
+        "byte_equal": true,
+        "six_seconds": [
+          0.287706904578954,
+          0.2871768260374665,
+          0.2856354988180101
+        ],
+        "eight_seconds": [
+          0.28623124305158854,
+          0.2868829187937081,
+          0.28788275225088
+        ],
+        "six_median_seconds": 0.2871768260374665,
+        "eight_median_seconds": 0.2868829187937081,
+        "physical_output_sha256": "5205169bbe9c30ba6d5e97d68e80c319df99ffc61beeeece5351201a1ebef29a"
+      },
+      {
+        "function": "kv_proj",
+        "input_sha256": "3bfec807cced2bfd378bbac062c7fbe0622897123176926ca7b963e458176c89",
+        "byte_equal": true,
+        "six_seconds": [
+          0.27331901621073484,
+          0.2641157931648195,
+          0.2622439661063254
+        ],
+        "eight_seconds": [
+          0.2625995040871203,
+          0.26750160614028573,
+          0.2636830578558147
+        ],
+        "six_median_seconds": 0.2641157931648195,
+        "eight_median_seconds": 0.2636830578558147,
+        "physical_output_sha256": "87b8259870c731e9aa7ac0d26b9924cc5fd59e8c1341c4d9347e18b4ec3d7e45"
+      },
+      {
+        "function": "post_rmsnorm",
+        "input_sha256": "81a312e127649b499f898df5df17b6ff09a1acfb40645557802b8dfc26590ccb",
+        "byte_equal": true,
+        "six_seconds": [
+          0.7012894437648356,
+          0.7049783300608397,
+          0.6896575940772891
+        ],
+        "eight_seconds": [
+          0.6985481018200517,
+          0.6923584267497063,
+          0.6981875756755471
+        ],
+        "six_median_seconds": 0.7012894437648356,
+        "eight_median_seconds": 0.6981875756755471,
+        "physical_output_sha256": "2a274782dbd0f5d25c6e2b1f9a0e8965a57ee7c470b93005305a43af8df8d23b"
+      },
+      {
+        "function": "qk_pv_partial_merge",
+        "input_sha256": "c01e9826a3e043a4f2ace8e27bc39df78a5829ee9d16f0d7c362112e956dbeb8",
+        "byte_equal": true,
+        "six_seconds": [
+          0.13206232618540525,
+          0.13204273814335465,
+          0.1318132788874209
+        ],
+        "eight_seconds": [
+          0.13145455298945308,
+          0.13266619574278593,
+          0.1321786930784583
+        ],
+        "six_median_seconds": 0.13204273814335465,
+        "eight_median_seconds": 0.1321786930784583,
+        "physical_output_sha256": "0ba70c1b2b0128d37313feea4359815522bd4c1f09f82089b0f3db9ed0a4887a"
+      }
+    ]
+  },
+  "compliance": {
+    "raw_prefilter": {
+      "path": ".local/event-id-pool/compliance-final.log",
+      "sha256": "5f91a30d145db69e50fa08cccdf267cc8d27633d402e237f7a4e2f3a7bcc9284"
+    },
+    "line_length_error": "fixed",
+    "brace_findings": 24,
+    "brace_disposition": "Manually inspected; every actual body has braces. Regex matches conditions containing calls or multiline conditions.",
+    "unresolved_findings": 0
+  },
+  "review": {
+    "reviewer": "compiler_expert",
+    "decision": "ACCEPT",
+    "scope": "Scoped source and receipt correctness review; no independent device execution."
+  },
+  "limits": [
+    "No device compilation or execution.",
+    "IDs6/7 explicit experimental selections; runtime reservation not qualified.",
+    "Automatic completion-child discovery retains six-ID prequalification.",
+    "Eight IDs do not supply missing recognition/export capabilities.",
+    "No speedup claimed; compared corpus outputs unchanged."
+  ]
+}

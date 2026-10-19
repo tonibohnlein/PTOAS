@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Exact arithmetic child interfaces for sequence composition.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
 #include "ArithmeticByteCover.h"
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalFamilyFragment.h"
@@ -514,7 +515,7 @@ struct State : ArithmeticRegionalRelations {
         }
         if (!handoffAllocation) {
             if (allocationPolicy == ArithmeticRegionalAllocationPolicy::CoordinateCandidate) {
-                handoffAllocation = buildArithmeticCoordinateHandoffAllocation(analysis, pipes, 6,
+                handoffAllocation = buildArithmeticCoordinateHandoffAllocation(analysis, pipes, NativeEventIdCount,
                                                                                 plan.allocationProfile);
             } else {
                 auto single = buildArithmeticHandoffAllocation(analysis, pipes, 1, plan.allocationProfile);

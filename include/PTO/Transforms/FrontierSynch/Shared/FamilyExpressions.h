@@ -51,7 +51,7 @@ Value emitFamilyPresence(OpBuilder& builder, Location location, const FamilyExpr
 // arithmetic is total even outside the exact member domain. Optional labels map
 // each coordinate tuple to its original record identity without requiring paired
 // endpoints to have the same piece partition. An empty label list means ordinals.
-// A nonzero modulus (at most six) selects labels modulo that modulus and permits
+// A nonzero modulus (at most eight) selects labels modulo that modulus and permits
 // verified modular affine expressions; zero retains the exact-label mapping.
 // Member-only requests require the caller to establish the exact member domain.
 // They return no presence Value and build no unused domain guard. Coordinate

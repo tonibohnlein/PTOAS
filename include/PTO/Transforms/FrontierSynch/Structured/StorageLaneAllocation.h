@@ -31,7 +31,7 @@ struct StorageLaneAllocation {
 // witness unless allowPartial is requested. Then uncovered records are omitted
 // from records and require a separate certificate for their complete guards.
 // Work/representation depends on descriptors and witnesses, not visit count or
-// guard valuations. Physical labels are bounded by the six-ID hardware pool.
+// guard valuations. Physical labels are bounded by the native eight-ID encoding.
 StorageLaneAllocation buildStorageLaneAllocation(RegionExpressions& expressions,
     const LifetimeWindowInput& window, const LifetimeWindowAnalysis& analysis,
     llvm::ArrayRef<StorageLaneCell> cells, RegionExpressions::Id sourceOrdinal, bool allowPartial = false);
@@ -42,7 +42,7 @@ DictionaryAttr storageLaneAllocationCertificate(func::FuncOp function,
     const LifetimeWindowInput& window, llvm::ArrayRef<GuardedRankEdge> demands,
     const StorageLaneAllocation& allocation, int64_t plan);
 // Keep all palettes disjoint across both proofs. Empty means the complete
-// composite is unavailable or exceeds six labels, never a minimum-width claim.
+// composite is unavailable or exceeds eight labels, never a minimum-width claim.
 DictionaryAttr combineStorageLaneCertificates(DictionaryAttr storage, DictionaryAttr residual);
 } // namespace mlir::pto::frontiersynch
 #endif

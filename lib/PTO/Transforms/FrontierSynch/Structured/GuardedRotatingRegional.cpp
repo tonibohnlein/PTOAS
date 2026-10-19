@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Finite physical-cell boundary selectors for an immutable guarded periodic
 // interior. Slot-table expansion is explicit; runtime trips/offsets are circuits.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
@@ -68,7 +69,7 @@ std::shared_ptr<RegionalAllocationSummary> sliceAllocation(const GuardedRotating
         RegionalAllocationGroup group{direction.sourcePipe, direction.targetPipe, *direction.uniformBudget, {}};
         // Refine only the already certified cyclic assignment. Enumerate the
         // hardware lanes, never visits in the supplied interval.
-        if (group.budget <= 6) { group.lanes.resize(group.budget); }
+        if (group.budget <= NativeEventIdCount) { group.lanes.resize(group.budget); }
         for (auto [phase, handoff] : llvm::enumerate(direction.handoffs)) {
             auto source = RegionalEvent{handoff.source, begin, PeriodicEventKind::Start};
             auto target = RegionalEvent{handoff.target, dag.sub(end, dag.constant(1)), PeriodicEventKind::Completion};

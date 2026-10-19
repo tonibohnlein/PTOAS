@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Serialize allocation evidence with independent directed event-ID namespaces.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
@@ -57,14 +58,8 @@ LogicalResult validateIds(func::FuncOp function, ArrayRef<int64_t> ids)
 {
     llvm::DenseSet<int64_t> seen;
     for (auto id : ids) {
-        if (id < 0 || id > UINT32_MAX || !symbolizeEVENT(static_cast<uint32_t>(id))) {
+        if (!isNativeEventId(id) || !symbolizeEVENT(static_cast<uint32_t>(id))) {
             return function.emitError("eligible event ID is outside the native ID range: ") << id;
-        }
-        // Static-Tensor programming uses 0..5; 6/7 are reserved for the
-        // system/framework even though both values exist in the native enum.
-        constexpr int64_t staticEventIdCount = 6;
-        if (id >= staticEventIdCount) {
-            return function.emitError("event ID is reserved for system/framework use; available IDs are 0..5: ") << id;
         }
         if (!seen.insert(id).second) {
             return function.emitError("duplicate eligible event ID: ") << id;

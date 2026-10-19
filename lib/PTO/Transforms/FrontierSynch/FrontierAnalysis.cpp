@@ -9,6 +9,7 @@
 // logical pass uses the transactional module coordinator; physical event IDs
 // are assigned by the following allocation pass. Analysis-only mode retains
 // the mathematical certification checkpoint without changing the original IR.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "AnalysisSessionInternal.h"
 #include "PTO/Transforms/FrontierSynch/ResultGuarantees.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
@@ -625,8 +626,8 @@ public:
         }
         llvm::SmallDenseSet<int64_t, 8> uniqueIds;
         for (auto id : allocationIds) {
-            if (id < 0 || id > 5 || !uniqueIds.insert(id).second) {
-                getOperation().emitError("allocation-ids must be distinct eligible IDs from 0..5");
+            if (!frontiersynch::isNativeEventId(id) || !uniqueIds.insert(id).second) {
+                getOperation().emitError("allocation-ids must be distinct native IDs from 0..7");
                 signalPassFailure();
                 return;
             }
@@ -650,7 +651,7 @@ public:
             return;
         }
         if (physicalOutput && allocationIds.empty()) {
-            allocationIds = {0, 1, 2, 3, 4, 5};
+            allocationIds = frontiersynch::defaultEventIds();
         }
         if (!allocationIds.empty() && (analysisOnly || !prepareAllocation)) {
             getOperation().emitError("allocation-ids requires logical preparation with prepare-allocation=true");

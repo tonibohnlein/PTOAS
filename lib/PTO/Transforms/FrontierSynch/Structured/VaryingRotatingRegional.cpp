@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Algebraic storage generators without expanding banks or loop iterations.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingAllocation.h"
@@ -325,7 +326,7 @@ void State::buildAllocation()
     for (std::size_t phase = 0; phase < shared->records.size(); ++phase) {
         const auto& assigned = shared->allocation.phases[phase];
         const auto width = shared->allocation.cycles[assigned.cycle].laneCount;
-        if (width && width <= 6) {
+        if (width && width <= NativeEventIdCount) {
             rules.push_back({shared->records[phase], assigned.cycle, 1, assigned.offset, width});
         }
     }

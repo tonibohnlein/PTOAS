@@ -75,7 +75,7 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
     Option<"prepareAllocation", "prepare-allocation", "bool", "true",
       "Construct allocation evidence for the following physical allocation pass">,
     ListOption<"allocationIds", "allocation-ids", "int64_t",
-      "Optional eligible pool from 0..5 for regional candidate selection; physical allocation still validates fit",
+      "Eligible native IDs 0..7; defaults to 0..5 for physical output; explicitly including 6/7 is experimental",
       "::llvm::cl::ZeroOrMore">,
     Option<"gmAlias", "gm-alias", "std::string", "\"may-not-alias\"",
       "Distinct GM root assumption: may-not-alias or may-alias">,
@@ -99,7 +99,7 @@ def PTOFrontierAllocate : Pass<"pto-frontier-allocate", "mlir::ModuleOp"> {
   }];
   let constructor = "mlir::pto::createPTOFrontierAllocatePass()";
   let options = [ListOption<"eligibleIds", "eligible-ids", "int64_t",
-    "Available numeric IDs from 0..5; 6 and 7 are reserved; each number supports every legal direction",
+    "Eligible native IDs 0..7; explicitly including framework-reserved 6/7 is experimental; independent per direction",
     "::llvm::cl::ZeroOrMore">];
   let dependentDialects = ["mlir::pto::PTODialect", "mlir::arith::ArithDialect", "mlir::scf::SCFDialect"];
 }

@@ -8,6 +8,7 @@
 // Algebraic storage generators without expanding banks or loop iterations.
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ROTATINGBOUNDARY_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ROTATINGBOUNDARY_H
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingExtraction.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ChainInterface.h"
 #include <map>
@@ -83,7 +84,7 @@ RotatingBoundaryCertificate buildRotatingBoundaryCertificate(
 // uniform query classes. Representation limits/overflow return unavailable.
 RotatingBoundaryCertificate extendRotatingLaneBoundary(
     const RotatingBoundaryCertificate& child, llvm::ArrayRef<BoundaryLaneRule> rules,
-    uint64_t maximumTypes = 256, uint64_t maximumLaneWidth = 6);
+    uint64_t maximumTypes = 256, uint64_t maximumLaneWidth = NativeEventIdCount);
 // Preserve the child's analyzed native and demand relations. The caller proves
 // uniformCrossings from shared effects and supplies fragments whose protection
 // groups describe the enclosing visit scope, independently of the child index.
@@ -113,6 +114,6 @@ AffineRotatingVisits analyzeAffineRotatingVisits(
 // and matching must continue to use the original invocation certificate.
 AffineRotatingVisits extendAffineRotatingLaneBoundary(
     const AffineRotatingVisits& original, llvm::ArrayRef<BoundaryLaneRule> rules,
-    uint64_t maximumTypes = 256, uint64_t maximumStartup = 256, uint64_t maximumLaneWidth = 6);
+    uint64_t maximumTypes = 256, uint64_t maximumStartup = 256, uint64_t maximumLaneWidth = NativeEventIdCount);
 } // namespace mlir::pto::frontiersynch
 #endif

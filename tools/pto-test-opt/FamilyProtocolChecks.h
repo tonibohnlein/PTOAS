@@ -960,6 +960,8 @@ bool checkPhysicalConstructionComparison(mlir::MLIRContext* context)
     // repeated tables detect accidental deduplication or a changed period.
     for (auto ids : {SmallVector<int64_t>{0}, SmallVector<int64_t>{0, 1},
                      SmallVector<int64_t>{2, 3}, SmallVector<int64_t>{0, 2, 5},
+                     SmallVector<int64_t>{6, 7}, SmallVector<int64_t>{0, 1, 2, 3, 4, 5, 6},
+                     SmallVector<int64_t>{0, 1, 2, 3, 4, 5, 6, 7},
                      SmallVector<int64_t>{0, 0}, SmallVector<int64_t>{0, 1, 0},
                      SmallVector<int64_t>{5, 1, 5, 1}, SmallVector<int64_t>{0, 1, 0, 2, 0, 1}}) {
         for (uint64_t stride : {0U, 1U, 2U, 7U}) {
@@ -983,8 +985,8 @@ bool checkPhysicalConstructionComparison(mlir::MLIRContext* context)
     }
     {
         ScopedDiagnosticHandler diagnostics(context, [](Diagnostic&) { return success(); });
-        for (auto ids : {SmallVector<int64_t>{}, SmallVector<int64_t>{-1}, SmallVector<int64_t>{6},
-                         SmallVector<int64_t>{0, 0, 0, 0, 0, 0, 0}}) {
+        for (auto ids : {SmallVector<int64_t>{}, SmallVector<int64_t>{-1}, SmallVector<int64_t>{8},
+                         SmallVector<int64_t>{0, 0, 0, 0, 0, 0, 0, 0, 0}}) {
             if (succeeded(plan(1, ids))) { return false; }
         }
     }

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Analyze only the actual coordinator protocol. Existing full-prefix waits and
 // ALL barriers may certify reuse; this stage never inserts additional ordering.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PrefixLifetimes.h"
 #include "ProtocolSeal.h"
 #include "InvocationSourceBounds.h"
@@ -289,9 +290,9 @@ LogicalResult allocatePrefixLifetimes(func::FuncOp function, ArrayRef<int64_t> e
         return failure();
     }
     std::set<int64_t> ids(eligible.begin(), eligible.end());
-    if (eligible.size() > 6 || ids.size() != eligible.size() ||
-        llvm::any_of(eligible, [](int64_t id) { return id < 0 || id >= 6; })) {
-        return function.emitError("prefix allocation requires distinct eligible IDs in 0..5");
+    if (eligible.size() > NativeEventIdCount || ids.size() != eligible.size() ||
+        llvm::any_of(eligible, [](int64_t id) { return !isNativeEventId(id); })) {
+        return function.emitError("prefix allocation requires distinct eligible IDs in 0..7");
     }
     if (!function.getBody().hasOneBlock() || !allBarrier(function.front().getTerminator()->getPrevNode())) {
         return function.emitError("prefix allocation lacks completed terminal invocation closure");

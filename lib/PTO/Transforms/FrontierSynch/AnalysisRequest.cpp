@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Request protocol adapters. Cache mathematical construction independently of
 // export checks; detached command fragments always have fresh ownership.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "AnalysisSessionInternal.h"
 #include "PTO/Transforms/FrontierSynch/ResultGuarantees.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -1010,7 +1011,7 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
 {
     llvm::SmallDenseSet<int64_t, 8> uniqueIds;
     for (auto id : eligibleIds) {
-        if (id < 0 || id > 5 || !uniqueIds.insert(id).second) { return failure(); }
+        if (!isNativeEventId(id) || !uniqueIds.insert(id).second) { return failure(); }
     }
     if (result.completion) {
         return success(!result.mathematical && sessionState && sessionState->ownsCompletion(result.completion) &&

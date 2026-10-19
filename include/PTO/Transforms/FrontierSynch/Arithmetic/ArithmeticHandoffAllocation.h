@@ -8,6 +8,7 @@
 // Exact reuse and lifetime selectors for retained arithmetic handoff families.
 #ifndef PTO_FRONTIERSYNCH_ARITHMETICHANDOFFALLOCATION_H
 #define PTO_FRONTIERSYNCH_ARITHMETICHANDOFFALLOCATION_H
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/GeneralArithmeticSelectors.h"
 #include <optional>
 namespace mlir::pto::frontiersynch {
@@ -47,26 +48,26 @@ struct ArithmeticCoordinateHandoffAllocation {
 // The optional profile is borrowed only for this call; no recipe retains it.
 ArithmeticCoordinateHandoffAllocation buildArithmeticCoordinateHandoffAllocation(
     const GeneralArithmeticDemandAnalysis& analysis, llvm::ArrayRef<uint32_t> pipes,
-    unsigned maxWidth = 6, AllocationProfile* profile = nullptr);
+    unsigned maxWidth = NativeEventIdCount, AllocationProfile* profile = nullptr);
 // Requires certified F* functionality and finite invocation domains. For each
 // family construct strict order on ACTIVE source tuples, remove its square to
 // obtain immediate successor S, and test F* inverse composed with S^E against
-// required completion-to-start order, for E=1..maxWidth (at most six).
+// required completion-to-start order, for E=1..maxWidth (at most eight).
 // Parameters/residues are shared in every join; emptiness is exact. A width E
 // assigns executed handoff rank modulo E, never original source ordinal modulo
 // E. SET and WAIT counters must advance only when that family executes.
 // Work is charged to exact projection/difference output and a fixed number
-// of relational compositions (successor powers have exponent at most six).
+// of relational compositions (successor powers have exponent at most eight).
 // Fixed class/coordinate bounds bound elimination depth; no
 // occurrence or parameter enumeration and no minimum hardware-pool claim.
 // Profiling is borrowed for the call and never changes proof qualification.
 ArithmeticHandoffAllocation buildArithmeticHandoffAllocation(
     const GeneralArithmeticDemandAnalysis& analysis, llvm::ArrayRef<uint32_t> pipes,
-    unsigned maxWidth = 6, AllocationProfile* profile = nullptr);
+    unsigned maxWidth = NativeEventIdCount, AllocationProfile* profile = nullptr);
 // Exact DBM-to-integer conversion of the already completed F* and H. No
 // recognition or transitive closure is rerun; the same reuse proof is applied.
 ArithmeticHandoffAllocation buildArithmeticHandoffAllocation(
     const ArithmeticDemandAnalysis& analysis, llvm::ArrayRef<uint32_t> pipes,
-    unsigned maxWidth = 6, AllocationProfile* profile = nullptr);
+    unsigned maxWidth = NativeEventIdCount, AllocationProfile* profile = nullptr);
 } // namespace mlir::pto::frontiersynch
 #endif

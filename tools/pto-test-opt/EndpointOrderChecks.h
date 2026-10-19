@@ -43,6 +43,19 @@ bool familyRequestedOutputChecks(mlir::scf::ForOp loop)
                                              fs::FamilyExpressionOutputs::Member);
     if (invalid.error.empty() || code.getOperations().size() != 2) { return false; }
     points.pop_back(); labels.pop_back();
+    for (uint64_t modulus : {7, 8}) {
+        auto high = fs::emitFamilyExpressions(builder, loop.getLoc(), points, labels, modulus,
+                                              fs::FamilyExpressionOutputs::Member);
+        if (!high.error.empty() || high.present || !high.member) { return false; }
+        auto selected = high.member.getDefiningOp<arith::ConstantIndexOp>();
+        if (!selected || selected.value() != static_cast<int64_t>(7 % modulus)) {
+            return false;
+        }
+    }
+    const auto beforeInvalid = code.getOperations().size();
+    auto invalidModulus = fs::emitFamilyExpressions(builder, loop.getLoc(), points, labels, 9,
+                                                   fs::FamilyExpressionOutputs::Member);
+    if (invalidModulus.error.empty() || code.getOperations().size() != beforeInvalid) { return false; }
     auto command = fs::emitFamilyExpressions(builder, loop.getLoc(), points, labels);
     return command.error.empty() && command.present && command.member && code.getOperations().size() > 1;
 }

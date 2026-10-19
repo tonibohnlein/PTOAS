@@ -99,7 +99,8 @@ FailureOr<PhysicalAllocationPlan> decodeCyclicAllocation(func::FuncOp function, 
 FailureOr<PhysicalAllocationPlan> decodeCyclicAllocationCertificate(
     func::FuncOp function, DictionaryAttr certificate, ArrayRef<int64_t> eligibleIds);
 // Success lowers all logical commands; failure leaves the function unchanged.
-// The caller supplies an eligible subset of 0..5; 6/7 are reserved. Every
+// The caller supplies an eligible subset of native IDs 0..7. Default pools
+// retain 0..5; explicitly including 6/7 is experimental. Every
 // numeric ID holds at most one notification in its (source, target) direction.
 // Numeric labels in different directions have independent notification state.
 LogicalResult allocatePhysicalEventIds(func::FuncOp function, ArrayRef<int64_t> eligibleIds);

@@ -12,7 +12,7 @@
 namespace mlir::pto::frontiersynch {
 std::pair<uint32_t, uint32_t> regionalAllocationDirection(
     const RegionalAllocationGroup& group, const RegionalAllocationMember& member);
-// Materialize only bounded physical lanes (at most six), never loop visits.
+// Materialize only bounded physical lanes (at most eight), never loop visits.
 // Failure leaves the group unchanged. Existing complete metadata is preserved.
 bool exportConstantRegionalLanes(RegionalAllocationGroup& group);
 // The original region owns the expression arena and must outlive the summary.

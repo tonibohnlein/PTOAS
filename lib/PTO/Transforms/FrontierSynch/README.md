@@ -124,6 +124,16 @@ allocation certificates to physical commands. Missing route-specific exports
 still produce explicit failures; mathematical class membership alone does not
 establish executable synchronization or allocation support.
 
+The available physical capacity is the number of entries in the supplied ID
+list, independently per direction. Explicit pools may contain distinct native
+IDs 0..7. Combined physical output without a list retains the default 0..5;
+using 6/7 is an experimental deployment choice because the documented programming
+contract reserves them for the framework. For an eight-ID comparison, use
+`pto-frontier-analysis="physical-output=true allocation-ids=0,1,2,3,4,5,6,7"`.
+For split output, supply the same pool to analysis (`allocation-ids`) and
+allocation (`eligible-ids`). Smaller and noncontiguous pools remain supported.
+See [the pool policy and qualification](../../../../docs/designs/frontier-event-id-pools.md).
+
 The arithmetic producer checks each completed primitive with the same
 normalization and profile checks used by batch recognition. A failed primitive
 stops construction of that representation. Occurrences and accesses are checked

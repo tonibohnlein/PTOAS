@@ -44,7 +44,8 @@ LogicalResult paletteChildChecks(func::FuncOp function)
         });
         auto region = fs::finiteRegionInput(source, roots);
         auto finite = fs::analyzeFinite(region, fs::FiniteStrategy::Concrete);
-        auto child = fs::CompletionInlineChild::qualify(finite, {id});
+        // Exercise the high bits of the directional footprint before final renaming.
+        auto child = fs::CompletionInlineChild::qualify(finite, {id + 6});
         if (!child || !child->usesEvents()) { return function.emitError("reserved child palette unavailable"); }
         children.push_back(std::move(child));
     }

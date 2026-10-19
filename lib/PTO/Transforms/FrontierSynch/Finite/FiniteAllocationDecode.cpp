@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Decode finite reuse evidence independently for each directed pipe pair.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/SharedHandoffAllocation.h"
 #include "PTO/IR/PTO.h"
@@ -26,8 +27,8 @@ FailureOr<PhysicalAllocationPlan> decodeFiniteAllocation(
     func::FuncOp function, DictionaryAttr certificate, ArrayRef<int64_t> eligibleIds)
 {
     std::set<int64_t> eligible(eligibleIds.begin(), eligibleIds.end());
-    if (eligibleIds.size() > 6 || eligible.size() != eligibleIds.size() ||
-        llvm::any_of(eligibleIds, [](int64_t id) { return id < 0 || id >= 6; })) {
+    if (eligibleIds.size() > NativeEventIdCount || eligible.size() != eligibleIds.size() ||
+        llvm::any_of(eligibleIds, [](int64_t id) { return !isNativeEventId(id); })) {
         return function.emitError("invalid finite shared event-ID pool"), failure();
     }
     auto version = number(certificate, "version"), plan = number(certificate, "plan");

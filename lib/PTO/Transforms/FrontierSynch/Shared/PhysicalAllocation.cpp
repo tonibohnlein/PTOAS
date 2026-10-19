@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Preflight logical families, preserve certified member-to-phase maps, and lower
 // commands in place. Allocation does not inspect or reconstruct endpoint guards.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/DeferredFamily.h"
 #include "PhysicalMapInputs.h"
@@ -1539,12 +1540,12 @@ FailureOr<std::shared_ptr<const PhysicalEndpointMap>> planPhysicalEndpointMap(
         // Regional lane certificates may assign the same physical ID to
         // several nonconflicting slots. Preserve this ordered phase table;
         // its length, rather than its distinct colors, defines the modulus.
-        if (record.ids.size() > 6) {
+        if (record.ids.size() > NativeEventIdCount) {
             refuse("too many palette slots") << " (record=" << record.record << ", slots=" << record.ids.size() << ")";
             return failure();
         }
         for (auto id : record.ids) {
-            if (id < 0 || id > 5) {
+            if (!isNativeEventId(id)) {
                 refuse("invalid palette ID") << " (record=" << record.record << ", id=" << id << ")";
                 return failure();
             }

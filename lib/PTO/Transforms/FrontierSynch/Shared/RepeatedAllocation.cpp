@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "RepeatedAllocation.h"
 #include "AllocationInputCache.h"
 #include "RepeatedLaneAllocation.h"
@@ -18,7 +19,7 @@
 namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
-constexpr uint64_t maximumPaletteWidth = 6;
+constexpr uint64_t maximumPaletteWidth = NativeEventIdCount;
 using Selectors = std::vector<RegionalSelector>;
 
 // One inventory per repeated region, including failed attempts. Its elapsed

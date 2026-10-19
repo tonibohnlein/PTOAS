@@ -97,15 +97,30 @@ def run_checks(tool, optimizer, source):
         else:
             raise AssertionError('oracle accepted forced physical-ID collisions')
         # Insufficient, absent, duplicate and out-of-range IDs do not mutate IR.
-        for ids in ['1', '', '1, 1', '-1, 1', '1, 6', '1, 7', '1, 8']:
+        for ids in ['1', '', '1, 1', '7, 7', '-1, 1', '1, 8', '1, 9']:
             path.write_text(original.replace('array<i64: 1, 3>', f'array<i64: {ids}>' if ids else 'array<i64>'))
             report = json.loads(invoke(tool, '--physical-trace', path))
             assert not report['allocated'] and report['unchanged_on_failure']
         path.write_text(original)
-        for reserved in [6, 7]:
-            result = opt(optimizer, path, ['--pto-frontier-analysis',
-                         f'--pto-frontier-allocate=eligible-ids=1,{reserved}'], success=False)
-            assert 'reserved for system/framework use' in result.stderr
+        # Native IDs 6/7 are explicit experimental pool selections, never defaults.
+        for eligible in [(1, 6), (1, 7), (6, 7), tuple(range(8))]:
+            ids = ', '.join(map(str, eligible))
+            path.write_text(original.replace('array<i64: 1, 3>', f'array<i64: {ids}>'))
+            report = json.loads(invoke(tool, '--physical-trace', path))
+            check_physical(template, report, set(eligible))
+            actual = {event['physical_id'] for event in report['physical']['events'] if event['kind'] == 'set'}
+            if eligible != tuple(range(8)):
+                assert actual == set(eligible), (eligible, actual)
+        path.write_text(original)
+        for options in [
+            ['--pto-frontier-analysis', '--pto-frontier-allocate=eligible-ids=6,7'],
+            ['--pto-frontier-analysis=deferred-output=true', '--pto-frontier-allocate=eligible-ids=6,7'],
+            ['--pto-frontier-analysis=physical-output=true allocation-ids=6,7'],
+        ]:
+            physical = opt(optimizer, path, options).stdout
+            assert 'EVENT_ID6' in physical and 'EVENT_ID7' in physical
+            assert 'pto.logical_' not in physical
+        opt(optimizer, path, ['--pto-frontier-analysis=physical-output=true allocation-ids=8'], success=False)
         result = opt(optimizer, path, ['--pto-frontier-analysis',
                      '--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5'])
         assert 'pto.logical_' not in result.stdout

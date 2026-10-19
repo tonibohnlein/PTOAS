@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "ModuloLaneSpan.h"
 #include "RepeatedLaneAllocation.h"
 #include "RepeatedRegionInternal.h"
@@ -17,7 +18,7 @@
 namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
-constexpr uint64_t maximumPaletteWidth = 6;
+constexpr uint64_t maximumPaletteWidth = NativeEventIdCount;
 class WorkTimer {
 public:
     explicit WorkTimer(uint64_t* elapsed) : elapsed(elapsed)
@@ -236,7 +237,7 @@ std::optional<uint64_t> reuseCost(RepeatedRegionState& state, const Lane& from, 
 
 // Export each physical label's actual first/last member occurrences after
 // clipping. A member's source visits form one interval; its consumer is delayed
-// by a fixed number of repeats. Only the at-most-six physical labels expand.
+// by a fixed number of repeats. Only the at-most-eight physical labels expand.
 void appendBounds(RepeatedRegionState& state, RegionalAllocationGroup& result,
                   const RegionalAllocationMember& member, uint64_t delay,
                   uint64_t base, uint64_t width, uint64_t offset, uint64_t stride)
@@ -321,7 +322,7 @@ bool certifyAssignment(const PeriodicReuseMatrix& costs, const PeriodicSharedAll
 
 // A deterministic polynomial fallback when the cheapest cycle cover has an
 // uncertified skipped phase (or conditional zero edges form a candidate cycle).
-// Try at most six widths and six offsets; this is sufficient, not a minimum.
+// Try at most NativeEventIdCount widths and offsets; this is sufficient, not a minimum.
 std::optional<std::pair<uint64_t, std::vector<uint64_t>>> greedyAssignment(const PeriodicReuseMatrix& costs)
 {
     for (uint64_t width = 1; width <= maximumPaletteWidth; ++width) {
@@ -346,7 +347,7 @@ std::optional<std::pair<uint64_t, std::vector<uint64_t>>> greedyAssignment(const
 
 // Keep independent palettes when some pairs have no certified order. Each
 // insertion reruns the direct all-pair proof; a missing intermediate is never
-// used as a witness. The bounded offset search costs O(6^2 n^3) in total.
+// used as a witness. The bounded offset search costs O(NativeEventIdCount^2 n^3) in total.
 std::optional<PeriodicSharedAllocation> partitionAssignment(const PeriodicReuseMatrix& costs, ReuseProof& proof)
 {
     if (auto together = greedyAssignment(costs)) {

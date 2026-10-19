@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "DifferenceIntegerConversion.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticHandoffAllocation.h"
 #include "ArithmeticHandoffProof.h"
@@ -445,8 +446,8 @@ ArithmeticHandoffAllocation buildAllocation(
     result.period = analysis.period; result.parameterCount = analysis.parameterCount;
     if (!analysis.error.empty() || !analysis.exactMinimum ||
         !analysis.hasRelations(ArithmeticRelationView::Allocation) || !analysis.period ||
-        analysis.period > INT64_MAX || !maxWidth || maxWidth > 6) {
-        result.error = "arithmetic allocation requires exact demands and a width in 1..6"; return result;
+        analysis.period > INT64_MAX || !maxWidth || maxWidth > NativeEventIdCount) {
+        result.error = "arithmetic allocation requires exact demands and a width in 1..8"; return result;
     }
     std::map<Pair, Relation> families;
     for (const auto& [key, pieces] : analysis.minimumDemands) {

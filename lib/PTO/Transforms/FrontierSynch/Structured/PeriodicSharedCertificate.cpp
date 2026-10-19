@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Command-order thresholds and a checked shared-cycle certificate adapter.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedAllocation.h"
 #include "PTO/IR/PTO.h"
@@ -266,7 +267,7 @@ DictionaryAttr encodePeriodicSharedAllocation(const PeriodicAnalysis& analysis, 
     // IDs and composed family mappings; fewer lanes is not the code objective.
     auto regular = buildPeriodicAllocation(analysis);
     if (!records.empty() && regular.error.empty() && llvm::all_of(regular.directions, [](const auto& direction) {
-            return direction.uniformBudget && *direction.uniformBudget <= 6;
+            return direction.uniformBudget && *direction.uniformBudget <= NativeEventIdCount;
         })) {
         NamedAttrList alternatives(certificate);
         alternatives.set("regular_candidate", encodeCyclicAllocation(regular, plan, context));
@@ -293,8 +294,8 @@ FailureOr<PhysicalAllocationPlan> decodePeriodicSharedAllocation(
     }
     std::set<int64_t> seenIds;
     for (auto id : eligibleIds) {
-        if (id < 0 || id >= 6 || !seenIds.insert(id).second) {
-            return function.emitError("periodic shared-cycle eligible IDs must be distinct values in 0..5"), failure();
+        if (!isNativeEventId(id) || !seenIds.insert(id).second) {
+            return function.emitError("periodic shared-cycle eligible IDs must be distinct values in 0..7"), failure();
         }
     }
     if (static_cast<uint64_t>(*budget) > eligibleIds.size()) {

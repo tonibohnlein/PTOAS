@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Structured/StorageLaneAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include <algorithm>
@@ -15,7 +16,7 @@ namespace mlir::pto::frontiersynch {
 namespace {
 using Id = RegionExpressions::Id;
 using Key = std::tuple<uint32_t, uint64_t, uint64_t, uint32_t>;
-constexpr uint64_t maximumLabels = 6;
+constexpr uint64_t maximumLabels = NativeEventIdCount;
 bool proves(RegionExpressions& e, Id premise, Id consequence)
 {
     return e.implies(premise, consequence) || e.constantUnder(premise, premise) == 0 ||
@@ -97,7 +98,7 @@ StorageLaneAllocation buildStorageLaneAllocation(RegionExpressions& e,
     }
     for (const auto& [name, width] : widths) {
         if (width > maximumLabels - result.budget) {
-            return fail("storage-lane sufficient palette exceeds six labels; no minimum-capacity claim");
+            return fail("storage-lane sufficient palette exceeds eight labels; no minimum-capacity claim");
         }
         bases[name] = result.budget; result.budget += width;
     }
@@ -117,7 +118,7 @@ StorageLaneAllocation buildStorageLaneAllocation(RegionExpressions& e,
             if (base == bases.end()) { continue; }
             const auto& c = cell->second;
             // Reduce before multiplying: the admitted physical palette has at
-            // most six slots, so even UINT64_MAX source ordinals cannot wrap.
+            // most eight slots, so even UINT64_MAX source ordinals cannot wrap.
             auto slot = e.constant(c.offset), residue = e.rem(sourceOrdinal, e.constant(c.slots));
             for (uint64_t step = 0; step < c.stride; ++step) { slot = e.add(slot, residue); }
             slot = e.rem(slot, e.constant(c.slots));

@@ -116,7 +116,18 @@ bool selection(MLIRContext& context)
     analysis.sourceWitnesses = {{{0, fs::StorageHazard::Supplied, 1, yes}}};
     if (fs::buildStorageLaneAllocation(e, window, analysis, cells, ordinal).error.empty()) { return false; }
     analysis.sourceWitnesses = {{{0, fs::StorageHazard::RAW, 1, yes}}};
-    cells.front().slots = 7;
+    for (uint64_t slots : {7U, 8U}) {
+        cells.front().slots = slots;
+        auto wide = fs::buildStorageLaneAllocation(e, window, analysis, cells, ordinal);
+        if (!wide.error.empty() || wide.budget != slots || wide.lanes.size() != 1) { return false; }
+        for (uint64_t visit : {uint64_t(0), uint64_t(1), UINT64_MAX}) {
+            fs::RegionExpressions::Substitution values({{ordinal, e.constant(visit)}});
+            if (e.constantValue(e.substitute(wide.lanes.front(), values)) != ((visit % slots) * 2 + 1) % slots) {
+                return false;
+            }
+        }
+    }
+    cells.front().slots = 9;
     if (fs::buildStorageLaneAllocation(e, window, analysis, cells, ordinal).error.empty()) { return false; }
     cells.front().slots = 3; cells.back().family = 0; cells.back().begin = 4; cells.back().end = 12;
     cells.back().slots = 3; cells.back().stride = 2;

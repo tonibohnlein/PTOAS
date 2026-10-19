@@ -6,6 +6,13 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // General integer reuse: quantified pairs, residue transitions and union coverage.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PhysicalExecutedCounters.h"
+#include "PTO/IR/PTO.h"
+#include "SyncLogicalInsertionChecks.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Parser/Parser.h"
+#include "mlir/IR/Diagnostics.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/GeneralArithmeticAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/AnalysisSessionInternal.h"
@@ -14,6 +21,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "UnaryHandoffExtremaChecks.h"
+#include <string>
 namespace fs = mlir::pto::frontiersynch;
 namespace {
 fs::IntegerConstraint row(std::initializer_list<int64_t> values, int64_t bound)
@@ -182,6 +190,64 @@ bool activeSuccessors(uint64_t period)
         analysis.minimumDemands.edit()[edge].push_back(*point);
     }
     return !fs::buildArithmeticHandoffAllocation(analysis, {0, 1}, 6).error.empty();
+}
+bool wideExecutedFamilies(mlir::MLIRContext& context)
+{
+    context.loadDialect<mlir::pto::PTODialect, mlir::arith::ArithDialect, mlir::func::FuncDialect>();
+    for (int64_t width : {7, 8}) {
+        fs::GeneralArithmeticDemandAnalysis analysis;
+        analysis.exactMinimum = true;
+        auto domain = fs::IntegerSystem::create(2, {row({1, -1}, 0), row({-1, 1}, 0),
+            row({-1, 0}, 0), row({1, 0}, width - 1)});
+        if (mlir::failed(domain)) { return false; }
+        fs::ArithmeticRelationKey edge{{0, fs::ArithmeticEvent::Completion, {0}},
+                                      {1, fs::ArithmeticEvent::Start, {0}}, {}};
+        analysis.minimumDemands.edit()[edge] = {*domain};
+        const auto proof = fs::buildArithmeticHandoffAllocation(analysis, {4, 3}, width);
+        if (!proof.error.empty() || proof.families.size() != 1 ||
+            proof.families.front().width != static_cast<uint64_t>(width)) {
+            return false;
+        }
+        const auto evidence = fs::encodeGeneralArithmeticAllocationCertificate(
+            proof, {4, 3}, {{{0, 1}, 0}}, 0, &context);
+        if (!evidence) { return false; }
+        std::string text = "module attributes {pto.target_arch = \"a3\"} {func.func @wide() {\n";
+        for (int64_t i = 0; i < width; ++i) {
+            text += "%c" + std::to_string(i) + " = arith.constant " + std::to_string(i) + " : index\n";
+        }
+        for (auto kind : {"set", "wait"}) {
+            for (int64_t i = 0; i < width; ++i) {
+                text += std::string("pto.logical_") + kind +
+                    " [<PIPE_MTE2>, <PIPE_MTE1>] plan 0 record 0 ordinal %c" + std::to_string(i) + "\n";
+            }
+        }
+        text += "return\n}}";
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        if (!module) { return false; }
+        auto function = module->lookupSymbol<mlir::func::FuncOp>("wide");
+        {
+            mlir::ScopedDiagnosticHandler silence(&context, [](mlir::Diagnostic&) { return mlir::success(); });
+            if (mlir::succeeded(fs::allocateExecutedFamilyCounters(function, evidence, fs::defaultEventIds()))) {
+                return false;
+            }
+        }
+        if (mlir::failed(fs::allocateExecutedFamilyCounters(function, evidence, {0, 1, 2, 3, 4, 5, 6, 7}))) {
+            return false;
+        }
+        auto trace = traceStructuredLogicalInsertion(function, {});
+        if (trace.getString("error") != "") { return false; }
+        auto* events = trace.getArray("events");
+        if (!events || events->size() != static_cast<std::size_t>(2 * width)) { return false; }
+        for (std::size_t i = 0; i < events->size(); ++i) {
+            const auto* command = (*events)[i].getAsObject();
+            const auto expectedId = static_cast<int64_t>(i % static_cast<std::size_t>(width));
+            if (!command || command->getInteger("physical_id") != expectedId ||
+                command->getString("kind") != (i < static_cast<uint64_t>(width) ? "set" : "wait")) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 bool differenceBoundSuccessors(mlir::MLIRContext& context)
 {
@@ -565,6 +631,7 @@ int runGeneralArithmeticAllocationChecks()
         !checked("nestedCoordinates(context)", nestedCoordinates(context)) ||
         !checked("activeSuccessors(1)", activeSuccessors(1)) ||
         !checked("activeSuccessors(3)", activeSuccessors(3)) ||
+        !checked("wideExecutedFamilies(context)", wideExecutedFamilies(context)) ||
         !checked("differenceBoundSuccessors(context)", differenceBoundSuccessors(context)) ||
         !checked("coordinateMapping(1, false, false)", coordinateMapping(1, false, false)) ||
         !checked("coordinateMapping(3, false, false)", coordinateMapping(3, false, false)) ||

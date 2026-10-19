@@ -202,9 +202,9 @@ bool runRegionalAllocationCandidateChecks(mlir::func::FuncOp function,
     const auto priorSelected = plan.allocationPreparation.retainedCertificates(plan, ids);
     const auto originalSummary = plan.regionalAllocation;
     const auto originalCertificate = plan.allocationCertificate;
-    if (mlir::succeeded(analysis.attachAllocation(outcome, plan, {6})) ||
+    if (mlir::succeeded(analysis.attachAllocation(outcome, plan, {8})) ||
         mlir::succeeded(analysis.attachAllocation(outcome, plan, {0, 0})) ||
-        mlir::succeeded(fs::selectRegionalAllocationCandidate(function, *region, plan, {6})) ||
+        mlir::succeeded(fs::selectRegionalAllocationCandidate(function, *region, plan, {8})) ||
         mlir::succeeded(fs::selectRegionalAllocationCandidate(function, *region, plan, {})) ||
         plan.regionalAllocation != originalSummary || plan.allocationCertificate != originalCertificate) {
         return false;

@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Retain numerical and contextual family recipes through composition; lower at insertion.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/DeferredFamily.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisCost.h"
@@ -2126,7 +2127,7 @@ LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPla
         }
         std::set<int64_t> pool;
         for (auto id : eligibleIds) {
-            if (id < 0 || id > 5 || !pool.insert(id).second) {
+            if (!isNativeEventId(id) || !pool.insert(id).second) {
                 return function.emitError("invalid or duplicate completion allocation ID");
             }
         }
@@ -2182,7 +2183,7 @@ LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPla
     if (failed(normalizeFamilyEndpointPlan(plan))) { return refuse("protocol normalization failed"); }
     std::set<int64_t> pool;
     for (auto id : eligibleIds) {
-        if (id < 0 || id > 5 || !pool.insert(id).second) {
+        if (!isNativeEventId(id) || !pool.insert(id).second) {
             return refuse("invalid or duplicate eligible ID") << ": " << id;
         }
     }

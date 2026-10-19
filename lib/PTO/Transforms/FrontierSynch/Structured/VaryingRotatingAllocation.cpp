@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Structured/VaryingRotatingAllocation.h"
 #include "VaryingBoundaryQuery.h"
 #include <algorithm>
@@ -16,7 +17,7 @@ namespace {
 using Id = RegionExpressions::Id;
 using Kind = VaryingAllocationRecordKind;
 using Record = VaryingAllocationRecord;
-constexpr uint64_t maxWidth = 6;
+constexpr uint64_t maxWidth = NativeEventIdCount;
 bool add(uint64_t a, uint64_t b, uint64_t& out)
 {
     if (b > UINT64_MAX - a) { return false; }
@@ -264,7 +265,7 @@ struct BuilderState {
         }
         uint64_t period;
         if (!multiply(visits.period / std::gcd(visits.period, width), width, period)) { return std::nullopt; }
-        // At most six physical labels are inspected, never a runtime trip range.
+        // At most eight physical labels are inspected, never a runtime trip range.
         const auto candidates = width / std::gcd(visits.period, width);
         for (uint64_t k = 0; k < candidates; ++k) {
             uint64_t v;
@@ -396,7 +397,7 @@ std::shared_ptr<RegionalAllocationSummary> buildVaryingAllocationWithAssignment(
         auto group = record.kind == Kind::Internal ? builder.dedicated(record) : builder.crossing(record);
         if (!group) {
             error = "varying record " + std::to_string(record.record) +
-                " has no sufficient reuse certificate with a palette of at most six lanes; no scarcity claim";
+                " has no sufficient reuse certificate with a palette of at most eight lanes; no scarcity claim";
             return {};
         }
         out->groups.push_back(std::move(*group));

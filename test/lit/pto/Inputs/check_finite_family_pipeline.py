@@ -90,7 +90,7 @@ def main():
     # not a claim that another realization could never use fewer IDs.
     with tempfile.TemporaryDirectory(prefix="finite-terminal-capacity-") as scratch:
         path = Path(scratch) / "input.pto"
-        for count in (2, 4, 7):
+        for count in (2, 4, 7, 8):
             definitions, publications, consumers = [], [], []
             for i in range(count):
                 definitions += [f"%address{i} = arith.constant {512 * i} : i64",
@@ -115,6 +115,29 @@ def main():
                 assert not report["allocated"] and report["allocation_unchanged_on_failure"], report
             else:
                 physical_check(report, set(range(6)))
+            # The fixed protocol needs count simultaneous IDs. Reuse and
+            # logical commands stay identical when the supplied pool grows.
+            if count > 6:
+                high_source = source.replace('array<i64: 0, 1, 2, 3, 4, 5>',
+                                             'array<i64: 0, 1, 2, 3, 4, 5, 6, 7>')
+                path.write_text(high_source, encoding="utf-8")
+                wider = json.loads(invoke(
+                    [tool, "--gm-alias=may-not-alias", "--structured-trace", str(path)], "").stdout)
+                physical_check(wider, set(range(8)))
+                assert wider["trace"]["events"] == report["trace"]["events"]
+                for flags in [
+                    ["--pto-frontier-analysis=physical-output=true allocation-ids=0,1,2,3,4,5,6,7"],
+                    ["--pto-frontier-analysis=deferred-output=true allocation-ids=0,1,2,3,4,5,6,7",
+                     "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5,6,7"],
+                ]:
+                    physical = invoke([optimizer, "--mlir-disable-threading", *flags, str(path)], "").stdout
+                    assert "EVENT_ID6" in physical and "pto.logical_" not in physical
+                    if count == 8:
+                        assert "EVENT_ID7" in physical
+                        emitted = invoke([compiler, "--pto-arch=a3", "--pto-level=level3",
+                                          "--enable-insert-sync=false", "--enable-plan-memory=false", "-"],
+                                         physical).stdout
+                        assert "publication(" in emitted and "pto.logical_" not in emitted
     print(f"finite family pipeline: {checked} valuations across saved, combined and ordinary output; "
           "terminal lifetime capacity and unchanged refusal checked")
 

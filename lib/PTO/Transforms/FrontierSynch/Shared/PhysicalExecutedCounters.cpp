@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalExecutedCounters.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FunctionStaging.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
@@ -62,8 +63,8 @@ FailureOr<Families> decode(func::FuncOp function, DictionaryAttr certificate, Ar
     }
     std::set<int64_t> eligibleSet;
     for (auto id : eligible) {
-        if (id < 0 || id >= 6 || !eligibleSet.insert(id).second) {
-            return function.emitError("executed allocation requires distinct eligible IDs in 0..5"), failure();
+        if (!isNativeEventId(id) || !eligibleSet.insert(id).second) {
+            return function.emitError("executed allocation requires distinct eligible IDs in 0..7"), failure();
         }
     }
     using Direction = std::pair<uint32_t, uint32_t>;
@@ -85,7 +86,7 @@ FailureOr<Families> decode(func::FuncOp function, DictionaryAttr certificate, Ar
         auto record = number(item, "record"), source = number(item, "source"), target = number(item, "target");
         auto width = number(item, "width");
         if (!record || *record < 0 || !source || !target || !pipe(*source) || !pipe(*target) || *source == *target ||
-            !width || *width < 1 || *width > 6 || result.count(*record) ||
+            !width || *width < 1 || *width > static_cast<int64_t>(NativeEventIdCount) || result.count(*record) ||
             total > INT64_MAX - static_cast<uint64_t>(*width)) {
             return function.emitError("malformed executed arithmetic family allocation"), failure();
         }

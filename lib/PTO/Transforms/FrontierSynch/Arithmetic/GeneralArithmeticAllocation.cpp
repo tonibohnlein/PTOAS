@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Serialization consumes a typed proof; it never reconstructs endpoint reuse.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Arithmetic/GeneralArithmeticAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "mlir/IR/Builders.h"
@@ -22,7 +23,7 @@ DictionaryAttr executedCertificate(const ArithmeticHandoffAllocation& proof, Arr
     for (const auto& family : proof.families) {
         auto record = records.find({family.sourceSite, family.targetSite});
         if (family.sourceSite >= pipes.size() || family.targetSite >= pipes.size() ||
-            !family.width || family.width > 6 || total > INT64_MAX - family.width ||
+            !family.width || family.width > NativeEventIdCount || total > INT64_MAX - family.width ||
             record == records.end() || record->second < 0 ||
             !seen.insert(record->second).second) { return {}; }
         total += family.width;
@@ -78,7 +79,7 @@ DictionaryAttr generalArithmeticAllocationCertificate(
     const GeneralArithmeticDemandAnalysis& analysis, ArrayRef<uint32_t> pipes,
     const std::map<std::pair<std::size_t, std::size_t>, int64_t>& records, int64_t plan, MLIRContext* context)
 {
-    auto proof = buildArithmeticHandoffAllocation(analysis, pipes, 6);
+    auto proof = buildArithmeticHandoffAllocation(analysis, pipes, NativeEventIdCount);
     return encodeGeneralArithmeticAllocationCertificate(proof, pipes, records, plan, context);
 }
 } // namespace mlir::pto::frontiersynch

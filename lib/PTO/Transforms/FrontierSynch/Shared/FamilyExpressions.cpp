@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Preserve exact finite domains as boxes and member maps as verified arithmetic
 // or shared decision expressions. No generated guard is inspected or parsed.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyExpressions.h"
 #include "ScalarConstruction.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -320,7 +321,7 @@ public:
                 detail::ScalarToken positive = construction.binary<arith::AddIOp>(remainder, divisor);
                 reduced = construction.select(negative, positive, remainder);
             }
-            // Reduce coordinates before multiplying. With modulus at most six,
+            // Reduce coordinates before multiplying. With modulus at most eight,
             // every product and partial sum is bounded independently of indices.
             detail::ScalarToken term = construction.binary<arith::MulIOp>(reduced, number(coefficients[axis]));
             detail::ScalarToken sum = construction.binary<arith::AddIOp>(result, term);
@@ -374,9 +375,9 @@ public:
 FamilyExpressionPlan buildFamilyExpressions(ArrayRef<SmallVector<TemplateCoordinate>> members,
     ArrayRef<int64_t> labels, uint64_t modulus, FamilyExpressionOutputs outputs)
 {
-    constexpr uint64_t maximumModulus = 6;
+    constexpr uint64_t maximumModulus = NativeEventIdCount;
     if (modulus > maximumModulus) {
-        return {"family modular labels require a modulus of at most six", {}};
+        return {"family modular labels require a modulus of at most eight", {}};
     }
     if (!labels.empty() && labels.size() != members.size()) {
         return {"family member and label counts differ", {}};

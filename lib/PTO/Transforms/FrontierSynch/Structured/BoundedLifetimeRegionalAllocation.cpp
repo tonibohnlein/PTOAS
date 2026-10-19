@@ -8,6 +8,7 @@
 // Mandatory native-pipe envelopes make ordinary bounded palettes composable.
 // Optional guards never supply assumed first/last occurrences; storage-backed
 // coordinates require a distinct regional adapter and are not exported here.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "BoundedLifetimeAllocationInternal.h"
@@ -67,8 +68,8 @@ std::optional<std::vector<RegionalPalette>> regionalPalettes(
             begin = phase.laneBegin; width = phase.laneCount; offset = phase.offset;
         }
         // Hardware allocation remains allocation-only. Never expand a wide
-        // encoded palette to try to make it fit the six-ID pool.
-        if (!width || begin > 6 || width > 6 - begin) { return {}; }
+        // encoded palette to try to make it fit a native-ID pool.
+        if (!width || begin > NativeEventIdCount || width > NativeEventIdCount - begin) { return {}; }
         std::size_t group = out.groups.size();
         if (assignment.shared) {
             auto inserted = positions.emplace(Direction{palette.source, palette.target}, group);

@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Keep record formulas unchanged while matching their certified child lanes.
+#include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneCertificate.h"
 #include "PTO/Transforms/FrontierSynch/Shared/AllocationProfile.h"
 #include "PTO/Transforms/FrontierSynch/Shared/SharedHandoffAllocation.h"
@@ -47,9 +48,9 @@ DictionaryAttr regionalLaneEvidence(const RegionalAnalysis& region,
             return regionalAllocationDirection(group, member) != std::make_pair(group.sourcePipe, group.targetPipe);
         })) { return {}; }
         exportConstantRegionalLanes(group);
-        // A wider internal cycle cannot fit the six-ID allocation-only path.
+        // A wider internal cycle cannot fit any native-ID allocation-only pool.
         // Do not enumerate arbitrary encoded budgets just to discover that.
-        if (!group.budget || group.budget > 6 ||
+        if (!group.budget || group.budget > NativeEventIdCount ||
             (!group.lanes.empty() && group.lanes.size() != group.budget)) { return {}; }
         RegionalAllocationLane envelope;
         if (group.lanes.empty()) {
@@ -146,7 +147,7 @@ bool indices(DictionaryAttr d, StringRef key, uint64_t bound, std::vector<uint32
     return true;
 }
 // Assign distinct eligible IDs to matched chains, respecting all hidden events
-// excluded by any member of that chain. At most six chains can be accepted.
+// excluded by any member of that chain. At most eight chains can be accepted.
 bool placeChains(const std::vector<DecodedLane>& lanes, const SharedHandoffAllocation& assignment,
                  ArrayRef<int64_t> eligible, SmallVector<int64_t>& physical)
 {
@@ -213,8 +214,8 @@ FailureOr<SmallVector<SmallVector<int64_t>>> allocateRegionalLanes(func::FuncOp 
     DictionaryAttr evidence, ArrayAttr groups, ArrayRef<int64_t> eligible)
 {
     std::set<int64_t> ids(eligible.begin(), eligible.end());
-    if (eligible.size() > 6 || ids.size() != eligible.size() ||
-        llvm::any_of(eligible, [](int64_t id) { return id < 0 || id >= 6; })) {
+    if (eligible.size() > NativeEventIdCount || ids.size() != eligible.size() ||
+        llvm::any_of(eligible, [](int64_t id) { return !isNativeEventId(id); })) {
         return function.emitError("invalid shared event-ID pool"), failure();
     }
     auto raw = evidence.getAs<ArrayAttr>("lanes");
@@ -223,7 +224,7 @@ FailureOr<SmallVector<SmallVector<int64_t>>> allocateRegionalLanes(func::FuncOp 
     for (auto group : groups) {
         auto d = dyn_cast<DictionaryAttr>(group);
         auto budget = d ? integer(d, "budget") : std::nullopt;
-        if (!budget || *budget <= 0 || *budget > 6) {
+        if (!budget || *budget <= 0 || *budget > static_cast<int64_t>(NativeEventIdCount)) {
             return function.emitError("invalid regional lane budget"), failure();
         }
         auto source = integer(d, "source"), target = integer(d, "target");
