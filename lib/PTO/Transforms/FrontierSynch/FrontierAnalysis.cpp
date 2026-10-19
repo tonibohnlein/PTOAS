@@ -680,7 +680,7 @@ public:
                                     frontiersynch::ArithmeticRegionalAllocationPolicy::CoordinateCandidate :
                                     frontiersynch::ArithmeticRegionalAllocationPolicy::SingleId);
                         },
-                        completionOnly))) {
+                        completionOnly, normalizeTwoTripLoops))) {
                 signalPassFailure();
             }
             return;

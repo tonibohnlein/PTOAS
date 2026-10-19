@@ -32,7 +32,10 @@ ClosedCalleeModule recognizeClosedCallees(ModuleOp module);
 // Ordinary direct calls and original physical-core guards remain in the IR.
 using PrepareCallee =
     llvm::function_ref<FailureOr<std::unique_ptr<PreparedLogicalPlan>>(func::FuncOp, GMAliasPolicy, bool)>;
+// Public insertion may normalize supported two-trip leaf loops in the module
+// transaction before recognition. Library callers keep original coordinates by default.
 LogicalResult insertModuleSynchronization(
-    ModuleOp module, GMAliasPolicy policy, PrepareCallee prepare, bool completionOnly = false);
+    ModuleOp module, GMAliasPolicy policy, PrepareCallee prepare, bool completionOnly = false,
+    bool normalizeTwoTripLoops = false);
 } // namespace mlir::pto::frontiersynch
 #endif

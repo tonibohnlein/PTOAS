@@ -116,7 +116,7 @@ bool integrationMathematics(fs::ArithmeticRegionalRelations& retained, MLIRConte
                              integrationRow({0, 0, -1}, residue ? -1 : -2),
                              integrationRow({0, 0, 1}, residue ? 7 : 8)});
                         if (failed(reaches)) { return false; }
-                        retained.analysis.requiredOrder[{{source, from, {1}}, {target, to, {1}}, {residue}}] =
+                        retained.analysis.requiredOrder.edit()[{{source, from, {1}}, {target, to, {1}}, {residue}}] =
                             {*reaches};
                     }
                 }
@@ -127,7 +127,7 @@ bool integrationMathematics(fs::ArithmeticRegionalRelations& retained, MLIRConte
                  integrationRow({0, 0, -1}, residue ? -1 : -2),
                  integrationRow({0, 0, 1}, residue ? 7 : 8)});
             if (failed(demand)) { return false; }
-            retained.analysis.minimumDemands[{{source, fs::ArithmeticEvent::Completion, {1}},
+            retained.analysis.minimumDemands.edit()[{{source, fs::ArithmeticEvent::Completion, {1}},
                 {1 - source, fs::ArithmeticEvent::Start, {1}}, {residue}}] = {*demand};
         }
     }

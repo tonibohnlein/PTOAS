@@ -589,7 +589,8 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
     for (auto domain : right.occurrences) { domain.site += split; out.occurrences.push_back(std::move(domain)); }
     out.analysis.period = left.analysis.period; out.analysis.parameterCount = p;
     out.analysis.pipeCount = pipes.size();
-    auto lh = left.analysis.requiredOrder, rh = renamed(right.analysis.requiredOrder, split);
+    auto lh = left.analysis.requiredOrder;
+    auto rh = renamed(right.analysis.requiredOrder, split);
     auto bridge = bridges(), nativeEdges = nativeCrossings();
     unite(bridge, uniformCrossings());
     if (failedOperation) { return failure(); }
@@ -611,17 +612,19 @@ FailureOr<RegionalRelationData> Composer::run(ArithmeticRegionContext context)
         error = "exact symbolic crossing composition or storage-selector projection failed"; return failure();
     }
     out.analysis.generators = left.analysis.minimumDemands;
-    unite(out.analysis.generators, renamed(right.analysis.minimumDemands, split));
-    unite(out.analysis.generators, bridge);
+    unite(out.analysis.generators.edit(), renamed(right.analysis.minimumDemands, split));
+    unite(out.analysis.generators.edit(), bridge);
     out.analysis.minimumDemands = left.analysis.minimumDemands;
-    unite(out.analysis.minimumDemands, renamed(right.analysis.minimumDemands, split));
-    unite(out.analysis.minimumDemands, retained);
+    unite(out.analysis.minimumDemands.edit(), renamed(right.analysis.minimumDemands, split));
+    unite(out.analysis.minimumDemands.edit(), retained);
     out.analysis.nativeOrder = left.analysis.nativeOrder;
-    unite(out.analysis.nativeOrder, renamed(right.analysis.nativeOrder, split));
-    unite(out.analysis.nativeOrder, native);
-    out.analysis.requiredOrder = lh; unite(out.analysis.requiredOrder, rh); unite(out.analysis.requiredOrder, allCross);
+    unite(out.analysis.nativeOrder.edit(), renamed(right.analysis.nativeOrder, split));
+    unite(out.analysis.nativeOrder.edit(), native);
+    out.analysis.requiredOrder = lh;
+    unite(out.analysis.requiredOrder.edit(), rh);
+    unite(out.analysis.requiredOrder.edit(), allCross);
     for (auto* relation : {&out.analysis.generators, &out.analysis.minimumDemands,
-                           &out.analysis.nativeOrder, &out.analysis.requiredOrder}) { removeEmpty(*relation); }
+                           &out.analysis.nativeOrder, &out.analysis.requiredOrder}) { removeEmpty(relation->edit()); }
     out.completeRequiredOrder = true;
     out.analysis.exactMinimum = left.analysis.exactMinimum && right.analysis.exactMinimum;
     // This adapter does not certify adjacency; insertion may use consumer cuts.

@@ -553,7 +553,7 @@ bool containsPoint(const fs::IntegerSystem& piece, llvm::ArrayRef<fs::BoundInteg
     return true;
 }
 template<class System>
-bool member(const fs::TypedArithmeticRelation<System>& relation,
+bool member(const fs::RetainedArithmeticRelation<System>& relation,
             uint64_t period, unsigned source, int64_t x, unsigned ea,
             unsigned target, int64_t y, unsigned eb, int64_t n, int64_t g)
 {
@@ -733,6 +733,25 @@ bool checkFirstDemandContinuation(Analyze analyze)
         if (!changedOrder->minimumDemands.empty() || unchangedOrder->minimumDemands.empty() ||
             !unchangedOrder->requiredOrderAvailable || delayed.requiredOrderAvailable ||
             &delayed.requiredOrderContinuation->request() != &order) { return false; }
+        using Retained = std::decay_t<decltype(delayed.minimumDemands)>;
+        const auto copies = Retained::copyWork;
+        for (unsigned repeat = 0; repeat < 64; ++repeat) {
+            auto view = fs::requestArithmeticRequiredOrder(delayed);
+            if (view->minimumDemands.storageIdentity() != delayed.minimumDemands.storageIdentity() ||
+                view->nativeOrder.storageIdentity() != delayed.nativeOrder.storageIdentity() ||
+                view->requiredOrder.storageIdentity() != order.relation.storageIdentity()) { return false; }
+        }
+        if (Retained::copyWork.entries != copies.entries || Retained::copyWork.pieces != copies.pieces) {
+            return false;
+        }
+        auto modified = *unchangedOrder;
+        const auto originalSize = unchangedOrder->minimumDemands.size();
+        modified.minimumDemands.edit().clear();
+        if (unchangedOrder->minimumDemands.size() != originalSize || !modified.minimumDemands.empty() ||
+            Retained::copyWork.entries != copies.entries + originalSize ||
+            modified.requiredOrder.storageIdentity() != unchangedOrder->requiredOrder.storageIdentity()) {
+            return false;
+        }
         copy.requiredOrder = order.relation; copy.requiredOrderAvailable = true;
         copy.availableRelations |= uint8_t{2};
         bool adjacent = true;
@@ -1048,7 +1067,7 @@ int runGeneralArithmeticDemandChecks()
         }
         retained.analysis = *full;
         const auto adapter = llvm::find_if(ledger->stages, [](const auto& record) {
-            return record.stage == "arithmetic-difference-export" && record.region == 17 && record.work.size() == 3;
+            return record.stage == "arithmetic-difference-export" && record.region == 17 && record.work.size() == 5;
         });
         if (adapter == ledger->stages.end() || !ledger->activeStages.empty()) {
             retained.analysis.error = "difference adapter work was not attributed separately";

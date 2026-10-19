@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --completion-region-checks %s | FileCheck %s
+// CHECK: bounded completion child: bounded_visit whole visit retained
+// CHECK: bounded completion child: repeated_visit whole visit retained
+// CHECK: completion palettes: disjoint reservations retained, one-ID refusal atomic, pool 2/5 accepted
+!tile = !pto.tile_buf<vec, 1x8xf32>
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @bounded_visit(%n: index) attributes {test.closed_bounded_child} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %a = arith.constant 0 : i64
+    %value = arith.constant 1.0 : f32
+    %x = pto.alloc_tile addr = %a : !tile
+    scf.for %i = %z to %n step %one {
+      pto.texpands ins(%value : f32) outs(%x : !tile)
+      %read = pto.tgetval ins(%x, %z : !tile, index) outs : f32
+    } {test.closed_visit}
+    return
+  }
+  func.func @repeated_visit(%n: index, %m: index) attributes {test.closed_bounded_child} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %a = arith.constant 0 : i64
+    %value = arith.constant 1.0 : f32
+    %x = pto.alloc_tile addr = %a : !tile
+    scf.for %outer = %z to %m step %one {
+      scf.for %i = %z to %n step %one {
+        pto.texpands ins(%value : f32) outs(%x : !tile)
+        %read = pto.tgetval ins(%x, %z : !tile, index) outs : f32
+      } {test.closed_visit}
+    }
+    return
+  }
+  func.func @separate_palettes() attributes {test.separate_palettes} {
+    %z = arith.constant 0 : index
+    %a = arith.constant 0 : i64
+    %b = arith.constant 64 : i64
+    %value = arith.constant 1.0 : f32
+    %x = pto.alloc_tile addr = %a : !tile
+    %y = pto.alloc_tile addr = %b : !tile
+    pto.texpands ins(%value : f32) outs(%x : !tile) {test.palette_child = 0 : i64}
+    %rx = "pto.tgetval"(%x, %z) {test.palette_child = 0 : i64} : (!tile, index) -> f32
+    pto.texpands ins(%value : f32) outs(%y : !tile) {test.palette_child = 1 : i64}
+    %ry = "pto.tgetval"(%y, %z) {test.palette_child = 1 : i64} : (!tile, index) -> f32
+    return
+  }
+
+}

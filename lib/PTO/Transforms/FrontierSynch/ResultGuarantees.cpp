@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/FrontierSynch/ResultGuarantees.h"
 #include "PTO/Transforms/FrontierSynch/AnalysisRequest.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompactBoundingInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "WholeInvocationIdentity.h"
@@ -101,7 +102,9 @@ ResultGuarantees describeResultGuarantees(const PreparedLogicalPlan& plan)
     } else if (source->concreteDemands()) {
         result.realization = explicitRealizationOrder(*source->concreteDemands());
     } else if ((source->arithmeticDemands && source->arithmeticDemands->adjacentLocalDemands) ||
-               (source->generalArithmeticDemands && source->generalArithmeticDemands->adjacentLocalDemands)) {
+               (source->generalArithmeticDemands && source->generalArithmeticDemands->adjacentLocalDemands) ||
+               (source->arithmeticRegionalDemands &&
+                source->arithmeticRegionalDemands->analysis.adjacentLocalDemands)) {
         result.realization = RealizationOrder::Equivalent;
     }
     return result;

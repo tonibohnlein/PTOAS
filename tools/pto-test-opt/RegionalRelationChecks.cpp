@@ -49,7 +49,7 @@ bool quotientCoordinates(MLIRContext& context)
     if (failed(system)) { return false; }
     fs::ArithmeticRelationKey key{{0, fs::ArithmeticEvent::Completion, {1}},
                                   {1, fs::ArithmeticEvent::Start, {2}}, {0, 1}};
-    data.analysis.requiredOrder[key] = {*system};
+    data.analysis.requiredOrder.edit()[key] = {*system};
     fs::ArithmeticBoundarySelector boundary;
     boundary.kind = fs::ArithmeticBoundaryKind::FirstWriter; boundary.storageSpace = pto::AddressSpace::VEC;
     boundary.selector.inputDimensions = 1; boundary.selector.parameterCount = 2;
@@ -102,8 +102,8 @@ fs::RegionalRelationData leaf(const pto::SyncInput& input, func::FuncOp function
         for (auto b : {fs::ArithmeticEvent::Start, fs::ArithmeticEvent::Completion}) {
             if (a == fs::ArithmeticEvent::Completion && b == fs::ArithmeticEvent::Start) { continue; }
             fs::ArithmeticRelationKey key{{0, a, {}}, {0, b, {}}, {0}};
-            data.analysis.nativeOrder[key] = {*present};
-            if (a != b) { data.analysis.requiredOrder[key] = {*present}; }
+            data.analysis.nativeOrder.edit()[key] = {*present};
+            if (a != b) { data.analysis.requiredOrder.edit()[key] = {*present}; }
         }
     }
     auto bytes = fs::IntegerSystem::create(2,
@@ -179,7 +179,7 @@ bool restrictPresence(fs::RegionalRelationData& child, int64_t lower)
         return true;
     };
     for (auto* relation : {&child.analysis.nativeOrder, &child.analysis.requiredOrder}) {
-        for (auto& [key, systems] : *relation) {
+        for (auto& [key, systems] : relation->edit()) {
             for (auto& system : systems) {
                 if (!restrict(system)) {
                     return false;

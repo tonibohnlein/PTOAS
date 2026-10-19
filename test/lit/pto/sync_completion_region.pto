@@ -13,7 +13,7 @@
 !tile = !pto.tile_buf<vec, 1x8xf32>
 module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func private @unknown()
-  func.func @while_control(%condition: i1) attributes {test.completion_cuts = array<i64: 1, 2, 3>} {
+  func.func @while_control(%condition: i1) attributes {test.empty_completion_pool, test.completion_cuts = array<i64: 1, 2, 3>} {
     %addr = arith.constant 0 : i64
     %zero = arith.constant 0 : index
     %one = arith.constant 1.0 : f32

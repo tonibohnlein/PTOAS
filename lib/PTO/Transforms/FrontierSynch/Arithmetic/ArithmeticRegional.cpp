@@ -38,7 +38,7 @@ struct ArithmeticRegionalExportCache {
     std::shared_ptr<const GeneralArithmeticDemandAnalysis> original;
     ArithmeticAnalysisCost conversionCost;
     ArithmeticAnalysisCost orderCost;
-    std::array<std::shared_ptr<const GeneralArithmeticRelation>, 4> relations;
+    std::array<std::optional<RetainedArithmeticRelation<IntegerSystem>>, 4> relations;
     std::map<uint8_t, std::shared_ptr<const GeneralArithmeticDemandAnalysis>> views;
     std::map<uint8_t, std::string> failures;
 };
@@ -72,22 +72,25 @@ std::shared_ptr<const GeneralArithmeticDemandAnalysis> requestArithmeticRelation
     AnalysisProfileScope adapter(cache.profile.ledger, "arithmetic-difference-export", cache.profile.region);
     adapter.constructed();
     const auto before = cache.conversionCost;
+    const auto copiedBefore = RetainedArithmeticRelation<IntegerSystem>::copyWork;
     auto recordWork = llvm::make_scope_exit([&] {
         adapter.recordWork({{"systems", cache.conversionCost.differenceExportSystems - before.differenceExportSystems},
             {"atoms", cache.conversionCost.differenceExportAtoms - before.differenceExportAtoms},
-            {"coefficients", cache.conversionCost.differenceExportCoefficients - before.differenceExportCoefficients}});
+            {"coefficients", cache.conversionCost.differenceExportCoefficients - before.differenceExportCoefficients},
+            {"copied_entries", RetainedArithmeticRelation<IntegerSystem>::copyWork.entries - copiedBefore.entries},
+            {"copied_pieces", RetainedArithmeticRelation<IntegerSystem>::copyWork.pieces - copiedBefore.pieces}});
     });
     auto staged = cache.relations;
     // Bits: demands, required order, native order, original generators.
-    const std::array<const GeneralArithmeticRelation*, 4> integer{
+    const std::array<const RetainedArithmeticRelation<IntegerSystem>*, 4> integer{
         &original.minimumDemands, &original.requiredOrder,
         &original.nativeOrder, &original.generators};
     const auto* difference = source.differenceDemands.get();
     for (unsigned index = 0; index < staged.size(); ++index) {
         if (!(mask & (1u << index)) || staged[index]) { continue; }
-        GeneralArithmeticRelation relation;
+        RetainedArithmeticRelation<IntegerSystem> relation;
         if (difference) {
-            const std::array<const ArithmeticRelation*, 4> dbm{
+            const std::array<const RetainedArithmeticRelation<DifferenceBoundSystem>*, 4> dbm{
                 &difference->minimumDemands, &difference->requiredOrder,
                 &difference->nativeOrder, &difference->generators};
             auto* selected = dbm[index];
@@ -108,7 +111,7 @@ std::shared_ptr<const GeneralArithmeticDemandAnalysis> requestArithmeticRelation
             if (!order.error.empty()) { return refuse(order.error); }
             relation = order.relation; cache.orderCost = order.cost;
         } else { relation = *integer[index]; }
-        staged[index] = std::make_shared<const GeneralArithmeticRelation>(std::move(relation));
+        staged[index] = std::move(relation);
     }
     auto output = std::make_shared<GeneralArithmeticDemandAnalysis>();
     output->period = source.analysis.period; output->parameterCount = source.analysis.parameterCount;
@@ -117,7 +120,7 @@ std::shared_ptr<const GeneralArithmeticDemandAnalysis> requestArithmeticRelation
     output->availableRelations = mask;
     output->requiredOrderAvailable = bool(mask & 2); output->cost = original.cost;
     if (mask & 2) { accumulateArithmeticCost(output->cost, cache.orderCost); }
-    std::array<GeneralArithmeticRelation*, 4> destinations{
+    std::array<RetainedArithmeticRelation<IntegerSystem>*, 4> destinations{
         &output->minimumDemands, &output->requiredOrder, &output->nativeOrder, &output->generators};
     for (unsigned index = 0; index < staged.size(); ++index) {
         if (mask & (1u << index)) { *destinations[index] = *staged[index]; }
@@ -168,6 +171,32 @@ struct State : ArithmeticRegionalRelations {
     struct LoopGeometry { Id lower; int64_t step; uint64_t maximumOrdinal; };
     std::map<Operation*, LoopGeometry> geometry;
     std::string error, emissionError;
+    using QueryKey = std::tuple<std::size_t, std::size_t, ArithmeticEvent, ArithmeticEvent>;
+    RetainedArithmeticRelation<IntegerSystem> indexedOrder;
+    std::map<QueryKey, std::vector<const GeneralArithmeticRelation::value_type*>> orderIndex;
+    // One diagnostic inventory per retained query owner, never one ledger
+    // record per query. It stays visible while the owner is still alive.
+    std::optional<std::size_t> queryProfileRecord;
+    void recordQueryWork(uint64_t indexKeys, uint64_t inspectedKeys)
+    {
+        if (!integerExports || !integerExports->profile.ledger ||
+            !integerExports->profile.ledger->profiling) { return; }
+        auto& ledger = *integerExports->profile.ledger;
+        if (!queryProfileRecord) {
+            AnalysisStageRecord record;
+            record.id = ledger.stages.size() + 1;
+            record.request = ledger.currentRequest;
+            record.region = integerExports->profile.region;
+            record.stage = "arithmetic-regional-query";
+            record.work = {{"index_keys", 0}, {"inspected_keys", 0}};
+            queryProfileRecord = ledger.stages.size();
+            ledger.stages.push_back(std::move(record));
+        }
+        auto& record = ledger.stages[*queryProfileRecord];
+        accumulateCost(record.aggregateCalls, 1);
+        accumulateCost(record.work[0].second, indexKeys);
+        accumulateCost(record.work[1].second, inspectedKeys);
+    }
     Id no() { return arena->boolean(false); }
     Id yes() { return arena->boolean(true); }
     Id c(uint64_t value) { return arena->constant(value); }
@@ -341,15 +370,30 @@ struct State : ArithmeticRegionalRelations {
         auto kind = [](PeriodicEventKind event) {
             return event == PeriodicEventKind::Start ? ArithmeticEvent::Start : ArithmeticEvent::Completion;
         };
-        for (const auto& [key, pieces] : analysis.requiredOrder) {
-            if (key.source.site != a.type || key.target.site != b.type ||
-                key.source.event != kind(a.kind) || key.target.event != kind(b.kind)) { continue; }
-            auto residues = key.source.residues;
-            llvm::append_range(residues, key.target.residues); llvm::append_range(residues, key.parameterResidues);
-            for (const auto& system : pieces) {
-                result = arena->lor(result, arena->integerPredicate(system, values, analysis.period, residues));
+        uint64_t indexKeys = 0, inspectedKeys = 0;
+        if (indexedOrder.storageIdentity() != analysis.requiredOrder.storageIdentity()) {
+            orderIndex.clear();
+            indexedOrder = analysis.requiredOrder;
+            for (const auto& entry : indexedOrder) {
+                const auto& key = entry.first;
+                orderIndex[{key.source.site, key.target.site, key.source.event, key.target.event}].push_back(&entry);
+                ++indexKeys;
             }
         }
+        auto selected = orderIndex.find({a.type, b.type, kind(a.kind), kind(b.kind)});
+        if (selected != orderIndex.end()) {
+            for (const auto* entry : selected->second) {
+                ++inspectedKeys;
+                const auto& [key, pieces] = *entry;
+                auto residues = key.source.residues;
+                llvm::append_range(residues, key.target.residues);
+                llvm::append_range(residues, key.parameterResidues);
+                for (const auto& system : pieces) {
+                    result = arena->lor(result, arena->integerPredicate(system, values, analysis.period, residues));
+                }
+            }
+        }
+        recordQueryWork(indexKeys, inspectedKeys);
         return arena->land(arena->land(coordinateDomain(a), coordinateDomain(b)), result);
     }
     std::vector<RegionalSelector> selected(const GeneralArithmeticEndpointSelector& selector,

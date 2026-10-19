@@ -187,8 +187,8 @@ bool signedResiduesAndTags()
     auto second = System::create(3, {atom(2, 1, 2), atom(1, 2, -2), atom(1, 3, 4), atom(3, 1, -3)});
     if (failed(first) || failed(second)) { return false; }
     auto analysis = certified();
-    analysis.minimumDemands[key(1)] = {*first, *first}; // Overlapping identical outputs: first match only.
-    analysis.minimumDemands[key(2)] = {*second};
+    analysis.minimumDemands.edit()[key(1)] = {*first, *first}; // Overlapping identical outputs: first match only.
+    analysis.minimumDemands.edit()[key(2)] = {*second};
     auto selectors = fs::buildArithmeticSelectors(analysis, {0, 1, 1});
     if (!selectors.error.empty() || selectors.forward.size() != 1 || selectors.inverse.size() != 2 ||
         selectors.forward.front().pieces.size() != 2) { return false; }
@@ -218,17 +218,17 @@ bool selectorValidation()
     auto unbounded = System::create(3, {});
     if (failed(relation) || failed(unbounded)) { return false; }
     auto analysis = certified();
-    analysis.minimumDemands[key(1)] = {*relation};
+    analysis.minimumDemands.edit()[key(1)] = {*relation};
     analysis.exactMinimum = false;
     if (fs::buildArithmeticSelectors(analysis, {0, 1}).error.empty()) { return false; }
     analysis.exactMinimum = true;
     if (fs::buildArithmeticSelectors(analysis, {0}).error.empty()) { return false; }
-    analysis.minimumDemands[key(1)] = {*unbounded};
+    analysis.minimumDemands.edit()[key(1)] = {*unbounded};
     if (fs::buildArithmeticSelectors(analysis, {0, 1}).error.empty()) { return false; }
     analysis.minimumDemands.clear();
     auto invalid = key(1);
     invalid.parameterResidues = {2};
-    analysis.minimumDemands[invalid] = {*relation};
+    analysis.minimumDemands.edit()[invalid] = {*relation};
     return !fs::buildArithmeticSelectors(analysis, {0, 1}).error.empty();
 }
 bool selectorLargeConstants()
@@ -239,7 +239,7 @@ bool selectorLargeConstants()
     if (failed(relation)) { return false; }
     auto analysis = certified();
     analysis.period = 1;
-    analysis.minimumDemands[key(1, 1)] = {*relation};
+    analysis.minimumDemands.edit()[key(1, 1)] = {*relation};
     auto selectors = fs::buildArithmeticSelectors(analysis, {0, 1});
     if (!selectors.error.empty()) { return false; }
     auto value = fs::evaluateArithmeticSelector(selectors.forward.front(), 1, {Integer(0)}, {Integer(0)});
@@ -248,7 +248,7 @@ bool selectorLargeConstants()
     if (failed(relation)) { return false; }
     analysis.period = std::numeric_limits<uint64_t>::max();
     analysis.minimumDemands.clear();
-    analysis.minimumDemands[key(1, analysis.period)] = {*relation};
+    analysis.minimumDemands.edit()[key(1, analysis.period)] = {*relation};
     selectors = fs::buildArithmeticSelectors(analysis, {0, 1});
     if (!selectors.error.empty()) { return false; }
     value = fs::evaluateArithmeticSelector(selectors.forward.front(), analysis.period, {Integer(-1)}, {Integer(-1)});
@@ -264,7 +264,7 @@ bool exactCoalescing()
         if (failed(a) || failed(b)) { return false; }
         auto analysis = certified();
         analysis.period = 1;
-        analysis.minimumDemands[key(1, 1)] = {*a, *b};
+        analysis.minimumDemands.edit()[key(1, 1)] = {*a, *b};
         auto selectors = fs::buildArithmeticSelectors(analysis, {0, 1});
         if (!selectors.error.empty() || selectors.forward.size() != 1 ||
             selectors.forward.front().pieces.size() != static_cast<std::size_t>(gap)) { return false; }
@@ -292,7 +292,7 @@ bool uniformAllocationQueries()
     // themselves order b_i completion before the next a start.
     auto handoff = System::create(3, {atom(2, 1, 0), atom(1, 2, 0), atom(0, 1, 0), atom(1, 3, -1)});
     if (failed(handoff)) { return false; }
-    analysis.minimumDemands[key(1, 1)] = {*handoff};
+    analysis.minimumDemands.edit()[key(1, 1)] = {*handoff};
     const std::map<std::pair<std::size_t, std::size_t>, int64_t> records{{{0, 1}, 0}};
     if (fs::arithmeticAllocationCertificate(analysis, {0, 1}, records, 0, &context)) { return false; }
     fs::ArithmeticRelationKey reuse{{1, fs::ArithmeticEvent::Completion, {0}},
@@ -300,7 +300,7 @@ bool uniformAllocationQueries()
     for (int64_t gap : {1, 2}) {
         auto order = System::create(3, {atom(1, 2, -gap), atom(0, 1, 0), atom(2, 3, -1)});
         if (failed(order)) { return false; }
-        analysis.requiredOrder[reuse] = {*order};
+        analysis.requiredOrder.edit()[reuse] = {*order};
         auto proof = fs::arithmeticAllocationCertificate(analysis, {0, 1}, records, 0, &context);
         if (static_cast<bool>(proof) != (gap == 1)) { return false; }
     }
@@ -315,7 +315,7 @@ bool zeroCoordinates()
     analysis.parameterCount = 0;
     fs::ArithmeticRelationKey relation{{0, fs::ArithmeticEvent::Completion, {}},
                                        {1, fs::ArithmeticEvent::Start, {}}, {}};
-    analysis.minimumDemands[relation] = {*truth};
+    analysis.minimumDemands.edit()[relation] = {*truth};
     auto selectors = fs::buildArithmeticSelectors(analysis, {0, 1});
     if (!selectors.error.empty() || selectors.forward.size() != 1) { return false; }
     auto value = fs::evaluateArithmeticSelector(selectors.forward.front(), 1, {}, {});

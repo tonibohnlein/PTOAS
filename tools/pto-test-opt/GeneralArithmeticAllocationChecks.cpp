@@ -50,7 +50,7 @@ bool parameterContexts(mlir::MLIRContext& context)
             row({0, 1, 0}, value), row({0, -1, 0}, -value),
             row({0, 0, 1}, value), row({0, 0, -1}, -value)});
         if (mlir::failed(point)) { return false; }
-        analysis.minimumDemands[demand(0)].push_back(*point);
+        analysis.minimumDemands.edit()[demand(0)].push_back(*point);
     }
     // Each parameter context has just one occurrence. Pairing instances from
     // different contexts would incorrectly demand a reuse edge.
@@ -65,7 +65,7 @@ bool singleton(mlir::MLIRContext& context)
     analysis.exactMinimum = true;
     fs::ArithmeticRelationKey edge{{0, fs::ArithmeticEvent::Completion, {}},
                                   {1, fs::ArithmeticEvent::Start, {}}, {}};
-    analysis.minimumDemands[edge] = {fs::IntegerSystem{}};
+    analysis.minimumDemands.edit()[edge] = {fs::IntegerSystem{}};
     // With no source coordinates there is only one dynamic handoff. No
     // completion-to-next-start witness is needed for its dedicated ID.
     return bool(fs::generalArithmeticAllocationCertificate(analysis, {0, 1}, {{{0, 1}, 0}}, 0, &context));
@@ -86,14 +86,14 @@ bool nestedCoordinates(mlir::MLIRContext& context)
     auto inner = fs::IntegerSystem::create(4,
         {row({1, 0, -1, 0}, 0), row({-1, 0, 1, 0}, 0), row({0, 1, 0, -1}, -1)});
     if (mlir::failed(domain) || mlir::failed(outer) || mlir::failed(inner)) { return false; }
-    analysis.minimumDemands[edge] = {*domain};
-    analysis.requiredOrder[order] = {*outer, *inner};
+    analysis.minimumDemands.edit()[edge] = {*domain};
+    analysis.requiredOrder.edit()[order] = {*outer, *inner};
     auto certify = [&]() {
         return fs::encodeGeneralArithmeticAllocationCertificate(
             fs::buildArithmeticHandoffAllocation(analysis, {0, 1}, 1), {0, 1}, {{{0, 1}, 0}}, 0, &context);
     };
     if (!certify()) { return false; }
-    analysis.requiredOrder[order] = {*inner};
+    analysis.requiredOrder.edit()[order] = {*inner};
     return !certify();
 }
 bool activeSuccessors(uint64_t period)
@@ -114,7 +114,7 @@ bool activeSuccessors(uint64_t period)
              row({0, 1}, quotient), row({0, -1}, -quotient)});
         if (mlir::failed(point)) { return false; }
         edge.source.residues = {coordinate % period}; edge.target.residues = edge.source.residues;
-        analysis.minimumDemands[edge].push_back(*point);
+        analysis.minimumDemands.edit()[edge].push_back(*point);
     }
     for (uint64_t from = 0; from < period; ++from) {
         for (uint64_t to = 0; to < period; ++to) {
@@ -123,7 +123,7 @@ bool activeSuccessors(uint64_t period)
             auto reuse = fs::IntegerSystem::create(2, {constraint});
             if (mlir::failed(reuse)) { return false; }
             ordered.source.residues = {from}; ordered.target.residues = {to};
-            analysis.requiredOrder[ordered] = {*reuse};
+            analysis.requiredOrder.edit()[ordered] = {*reuse};
         }
     }
     auto one = fs::buildArithmeticHandoffAllocation(analysis, {0, 1}, 1);
@@ -131,7 +131,7 @@ bool activeSuccessors(uint64_t period)
     // and off. A malformed required relation exercises construction failure,
     // which must remain distinct from a constructed but uncovered relation.
     auto unavailable = analysis;
-    unavailable.requiredOrder.begin()->second = {fs::IntegerSystem{}};
+    unavailable.requiredOrder.edit().begin()->second = {fs::IntegerSystem{}};
     for (bool malformed : {false, true}) {
         const auto& input = malformed ? unavailable : analysis;
         const auto baseline = fs::buildArithmeticHandoffAllocation(input, {0, 1}, 1);
@@ -179,7 +179,7 @@ bool activeSuccessors(uint64_t period)
             {row({1, 0}, source), row({-1, 0}, -source), row({0, 1}, target), row({0, -1}, -target)});
         if (mlir::failed(point)) { return false; }
         edge.source.residues = {coordinate % period}; edge.target.residues = {(2 - coordinate) % period};
-        analysis.minimumDemands[edge].push_back(*point);
+        analysis.minimumDemands.edit()[edge].push_back(*point);
     }
     return !fs::buildArithmeticHandoffAllocation(analysis, {0, 1}, 6).error.empty();
 }
@@ -195,11 +195,11 @@ bool differenceBoundSuccessors(mlir::MLIRContext& context)
             {{1, 0, fs::BoundInteger(value)}, {0, 1, fs::BoundInteger(-value)},
              {2, 0, fs::BoundInteger(value)}, {0, 2, fs::BoundInteger(-value)}});
         if (mlir::failed(point)) { return false; }
-        analysis.minimumDemands[edge].push_back(*point);
+        analysis.minimumDemands.edit()[edge].push_back(*point);
     }
     auto reuse = fs::DifferenceBoundSystem::create(2, {{1, 2, fs::BoundInteger(-4)}});
     if (mlir::failed(reuse)) { return false; }
-    analysis.requiredOrder[order] = {*reuse};
+    analysis.requiredOrder.edit()[order] = {*reuse};
     auto proof = fs::buildArithmeticHandoffAllocation(analysis, {0, 1});
     if (!proof.error.empty() || proof.families.size() != 1 || proof.families.front().width != 2) { return false; }
     auto encoded = fs::encodeGeneralArithmeticAllocationCertificate(proof, {0, 1}, {{{0, 1}, 0}}, 0, &context);
@@ -225,13 +225,13 @@ bool coordinateMapping(uint64_t period, bool negative, bool missingReuse)
         // The WAIT's own IV is different: its ID must use the inverse map.
         auto instance = point(source, source + 11);
         if (mlir::failed(instance)) { return false; }
-        analysis.minimumDemands[{{0, fs::ArithmeticEvent::Completion, {residue(source)}},
+        analysis.minimumDemands.edit()[{{0, fs::ArithmeticEvent::Completion, {residue(source)}},
             {1, fs::ArithmeticEvent::Start, {residue(source + 11)}}, {}}].push_back(*instance);
         for (auto later : visits) {
             if (later - source < 4 || (missingReuse && source == 2 && later == 6)) { continue; }
             auto ordered = point(source + 11, later);
             if (mlir::failed(ordered)) { return false; }
-            analysis.requiredOrder[{{1, fs::ArithmeticEvent::Completion, {residue(source + 11)}},
+            analysis.requiredOrder.edit()[{{1, fs::ArithmeticEvent::Completion, {residue(source + 11)}},
                 {0, fs::ArithmeticEvent::Start, {residue(later)}}, {}}].push_back(*ordered);
         }
     }
@@ -269,14 +269,14 @@ bool coordinateContexts(bool missingReuse)
             const auto p = static_cast<uint64_t>(parameter % 2);
             auto instance = point(source, target, parameter);
             if (mlir::failed(instance)) { return false; }
-            analysis.minimumDemands[{{0, fs::ArithmeticEvent::Completion, {uint64_t(source % 2)}},
+            analysis.minimumDemands.edit()[{{0, fs::ArithmeticEvent::Completion, {uint64_t(source % 2)}},
                 {1, fs::ArithmeticEvent::Start, {uint64_t(target % 2)}}, {p}}].push_back(*instance);
             for (int64_t next : {0, 1, 3, 4}) {
                 if (next - offset < 2 || (missingReuse && parameter == 4 && offset == 0 && next == 4)) { continue; }
                 const auto later = base + next;
                 auto ordered = point(target, later, parameter);
                 if (mlir::failed(ordered)) { return false; }
-                analysis.requiredOrder[{{1, fs::ArithmeticEvent::Completion, {uint64_t(target % 2)}},
+                analysis.requiredOrder.edit()[{{1, fs::ArithmeticEvent::Completion, {uint64_t(target % 2)}},
                     {0, fs::ArithmeticEvent::Start, {uint64_t(later % 2)}}, {p}}].push_back(*ordered);
             }
         }
@@ -332,7 +332,7 @@ bool boundedConstructionProfile()
     for (unsigned family = 0; family < 32; ++family) {
         const auto source = pipes.size();
         pipes.push_back(0); pipes.push_back(1);
-        analysis.minimumDemands[{{source, fs::ArithmeticEvent::Completion, {}},
+        analysis.minimumDemands.edit()[{{source, fs::ArithmeticEvent::Completion, {}},
             {source + 1, fs::ArithmeticEvent::Start, {}}, {}}] = {fs::IntegerSystem{}};
     }
     for (bool coordinate : {false, true}) { for (bool enabled : {false, true}) {
@@ -497,7 +497,7 @@ bool check(mlir::MLIRContext& context)
         row({-1, 0, 0}, 0), row({1, 0, -1}, 0), row({0, 0, 1}, 1000000000)});
     if (mlir::failed(edge)) { return false; }
     for (uint64_t a = 0; a < 2; ++a) {
-        analysis.minimumDemands[demand(a)] = {*edge};
+        analysis.minimumDemands.edit()[demand(a)] = {*edge};
         for (uint64_t b = 0; b < 2; ++b) {
             // Query coordinates (earlier y,later x,p); y is even after
             // projecting away the earlier x. Neither parity piece alone
@@ -508,7 +508,7 @@ bool check(mlir::MLIRContext& context)
                      row({0, 1, -1}, 0), row({0, 0, 1}, 1000000000)},
                     {parity(0, 0), parity(1, residue)});
                 if (mlir::failed(ordered)) { return false; }
-                analysis.requiredOrder[reuse(a, b)].push_back(*ordered);
+                analysis.requiredOrder.edit()[reuse(a, b)].push_back(*ordered);
             }
         }
     }
@@ -530,15 +530,15 @@ bool check(mlir::MLIRContext& context)
     auto encodedRecords = direction.getAs<mlir::DenseI64ArrayAttr>("records");
     if (!encodedRecords || encodedRecords.size() != 1 || encodedRecords[0] != 7) { return false; }
     auto missingResidue = analysis;
-    missingResidue.requiredOrder.erase(reuse(0, 1));
+    missingResidue.requiredOrder.edit().erase(reuse(0, 1));
     if (certify(missingResidue)) { return false; }
     auto missingParity = analysis;
-    missingParity.requiredOrder[reuse(1, 0)].pop_back();
+    missingParity.requiredOrder.edit()[reuse(1, 0)].pop_back();
     if (certify(missingParity)) { return false; }
     auto shortWitness = analysis;
     auto prefix = fs::IntegerSystem::create(3, {row({0, 1, 0}, 7)});
     if (mlir::failed(prefix)) { return false; }
-    for (auto& [key, pieces] : shortWitness.requiredOrder) {
+    for (auto& [key, pieces] : shortWitness.requiredOrder.edit()) {
         for (auto& piece : pieces) {
             auto restricted = piece.intersect(*prefix);
             if (mlir::failed(restricted)) { return false; }
@@ -547,7 +547,7 @@ bool check(mlir::MLIRContext& context)
     }
     if (certify(shortWitness)) { return false; }
     auto malformed = analysis;
-    malformed.minimumDemands[demand(0)] = {fs::IntegerSystem{}};
+    malformed.minimumDemands.edit()[demand(0)] = {fs::IntegerSystem{}};
     return !certify(malformed);
 }
 } // namespace

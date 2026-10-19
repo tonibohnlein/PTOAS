@@ -36,6 +36,7 @@
 #include "SyncPhaseCopyChecks.h"
 #include "SequenceExplicitRetryChecks.h"
 #include "RetainedPeriodicRequestChecks.h"
+#include "RetainedControlSelectionChecks.h"
 #include "SyncLogicalInsertionChecks.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -886,6 +887,7 @@ LogicalResult checkArithmeticRequests(func::FuncOp function, pto::GMAliasPolicy 
     return function.emitError("demands-only arithmetic constructed optional export state");
   }
   FrontierAnalysis session(function);
+  session.enableStageProfiling();
   if (failed(session.initialize(policy))) { return failure(); }
   auto node = llvm::find_if(session.result()->nodes, [&](const auto& n) { return n.anchor == root; });
   if (node == session.result()->nodes.end()) { return failure(); }
@@ -913,6 +915,50 @@ LogicalResult checkArithmeticRequests(func::FuncOp function, pto::GMAliasPolicy 
   auto stateful = session.analyzeArithmeticRegional({id, AnalysisMode::MinimumExact, needs});
   if (stateful.status != AnalysisStatus::UnmetObligation || stateful.mathematical != retained.mathematical) {
     return function.emitError("uniform arithmetic exports incorrectly satisfied stateful evaluation");
+  }
+  // Each query may inspect residue alternatives for this endpoint pair, never
+  // unrelated keys. Repeating the query must not rebuild the immutable index.
+  const auto& regional = *query.regionalExports;
+  unsigned measuredQueries = 0;
+  uint64_t inspected = 0, builtIndex = 0, expectedInspected = 0;
+  auto complete = requestArithmeticRelations(*regional.arithmeticRelations,
+      ArithmeticRelationView::RequiredOrder, error);
+  if (!complete) { return failure(); }
+  for (unsigned repeat = 0; repeat < 2; ++repeat) {
+    for (uint32_t a = 0; a < regional.anchors.size(); ++a) {
+      for (uint32_t b = 0; b < regional.anchors.size(); ++b) {
+        const auto zero = regional.expressions->constant(0);
+        RegionalEvent from{a, zero, PeriodicEventKind::Completion,
+            std::vector<RegionExpressions::Id>(regional.outerLoops[a].size(), zero)};
+        RegionalEvent to{b, zero, PeriodicEventKind::Start,
+            std::vector<RegionExpressions::Id>(regional.outerLoops[b].size(), zero)};
+        if (!regional.reachability(from, to)) { return failure(); }
+        ++measuredQueries;
+        expectedInspected += llvm::count_if(complete->requiredOrder, [&](const auto& entry) {
+          const auto& key = entry.first;
+          return key.source.site == a && key.target.site == b &&
+              key.source.event == ArithmeticEvent::Completion && key.target.event == ArithmeticEvent::Start;
+        });
+      }
+    }
+  }
+  unsigned queryRecords = 0;
+  uint64_t recordedQueries = 0;
+  for (const auto& stage : query.ledger->stages) {
+    if (stage.stage != "arithmetic-regional-query") { continue; }
+    ++queryRecords;
+    recordedQueries += stage.aggregateCalls;
+    for (const auto& [key, count] : stage.work) {
+      if (key == "inspected_keys") { inspected += count; }
+      if (key == "index_keys") { builtIndex += count; }
+    }
+  }
+  if (queryRecords != 1 || recordedQueries != measuredQueries) {
+    return function.emitError("regional query profiling retained per-query ledger records");
+  }
+  if (!measuredQueries || inspected != expectedInspected || builtIndex > complete->requiredOrder.size() ||
+      inspected >= measuredQueries * complete->requiredOrder.size()) {
+    return function.emitError("regional arithmetic query rescanned unrelated relation keys");
   }
   auto queryArena = query.regionalExports->expressions;
   auto zero = queryArena->constant(0);
@@ -1063,6 +1109,22 @@ LogicalResult checkArithmeticRequests(func::FuncOp function, pto::GMAliasPolicy 
   // Clearing a diagnostic map cannot invalidate the original owned export.
   auto demandView = requestArithmeticRelations(*demands, ArithmeticRelationView::Demands, error);
   if (!demandView) { return failure(); }
+  auto completeView = requestArithmeticRelations(*demands, ArithmeticRelationView::Complete, error);
+  auto allocationView = requestArithmeticRelations(*demands, ArithmeticRelationView::Allocation, error);
+  if (!completeView || !allocationView ||
+      demandView->minimumDemands.storageIdentity() != completeView->minimumDemands.storageIdentity() ||
+      allocationView->requiredOrder.storageIdentity() != completeView->requiredOrder.storageIdentity()) {
+    return function.emitError("arithmetic capability masks copied retained relation storage");
+  }
+  const auto copied = RetainedArithmeticRelation<IntegerSystem>::copyWork;
+  for (unsigned request = 0; request < 64; ++request) {
+    auto fresh = *requestArithmeticRelations(*demands, ArithmeticRelationView::Complete, error);
+    if (fresh.requiredOrder.storageIdentity() != completeView->requiredOrder.storageIdentity()) { return failure(); }
+  }
+  if (RetainedArithmeticRelation<IntegerSystem>::copyWork.entries != copied.entries ||
+      RetainedArithmeticRelation<IntegerSystem>::copyWork.pieces != copied.pieces) {
+    return function.emitError("repeated arithmetic capability consumption copied inventories");
+  }
   noAllocation.analysis = *demandView;
   noAllocation.integerExports.reset();
   noAllocation.differenceDemands.reset();
@@ -2546,6 +2608,10 @@ int main(int argc, char **argv) {
     auto delegation = pto::frontiersynch::recognizeClosedCallees(*module);
     for (auto function : module->getOps<func::FuncOp>()) {
       if (function.isDeclaration()) { continue; }
+      if (certification && function->hasAttr("test.retained_control_selection")) {
+        if (failed(pto::test::checkRetainedControlSelection(function, policy))) { return 1; }
+        continue;
+      }
       if (certification && function->hasAttr("test.crossing_costs")) {
         if (failed(checkCrossingCostSelection(function, policy))) { return 1; }
         continue;

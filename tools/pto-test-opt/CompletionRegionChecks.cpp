@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Original-cut oracle and transactional checks for conservative completion.
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
+#include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInsertion.h"
+#include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
 #include "PTO/IR/PTO.h"
@@ -25,6 +27,113 @@ namespace {
 std::string render(Operation* operation)
 {
     std::string text; llvm::raw_string_ostream stream(text); operation->print(stream); return text;
+}
+LogicalResult paletteChildChecks(func::FuncOp function)
+{
+    auto input = std::make_shared<pto::SyncInput>();
+    auto index = std::make_shared<fs::PhaseIndex>();
+    if (failed(input->build(function, pto::SyncInstructionView::PipeEnvelopes)) ||
+        failed(index->build(function, *input))) { return failure(); }
+    auto source = fs::finiteFunctionInput(function, input, index);
+    SmallVector<std::shared_ptr<const fs::CompletionInlineChild>> children;
+    for (int64_t id : {0, 1}) {
+        SmallVector<Operation*> roots;
+        function.walk([&](Operation* op) {
+            auto group = op->getAttrOfType<IntegerAttr>("test.palette_child");
+            if (group && group.getInt() == id) { roots.push_back(op); }
+        });
+        auto region = fs::finiteRegionInput(source, roots);
+        auto finite = fs::analyzeFinite(region, fs::FiniteStrategy::Concrete);
+        auto child = fs::CompletionInlineChild::qualify(finite, {id});
+        if (!child || !child->usesEvents()) { return function.emitError("reserved child palette unavailable"); }
+        children.push_back(std::move(child));
+    }
+    std::string error;
+    auto owner = fs::CompletionRegion::buildWithChildren(function, input, *index, children, error);
+    if (!owner || owner->eventfulInlineChildren() != 2) {
+        return function.emitError("independent palettes did not retain both children: ") << error;
+    }
+    const auto original = render(function);
+    for (SmallVector<int64_t> pool : {SmallVector<int64_t>{}, SmallVector<int64_t>{2}}) {
+        fs::PreparedLogicalPlan bad(0);
+        bad.completeInvocation = true; bad.completionOwner = owner;
+        ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
+        if (failed(fs::planPhysicalFamilyOutput(function, bad, pool)) ||
+            succeeded(fs::insertLogicalSynchronization(function, bad)) || render(function) != original) {
+            return function.emitError("combined resource refusal did not preserve the original invocation");
+        }
+    }
+    fs::PreparedLogicalPlan good(0);
+    good.completeInvocation = true; good.completionOwner = owner;
+    if (failed(fs::planPhysicalFamilyOutput(function, good, {2, 5})) ||
+        failed(fs::insertLogicalSynchronization(function, good)) || failed(verify(function))) { return failure(); }
+    unsigned sets = 0, waits = 0, completions = 0;
+    function.walk([&](Operation* op) {
+        sets += isa<pto::SetFlagOp, pto::SetFlagDynOp>(op);
+        waits += isa<pto::WaitFlagOp, pto::WaitFlagDynOp>(op);
+        if (auto barrier = dyn_cast<pto::BarrierOp>(op)) {
+            completions += barrier.getPipe().getPipe() == pto::PIPE::PIPE_ALL;
+        }
+    });
+    if (sets != 2 || waits != 2 || completions != 1) { return failure(); }
+    llvm::outs() << "completion palettes: disjoint reservations retained, one-ID refusal atomic, pool 2/5 accepted\n";
+    return success();
+}
+LogicalResult boundedChildChecks(func::FuncOp function)
+{
+    auto input = std::make_shared<pto::SyncInput>();
+    fs::PhaseIndex index;
+    if (failed(input->build(function, pto::SyncInstructionView::PipeEnvelopes)) ||
+        failed(index.build(function, *input))) { return failure(); }
+    scf::ForOp loop;
+    function.walk([&](scf::ForOp candidate) {
+        if (candidate->hasAttr("test.closed_visit")) { loop = candidate; }
+    });
+    if (!loop) { return failure(); }
+    auto recognition = fs::recognizeBoundedLifetime(loop, index, *input);
+    std::string error;
+    auto mathematics = fs::analyzeBoundedLifetimeRegion(function, loop, index, *input, recognition, error);
+    if (failed(mathematics)) { return function.emitError("bounded child mathematics: ") << error; }
+    auto exportChild = fs::completionChildExport(*mathematics, input);
+    auto child = exportChild();
+    if (!child || !child->usesEvents() || !child->returnsPendingEvents() ||
+        child != exportChild() || child->roots().size() != 1 || child->roots().front() != loop) {
+        return function.emitError("whole-loop child capability or ownership unavailable");
+    }
+    auto owner = fs::CompletionRegion::buildWithChildren(function, input, index, {child}, error);
+    if (!owner || owner->eventfulInlineChildren() != 1) {
+        return function.emitError("whole-loop child resource integration: ") << error;
+    }
+    fs::PreparedLogicalPlan plan(0);
+    plan.completeInvocation = true;
+    plan.completionOwner = owner;
+    const auto original = render(function);
+    // Request validation must not mutate either the source or the cached owner.
+    {
+        ScopedDiagnosticHandler silence(function.getContext(), [](Diagnostic&) { return success(); });
+        if (succeeded(fs::planPhysicalFamilyOutput(function, plan, {2, 2})) || render(function) != original) {
+            return function.emitError("invalid child pool modified the source");
+        }
+    }
+    if (failed(fs::planPhysicalFamilyOutput(function, plan, {2, 5})) ||
+        failed(fs::insertLogicalSynchronization(function, plan)) || failed(verify(function))) { return failure(); }
+    unsigned sets = 0, waits = 0, internalCompletions = 0;
+    function.walk([&](scf::ForOp candidate) {
+        if (!candidate->hasAttr("test.closed_visit")) { return; }
+        candidate.walk([&](Operation* op) {
+            sets += isa<pto::SetFlagOp, pto::SetFlagDynOp>(op);
+            waits += isa<pto::WaitFlagOp, pto::WaitFlagDynOp>(op);
+            if (auto barrier = dyn_cast<pto::BarrierOp>(op)) {
+                internalCompletions += barrier.getPipe().getPipe() == pto::PIPE::PIPE_ALL;
+            }
+        });
+    });
+    if (!sets || sets != waits || internalCompletions) {
+        return function.emitError("bounded child commands were replaced by internal completion");
+    }
+    llvm::outs() << "bounded completion child: " << function.getSymName()
+                 << " whole visit retained, closed matching, physical pool 2/5\n";
+    return success();
 }
 LogicalResult manyScopesChecks(func::FuncOp function)
 {
@@ -315,6 +424,8 @@ LogicalResult scopedChecks(func::FuncOp function)
 LogicalResult runCompletionRegionChecks(func::FuncOp function)
 {
     if (function.isDeclaration()) { return success(); }
+    if (function->hasAttr("test.separate_palettes")) { return paletteChildChecks(function); }
+    if (function->hasAttr("test.closed_bounded_child")) { return boundedChildChecks(function); }
     if (function->hasAttr("test.storage_classes") || function->hasAttr("test.readiness")) {
         return runCompletionInputChecks(function);
     }
@@ -377,6 +488,8 @@ LogicalResult runCompletionRegionChecks(func::FuncOp function)
         }
     }
     plan.endpoints.clear();
+    if (function->hasAttr("test.empty_completion_pool") &&
+        failed(fs::planPhysicalFamilyOutput(function, plan, {}))) { return failure(); }
     function->setAttr("test.changed_after_completion", UnitAttr::get(function.getContext()));
     const auto changed = render(function);
     {

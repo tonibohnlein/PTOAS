@@ -1208,7 +1208,8 @@ void countSharedSelectorGuards(detail::ScalarConstruction& construction,
         detail::constructSelectorGuardGroup(group, counter);
     }
 }
-std::optional<uint64_t> ownedPhysicalConstruction(const PhysicalFamilyOutput& output, bool sharedSelectors)
+std::optional<uint64_t> ownedFamilyConstruction(
+    const PhysicalFamilyOutput& output, bool sharedSelectors, bool logical = false)
 {
     if (!output.protocol || !output.protocol->normalized || !output.concrete.empty()) { return std::nullopt; }
     const auto& inventory = *output.protocol->normalized;
@@ -1232,11 +1233,14 @@ std::optional<uint64_t> ownedPhysicalConstruction(const PhysicalFamilyOutput& ou
         std::map<uint32_t, uint32_t>{};
     for (const auto& contribution : inventory.stream) {
         const auto& leaf = *contribution.leaf;
-        auto found = output.deferred.find(&contribution);
-        if (found == output.deferred.end() || found->second.size() != leaf.pieces.size()) { return std::nullopt; }
-        const auto& maps = found->second;
-        for (auto [piece, mapping] : llvm::zip(leaf.pieces, maps)) {
-            if (!mapping && piece.kind != EndpointKind::Barrier) { return std::nullopt; }
+        ArrayRef<std::shared_ptr<const PhysicalEndpointMap>> maps;
+        if (!logical) {
+            auto found = output.deferred.find(&contribution);
+            if (found == output.deferred.end() || found->second.size() != leaf.pieces.size()) { return std::nullopt; }
+            maps = found->second;
+            for (auto [piece, mapping] : llvm::zip(leaf.pieces, maps)) {
+                if (!mapping && piece.kind != EndpointKind::Barrier) { return std::nullopt; }
+            }
         }
         if (leaf.pieces.empty()) { continue; }
         FamilyCounter counter(leaf, contribution.recordBase, maps, materialization, construction, namespaces);
@@ -2116,6 +2120,19 @@ bool validPhysicalFamilyEndpoint(const PreparedLogicalPlan& plan, const Prepared
 }
 LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPlan& plan, ArrayRef<int64_t> eligibleIds)
 {
+    if (plan.completionOwner) {
+        if (plan.deferredOutput || plan.physicalOutput || plan.executedOutput || plan.completionPhysicalIds) {
+            return function.emitError("completion physical output has incompatible request state");
+        }
+        std::set<int64_t> pool;
+        for (auto id : eligibleIds) {
+            if (id < 0 || id > 5 || !pool.insert(id).second) {
+                return function.emitError("invalid or duplicate completion allocation ID");
+            }
+        }
+        plan.completionPhysicalIds.emplace(eligibleIds.begin(), eligibleIds.end());
+        return success();
+    }
     if (plan.privateState) {
         return plan.privateState->requestPhysical(function, plan, eligibleIds);
     }
@@ -2340,9 +2357,9 @@ LogicalResult planPhysicalFamilyOutput(func::FuncOp function, PreparedLogicalPla
             plan.preparation.empty() && plan.endpoints.empty();
         const bool sharedSelectors = ownedPreparation && plan.familyRecipe && !plan.allocationPreparation;
         const auto oldComplete = ownedPreparation ?
-            ownedPhysicalConstruction(before, sharedSelectors) : std::nullopt;
+            ownedFamilyConstruction(before, sharedSelectors) : std::nullopt;
         const auto newComplete = ownedPreparation ?
-            ownedPhysicalConstruction(after, sharedSelectors) : std::nullopt;
+            ownedFamilyConstruction(after, sharedSelectors) : std::nullopt;
         if (oldComplete && newComplete) {
             accumulateCost(plan.mappingWork.completeFootprints, 1);
             return std::make_pair(*oldComplete, *newComplete);
@@ -2423,7 +2440,18 @@ std::optional<uint64_t> physicalFamilyConstructionOperations(const PreparedLogic
     if (!validFamilyEndpointProtocol(plan) || !validPhysicalFamilyOutput(plan) || !plan.physicalOutput ||
         plan.executedOutput || plan.privateState || plan.completionOwner || !plan.preparation.empty() ||
         !plan.endpoints.empty()) { return std::nullopt; }
-    return ownedPhysicalConstruction(*plan.physicalOutput, plan.familyRecipe && !plan.allocationPreparation);
+    return ownedFamilyConstruction(*plan.physicalOutput, plan.familyRecipe && !plan.allocationPreparation);
+}
+std::optional<uint64_t> logicalFamilyConstructionOperations(PreparedLogicalPlan& plan)
+{
+    if (!plan.familyRecipe || plan.privateState || plan.completionOwner || plan.physicalOutput ||
+        plan.executedOutput || !plan.preparation.empty() || !plan.endpoints.empty()) {
+        return std::nullopt;
+    }
+    if (failed(normalizeLogicalFamilies(plan))) { return std::nullopt; }
+    PhysicalFamilyOutput logical;
+    logical.protocol = plan.familyRecipe;
+    return ownedFamilyConstruction(logical, !plan.allocationPreparation, true);
 }
 LogicalResult materializeFamilyEndpointCode(const FamilyEndpointRecipe& recipe, PreparedLogicalPlan& prepared)
 {

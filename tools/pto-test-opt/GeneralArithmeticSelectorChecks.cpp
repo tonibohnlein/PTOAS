@@ -134,8 +134,8 @@ bool rationalTuples(uint64_t period)
         row({0, -1, 3, -1}, 0), row({0, 1, -3, 1}, 0), row({1, 0, 0, -1}, 24), row({-1, 0, 0, 1}, -13)});
     if (failed(first) || failed(second)) { return false; }
     auto analysis = certified(period);
-    analysis.minimumDemands[key(1, period)] = {*first, *first};
-    analysis.minimumDemands[key(2, period)] = {*second};
+    analysis.minimumDemands.edit()[key(1, period)] = {*first, *first};
+    analysis.minimumDemands.edit()[key(2, period)] = {*second};
     const auto selectors = fs::buildGeneralArithmeticSelectors(analysis, {0, 1, 1});
     if (!selectors.error.empty() || selectors.forward.size() != 1 || selectors.inverse.size() != 2) { return false; }
     const auto scale = static_cast<int64_t>(period), residue = scale - 1;
@@ -172,7 +172,7 @@ bool reflectedSizeAndValidation()
         auto analysis = certified(1);
         fs::ArithmeticRelationKey relationKey{{0, fs::ArithmeticEvent::Completion, {0}},
                                               {1, fs::ArithmeticEvent::Start, {0}}, {0}};
-        analysis.minimumDemands[relationKey] = {*relation};
+        analysis.minimumDemands.edit()[relationKey] = {*relation};
         const auto selectors = fs::buildGeneralArithmeticSelectors(analysis, {0, 1});
         if (!selectors.error.empty() || selectors.forward.size() != 1) { return false; }
         const auto size = selectors.forward.front().pieces.size();
@@ -197,7 +197,7 @@ bool scalarEndpoint()
     auto analysis = certified(1);
     fs::ArithmeticRelationKey relationKey{{0, fs::ArithmeticEvent::Completion, {0}},
                                           {1, fs::ArithmeticEvent::Start, {}}, {0}};
-    analysis.minimumDemands[relationKey] = {*relation};
+    analysis.minimumDemands.edit()[relationKey] = {*relation};
     auto selectors = fs::buildGeneralArithmeticSelectors(analysis, {0, 1});
     if (!selectors.error.empty() || selectors.forward.size() != 1 || selectors.inverse.size() != 1) { return false; }
     auto forward = fs::evaluateGeneralArithmeticSelector(selectors.forward.front(), 1, {Integer(3)}, {Integer(3)});

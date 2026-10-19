@@ -139,7 +139,8 @@ bool recordChecks(MLIRContext& context, bool crossPipe)
         auto plan = fs::prepareBoundedLifetimeLogicalResult(owner, error, false);
         const bool prepared = succeeded(plan) && (*plan)->families.size() == 3;
         if (!prepared) {
-            llvm::errs() << "record preparation: " << error << "\n";
+            llvm::errs() << "record preparation: " << error << " success=" << succeeded(plan)
+                         << " families=" << (succeeded(plan) ? (*plan)->families.size() : 0) << "\n";
             return false;
         }
         for (unsigned record = 0; record < 3; ++record) {

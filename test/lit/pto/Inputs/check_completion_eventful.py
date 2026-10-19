@@ -87,6 +87,46 @@ def separated_children(optimizer, source):
     print("completion resources: no boundary / bypass refused; existing unconditional boundary accepted")
 
 
+def independent_directions(optimizer, source):
+    header = source[:source.index("    scf.for %i")]
+    program = header + """
+    scf.if %take {
+      pto.texpands ins(%one : f32) outs(%x : !tile)
+      %rx = pto.tgetval ins(%x, %zero : !tile, index) outs : f32
+    }
+    scf.if %take {
+      pto.tsetval ins(%zero, %one : index, f32) outs(%y : !tile)
+      pto.texp ins(%y : !tile) outs(%y : !tile)
+    }
+    scf.while : () -> () { scf.condition(%false) } do { scf.yield }
+    return
+  }
+}
+"""
+    logical = invoke([optimizer, "--pto-frontier-analysis", "-"], program).stdout
+    assert "eventful_inline_children = 2" in logical
+    assert logical.count("pto.logical_set") == logical.count("pto.logical_wait") == 2
+    assert logical.count("pto.barrier <PIPE_ALL>") == 1
+    physical = invoke([optimizer, "--pto-frontier-analysis=physical-output=true allocation-ids=5", "-"],
+                      program).stdout
+    assert physical.count("pto.set_flag") == physical.count("pto.wait_flag") == 2
+    assert physical.count("pto.barrier <PIPE_ALL>") == 1
+    print("completion resources: independent directions share one numeric ID without an extra completion")
+
+
+def threaded_combined(optimizer, source):
+    start = source.index("  func.func")
+    end = source.rfind("\n}")
+    body = source[start:end]
+    program = source[:start] + body + body.replace("@pending_children", "@second_children") + "\n}\n"
+    flags = ["--pto-frontier-analysis=physical-output=true allocation-ids=2,5", "-"]
+    threaded = invoke([optimizer, *flags], program).stdout
+    serial = invoke([optimizer, "--mlir-disable-threading", *flags], program).stdout
+    assert threaded == serial and "pto.logical_" not in threaded
+    assert threaded.count("pto.completion_protocol") == 2
+    print("completion combined: serial/threaded multi-function outputs agree")
+
+
 def assembly_scaling(optimizer, source):
     start, end = source.index("    scf.for %i"), source.index("    scf.while")
     child = """    scf.if %take {
@@ -109,7 +149,9 @@ def main():
     optimizer, checker = map(executable, (optimizer, checker))
     source = Path(fixture).read_text()
     separated_children(optimizer, source)
+    independent_directions(optimizer, source)
     assembly_scaling(optimizer, source)
+    threaded_combined(optimizer, source)
     tested = 0
     for nested in (False, True):
         program = source
@@ -127,14 +169,23 @@ def main():
         refused = invoke([optimizer, "--pto-frontier-allocate=eligible-ids=2", "-"], logical, succeeds=False)
         assert refused.returncode and not refused.stdout
         combined = invoke([optimizer, "--pto-frontier-analysis=physical-output=true allocation-ids=2,5", "-"],
-                          program, succeeds=False)
-        assert combined.returncode, "combined completion route unexpectedly changed its capability"
+                          program).stdout
+        assert "pto.logical_" not in combined
+        refused_combined = invoke(
+            [optimizer, "--pto-frontier-analysis=physical-output=true allocation-ids=2", "-"],
+            program, succeeds=False)
+        assert refused_combined.returncode and not refused_combined.stdout
         for trips, take in itertools.product((0, 1, 3), (0, 1)):
             count = (trips * trips if nested else trips) if take else 0
             labels = ["WX", "WY", "RX", "RY"] * count + ["WX", "RX", "FINAL"]
             children = [(4 * visit, 4 * visit + 4) for visit in range(count)]
             children.append((4 * count, 4 * count + 2))
-            validate(replay(checker, logical, trips, take), replay(checker, physical, trips, take), labels, children)
+            logical_trace = replay(checker, logical, trips, take)
+            physical_trace = replay(checker, physical, trips, take)
+            combined_trace = replay(checker, combined, trips, take)
+            validate(logical_trace, physical_trace, labels, children)
+            validate(logical_trace, combined_trace, labels, children)
+            assert physical_trace["trace"]["events"] == combined_trace["trace"]["events"]
             tested += 1
         # A saved/reparsed module has the same output with pass threading on.
         assert invoke([optimizer, "--pto-frontier-analysis", "-"], program).stdout == logical

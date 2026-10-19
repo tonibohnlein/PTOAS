@@ -99,6 +99,9 @@ private:
         std::shared_ptr<const CompletionSourceSnapshot> source = {});
     bool wholeInvocation = true;
     bool pendingEvents = false;
+    // Child pairs with disjoint same-direction palettes but overlapping visits.
+    // Their final palette groups must remain disjoint after ID renaming.
+    std::vector<std::pair<std::size_t, std::size_t>> separatePalettes;
     SmallVector<Operation*> roots;
     std::vector<std::shared_ptr<const CompletionInlineChild>> inlinePlans;
     bool summaryOnly = false;

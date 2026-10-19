@@ -62,6 +62,8 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
       "Write session stage timings and construction/cache counters to stderr as JSON">,
     Option<"analysisOnly", "analysis-only", "bool", "false",
       "Stop after mathematical certification without inserting synchronization">,
+    Option<"normalizeTwoTripLoops", "normalize-two-trip-loops", "bool", "false",
+      "Opt in to unrolling supported original two-trip leaf loops before insertion">,
     Option<"completionOnly", "completion-only", "bool", "false",
            "Explicit SCC completion request using coarse input and qualified closed children">,
     Option<"physicalOutput", "physical-output", "bool", "false",

@@ -19,8 +19,52 @@
 #include "mlir/IR/Verifier.h"
 #include "../../InsertSync/SyncScalarReplay.h"
 #include "mlir/IR/SymbolTable.h"
+#include "PTO/Transforms/LoopUnrollUtils.h"
+#include "mlir/Dialect/SCF/Utils/Utils.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Transforms/Passes.h"
+#include <limits>
 namespace mlir::pto::frontiersynch {
 namespace {
+// Normalize before any analysis captures anchors, selectors or child seals.
+// Only original leaf loops are selected, so nested two-trip loops cannot cause
+// exponential expansion in one invocation. Dynamic loops remain represented.
+LogicalResult normalizeTwoTripLeaves(func::FuncOp function)
+{
+    SmallVector<scf::ForOp> loops;
+    SmallVector<bool> nested;
+    function.walk([&](Operation* operation, const WalkStage& stage) {
+        auto loop = dyn_cast<scf::ForOp>(operation);
+        if (!loop) { return; }
+        if (stage.isBeforeAllRegions()) {
+            if (!nested.empty()) {
+                nested.back() = true;
+            }
+            nested.push_back(false);
+        }
+        if (!stage.isAfterAllRegions()) { return; }
+        if (nested.pop_back_val()) { return; }
+        // LLVM's unroller requires nonnegative constant bounds and a
+        // representable scaled step. Keep integer-width wraparound outside
+        // this normalization; unsupported loops retain their original form.
+        auto lower = getConstantIntValue(loop.getLowerBound());
+        auto step = getConstantIntValue(loop.getStep());
+        const bool supported = loop.getInductionVar().getType().isIndex() && getStaticTripCount(loop) == 2 &&
+            lower && *lower >= 0 && step && *step <= std::numeric_limits<int64_t>::max() / 2;
+        if (!supported) { return; }
+        loops.push_back(loop);
+    });
+    if (loops.empty()) { return success(); }
+    for (auto loop : loops) {
+        if (failed(validateLoopUnrollHint(loop))) { return failure(); }
+        if (failed(loopUnrollByFactor(loop, 2))) {
+            return function.emitError("frontier two-trip loop normalization failed");
+        }
+    }
+    PassManager cleanup(function.getContext(), func::FuncOp::getOperationName());
+    cleanup.addPass(createCanonicalizerPass());
+    return cleanup.run(function);
+}
 unsigned cores(func::FuncOp function)
 {
     switch (recoverSyncPhysicalCore(function)) {
@@ -179,18 +223,28 @@ LogicalResult checkCalleeEvents(
 }
 } // namespace
 LogicalResult insertModuleSynchronization(
-    ModuleOp module, GMAliasPolicy policy, PrepareCallee prepare, bool completionOnly)
+    ModuleOp module, GMAliasPolicy policy, PrepareCallee prepare, bool completionOnly,
+    bool normalizeTwoTripLoops)
 {
     // Module ownership is essential: a function pass cannot inspect callee
     // bodies concurrently with another function pass inserting synchronization.
     OwningOpRef<ModuleOp> copy(cast<ModuleOp>(module->clone()));
     for (Operation& operation : *copy->getBody()) {
         if (auto nested = dyn_cast<ModuleOp>(operation)) {
-            if (failed(insertModuleSynchronization(nested, policy, prepare, completionOnly))) {
+            if (failed(insertModuleSynchronization(nested, policy, prepare, completionOnly,
+                                                  normalizeTwoTripLoops))) {
                 return failure();
             }
         } else if (!isa<func::FuncOp>(operation) && operation.getNumRegions()) {
             return operation.emitError("closed-callee analysis requires an explicit module symbol scope");
+        }
+    }
+    if (normalizeTwoTripLoops && !completionOnly) {
+        for (auto function : copy->getOps<func::FuncOp>()) {
+            const bool preserve = function.isDeclaration() || hasManualOnCoreSynchronization(function) ||
+                hasPhysicalSections(function);
+            if (preserve) { continue; }
+            if (failed(normalizeTwoTripLeaves(function))) { return failure(); }
         }
     }
     auto delegation = recognizeClosedCallees(*copy);

@@ -469,6 +469,23 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeLogicalRes
     }
     return prepareEndpoints(demands, error, completeInvocation);
 }
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeClosedVisit(
+    std::shared_ptr<BoundedLifetimeDemandResult> demands, std::string& error)
+{
+    auto result = prepareBoundedLifetimeLogicalResult(demands, error, false);
+    if (failed(result)) { return failure(); }
+    // Direct endpoint construction binds both sides to the same source visit.
+    // Early publications with invocation cleanup are a different protocol.
+    for (const auto& family : (*result)->families) {
+        if (family.sourceChoices || family.targetChoices) { return failure(); }
+    }
+    for (const auto& endpoint : (*result)->endpoints) {
+        if (!demands->loop->isProperAncestor(endpoint.before)) { return failure(); }
+    }
+    attachBoundedAllocation(*demands, **result);
+    if (!(*result)->allocationCertificate) { return failure(); }
+    return result;
+}
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeResult(
     std::shared_ptr<BoundedLifetimeDemandResult> demands, std::string& error, bool completeInvocation)
 {

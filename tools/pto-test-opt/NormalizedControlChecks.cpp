@@ -1581,8 +1581,8 @@ LogicalResult checkUniformRelationCrossings(func::FuncOp function, pto::GMAliasP
             for (auto b : {ArithmeticEvent::Start, ArithmeticEvent::Completion}) {
                 if (a == ArithmeticEvent::Completion && b == ArithmeticEvent::Start) { continue; }
                 ArithmeticRelationKey key{{0, a, {}}, {0, b, {}}, {}};
-                data.analysis.nativeOrder[key] = {*present};
-                if (a != b) { data.analysis.requiredOrder[key] = {*present}; }
+                data.analysis.nativeOrder.edit()[key] = {*present};
+                if (a != b) { data.analysis.requiredOrder.edit()[key] = {*present}; }
             }
         }
         return data;
@@ -1956,9 +1956,9 @@ LogicalResult checkDynamicUniformCrossings(func::FuncOp function, pto::GMAliasPo
             for (auto b : {ArithmeticEvent::Start, ArithmeticEvent::Completion}) {
                 ArithmeticRelationKey key{{0, a, {0}}, {0, b, {0}}, {0, 0}};
                 const bool completionToStart = a == ArithmeticEvent::Completion && b == ArithmeticEvent::Start;
-                if (!completionToStart) { data.analysis.nativeOrder[key] = {pair(0, false)}; }
-                data.analysis.requiredOrder[key] = {pair(a == b || completionToStart ? step : 0, false)};
-                if (completionToStart) { data.analysis.minimumDemands[key] = {pair(step, true)}; }
+                if (!completionToStart) { data.analysis.nativeOrder.edit()[key] = {pair(0, false)}; }
+                data.analysis.requiredOrder.edit()[key] = {pair(a == b || completionToStart ? step : 0, false)};
+                if (completionToStart) { data.analysis.minimumDemands.edit()[key] = {pair(step, true)}; }
             }
         }
         ArithmeticBoundarySelector extremum;

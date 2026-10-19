@@ -20,17 +20,37 @@
 #include "PTO/Transforms/FrontierSynch/Structured/GuardedRotatingRegional.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "llvm/ADT/MapVector.h"
+#include "mlir/IR/Diagnostics.h"
 namespace mlir::pto::frontiersynch {
 std::function<std::shared_ptr<const CompletionInlineChild>()> completionChildExport(
     std::shared_ptr<SequenceAnalysis> sequence)
 {
-    if (!sequence || !sequence->error.empty() || !sequence->state ||
-        sequence->state->children.size() != 1) { return {}; }
+    if (!sequence || !sequence->error.empty() || !sequence->state) { return {}; }
     const auto& state = *sequence->state;
-    if (!state.program || !state.originalRegionId || *state.originalRegionId >= state.program->nodes.size() ||
-        state.program->nodes[*state.originalRegionId].kind != StructureKind::ExplicitRun) { return {}; }
-    return completionChildExport(state.children.front().finite);
+    if (!state.program || !state.originalRegionId || *state.originalRegionId >= state.program->nodes.size()) {
+        return {};
+    }
+    const auto& node = state.program->nodes[*state.originalRegionId];
+    if (node.kind == StructureKind::ExplicitRun && state.children.size() == 1) {
+        return completionChildExport(state.children.front().finite);
+    }
+    auto loop = dyn_cast_or_null<scf::ForOp>(node.anchor);
+    if (!loop || !state.finiteInput || state.completeInvocation) { return {}; }
+    // Borrowed compatibility contexts cannot extend their source lifetime.
+    auto input = state.finiteInput->storageOwner();
+    if (!input) { return {}; }
+    using Result = std::shared_ptr<const CompletionInlineChild>;
+    auto retained = std::make_shared<std::optional<Result>>();
+    return [sequence = std::move(sequence), input = std::move(input), loop, retained]() -> Result {
+        if (!*retained) {
+            ScopedDiagnosticHandler silence(loop->getContext(), [](Diagnostic&) { return success(); });
+            *retained = CompletionInlineChild::qualifyVisit(sequence, input, loop,
+                [sequence]() { return prepareSequenceInsertion(*sequence); });
+        }
+        return **retained;
+    };
 }
+
 bool sequenceNeedsEndpointUpgrade(const SequenceAnalysis& analysis)
 {
     SmallVector<const SequenceAnalysis*> pending{&analysis};

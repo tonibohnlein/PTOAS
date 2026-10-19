@@ -256,7 +256,7 @@ public:
             auto nativeStep = compose(nativeCompletions, result.nativeOrder);
             for (unsigned round = 0; round < result.pipeCount && result.error.empty(); ++round) {
                 auto next = compose(result.nativeOrder, nativeStep);
-                unite(result.nativeOrder, next);
+                unite(result.nativeOrder.edit(), next);
             }
         }
     }
@@ -334,8 +334,8 @@ public:
             auto strictNative = subtract(result.nativeOrder, identity);
             auto strictPrefix = subtract(reach, identity);
             auto laterFirst = compose(strictNative, result.generators);
-            auto alternative = compose(laterFirst, reach, &result.generators);
-            auto nonemptySuffix = compose(result.generators, strictPrefix, &result.generators);
+            auto alternative = compose(laterFirst, reach, &result.generators.read());
+            auto nonemptySuffix = compose(result.generators, strictPrefix, &result.generators.read());
             unite(alternative, nonemptySuffix);
             for (const auto& [key, entries] : alternative) {
                 (void)key; accumulateCost(result.cost.coverAlternativePieces, entries.size());
@@ -751,7 +751,7 @@ private:
                 if (schema.sourceEvent == ArithmeticEvent::Payload || schema.targetEvent == ArithmeticEvent::Payload) {
                     fail("native primitive requires start/completion endpoints"); return false;
                 }
-                append(result.nativeOrder, key, piece.system);
+                append(result.nativeOrder.edit(), key, piece.system);
                 if (schema.sourceEvent == ArithmeticEvent::Start && schema.targetEvent == ArithmeticEvent::Start) {
                     append(samePipeOrder, key, piece.system);
                 }
@@ -759,10 +759,10 @@ private:
                 if (schema.sourceEvent != ArithmeticEvent::Completion || schema.targetEvent != ArithmeticEvent::Start) {
                     fail("prerequisite primitive requires completion-to-start endpoints"); return false;
                 }
-                append(result.generators, key, piece.system);
+                append(result.generators.edit(), key, piece.system);
             }
         }
-        unite(result.nativeOrder, identity);
+        unite(result.nativeOrder.edit(), identity);
         return true;
     }
     std::optional<System> protectionDomain(const Piece& a, const Piece& b, unsigned dimensions)
@@ -940,7 +940,7 @@ private:
             auto endpoints = key;
             endpoints.source.event = ArithmeticEvent::Completion;
             endpoints.target.event = ArithmeticEvent::Start;
-            for (const auto& value : values) { append(result.generators, endpoints, value); }
+            for (const auto& value : values) { append(result.generators.edit(), endpoints, value); }
         }
         return result.error.empty();
     }
@@ -1438,7 +1438,7 @@ FailureOr<GeneralArithmeticRelation> completeGeneralArithmeticNativeOrder(
     engine.completeNative();
     cost = engine.result.cost;
     if (!engine.result.error.empty()) { error = engine.result.error; return failure(); }
-    return std::move(engine.result.nativeOrder);
+    return std::move(engine.result.nativeOrder).take();
 }
 GeneralArithmeticDemandAnalysis analyzeGeneralArithmeticDemandsWithProtection(const ArithmeticProgram& program,
     const StructuredProtection& protection, ArithmeticDemandProfile profile, ArithmeticDemandOutputs outputs)

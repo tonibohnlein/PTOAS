@@ -8,6 +8,7 @@
 // Request protocol adapters. Cache mathematical construction independently of
 // export checks; detached command fragments always have fresh ownership.
 #include "AnalysisSessionInternal.h"
+#include "PTO/Transforms/FrontierSynch/ResultGuarantees.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionRegion.h"
 #include "Shared/CompletionInlineChild.h"
@@ -26,6 +27,7 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticPeriodicConversion.h"
 #include "PTO/Transforms/FrontierSynch/Structured/PeriodicSharedCertificate.h"
 #include "PTO/Transforms/FrontierSynch/Structured/RotatingAnalysis.h"
+#include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInsertion.h"
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 namespace mlir::pto::frontiersynch {
@@ -50,6 +52,96 @@ AnalysisExports mathematicalExports(const MathematicalResult& demands)
     if (demands.backend == "native-scalar" || demands.backend == "expanded-finite-guarded") { available = {}; }
     return available;
 }
+namespace {
+std::shared_ptr<const RegionalAnalysis> retainedCandidateExports(
+    const AnalysisSessionState& state, const ProgramRecognition& program,
+    const MathematicalResult& math, const BackendAttempt& candidate)
+{
+    // Exports are owned by canonical producer attempts, not
+    // necessarily the request adapter's preparation attempt.
+    const BackendAttempt* exports = &candidate;
+    if (math.arithmeticRegionalDemands) {
+        auto found = state.arithmeticRegionAttempts.find(math.region);
+        if (found != state.arithmeticRegionAttempts.end()) { exports = &found->second; }
+    } else if (math.boundedDemands || math.varyingNode) {
+        auto region = math.varyingNode;
+        if (!region) {
+            auto node = llvm::find_if(program.nodes, [&](const auto& node) {
+                return node.anchor == math.boundedDemands->loop.getOperation();
+            });
+            if (node != program.nodes.end()) { region = std::distance(program.nodes.begin(), node); }
+        }
+        if (region) {
+            auto found = state.loopAttempts.find({*region, math.varyingNode ?
+                AnalysisBackend::VaryingBoundary : AnalysisBackend::BoundedLifetime});
+            if (found != state.loopAttempts.end()) { exports = &found->second; }
+        }
+    }
+    auto regional = exports->arithmeticSelectors ? exports->arithmeticSelectors :
+        exports->boundedSelectors ? exports->boundedSelectors : exports->varyingSelectors;
+    if (!regional) {
+        regional = exports->arithmeticQueries ? exports->arithmeticQueries :
+            exports->boundedQueries ? exports->boundedQueries : exports->varyingQueries;
+    }
+    return regional;
+}
+void preferRetainedControl(AnalysisSessionState& state, const ProgramRecognition& program,
+    const AnalysisRequest& request, AnalysisOutcome& answer)
+{
+    // Compare only completed retained preparations. Selection never causes
+    // another producer/export or builds speculative scalar operations.
+    if (request.needs.synchronization && answer.status == AnalysisStatus::Ready &&
+        answer.mathematical && !answer.completion) {
+        auto& attempts = state.attempts[request.region];
+        auto incumbent = llvm::find_if(attempts, [&](const auto& entry) {
+            return entry.second.mathematical == answer.mathematical;
+        });
+        if (incumbent != attempts.end() && incumbent->second.pendingLogical) {
+            auto* selected = incumbent->second.pendingLogical.get();
+            std::optional<uint64_t> selectedCost;
+            for (auto& [backend, candidate] : attempts) {
+                (void)backend;
+                if (!candidate.pendingLogical || candidate.pendingLogical.get() == selected ||
+                    !candidate.endpoints.value_or(false) || !candidate.mathematical ||
+                    candidate.mathematical->input != answer.mathematical->input) { continue; }
+                auto available = mathematicalExports(*candidate.mathematical);
+                auto regional = retainedCandidateExports(state, program, *candidate.mathematical, candidate);
+                if (regional) {
+                    available.queries |= regional->capabilities.exactQueries;
+                    available.selectors |= regional->capabilities.exactSelectors;
+                }
+                if ((request.needs.queries && !available.queries) ||
+                    (request.needs.selectors && !available.selectors)) { continue; }
+                // The replacement must realize exactly the common required
+                // order. Against a covering incumbent it cannot add payload
+                // order; mathematical exactness alone is insufficient.
+                const auto before = describeResultGuarantees(*selected);
+                const auto after = describeResultGuarantees(*candidate.pendingLogical);
+                const bool incumbentCovers = before.realization == RealizationOrder::Equivalent ||
+                    before.realization == RealizationOrder::CoversSelectedOrder ||
+                    before.realization == RealizationOrder::MayStrengthen;
+                if (!incumbentCovers || after.realization != RealizationOrder::Equivalent ||
+                    before.modeledOrder != InputOrderGuarantee::InputOrderEquivalent ||
+                    after.modeledOrder != InputOrderGuarantee::InputOrderEquivalent ||
+                    selected->completeInvocation != candidate.pendingLogical->completeInvocation) { continue; }
+                AnalysisProfileScope comparison(state.ledger, "retained-control-comparison",
+                    request.region, candidate.mathematical->backend);
+                if (!selectedCost) { selectedCost = logicalFamilyConstructionOperations(*selected); }
+                const auto cost = logicalFamilyConstructionOperations(*candidate.pendingLogical);
+                comparison.recordWork({{"known", selectedCost && cost ? 1u : 0u},
+                    {"incumbent", selectedCost.value_or(0)}, {"candidate", cost.value_or(0)}});
+                if (!selectedCost || !cost || *cost >= *selectedCost) { continue; }
+                selected = candidate.pendingLogical.get();
+                selectedCost = cost;
+                answer.mathematical = candidate.mathematical;
+                answer.regionalExports = regional;
+                answer.available = available;
+                answer.available.synchronization = true;
+            }
+        }
+    }
+}
+} // namespace
 AnalysisOutcome FrontierAnalysis::minimumDemands(std::size_t region, AnalysisNeeds exports)
 {
     exports.synchronization = false;
@@ -588,6 +680,8 @@ AnalysisOutcome FrontierAnalysis::analyze(const AnalysisRequest& request)
     }
     bool exhaustedWalk = false;
     auto finish = [&](AnalysisOutcome answer) {
+        preferRetainedControl(*sessionState, *program, request, answer);
+
         answer.ledger = sessionState->ledger;
         answer.requestId = profile.requestId();
         // Positive exact selections remain independent of negative walk recipes.

@@ -508,6 +508,7 @@ std::shared_ptr<const MathematicalResult> FrontierAnalysis::constructLoopBackend
         auto demands = cachedBoundedLifetimeRegion(function, *node, *structuralIndex, *storage, error);
         if (failed(demands)) { return {}; }
         owned->boundedDemands = *demands;
+        owned->completionChild = completionChildExport(*demands, storage);
         owned->backend = "bounded-lifetime";
         break;
     }

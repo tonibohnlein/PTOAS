@@ -64,6 +64,10 @@ std::size_t auditBoundedLifetimeEndpoints(std::shared_ptr<BoundedLifetimeDemandR
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeLogicalResult(
     std::shared_ptr<BoundedLifetimeDemandResult> demands, std::string& error,
     bool completeInvocation = false);
+// Whole original loop visit, with within-visit allocation. This does not
+// certify resource separation from preceding/following invocations.
+FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeClosedVisit(
+    std::shared_ptr<BoundedLifetimeDemandResult> demands, std::string& error);
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareBoundedLifetimeResult(
     std::shared_ptr<BoundedLifetimeDemandResult> demands, std::string& error,
     bool completeInvocation = false);

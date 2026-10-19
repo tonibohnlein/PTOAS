@@ -35,6 +35,56 @@ template<class System>
 using TypedArithmeticRelation = std::map<ArithmeticRelationKey, std::vector<System>>;
 using ArithmeticRelation = TypedArithmeticRelation<DifferenceBoundSystem>;
 using GeneralArithmeticRelation = TypedArithmeticRelation<IntegerSystem>;
+// Result snapshots share immutable relation inventories. Mutation is explicit
+// and detaches before changing a published snapshot. A reference from edit()
+// is a construction-only borrow: do not retain it across a snapshot copy.
+template<class System>
+class RetainedArithmeticRelation {
+public:
+    using Relation = TypedArithmeticRelation<System>;
+    struct CopyWork { uint64_t entries = 0, pieces = 0; };
+    inline static thread_local CopyWork copyWork;
+    RetainedArithmeticRelation() = default;
+    RetainedArithmeticRelation(Relation&& value) : storage(std::make_shared<Relation>(std::move(value))) {}
+    RetainedArithmeticRelation(const Relation& value) : storage(copy(value)) {}
+    const Relation& read() const
+    {
+        static const Relation empty;
+        return storage ? *storage : empty;
+    }
+    operator const Relation&() const { return read(); }
+    Relation& edit()
+    {
+        if (!storage) { storage = std::make_shared<Relation>(); }
+        else if (!storage.unique()) { storage = copy(*storage); }
+        return *storage;
+    }
+    Relation take() &&
+    {
+        if (!storage) { return {}; }
+        auto value = storage.unique() ? std::move(storage) : copy(*storage);
+        return std::move(*value);
+    }
+    auto begin() const { return read().begin(); }
+    auto end() const { return read().end(); }
+    auto find(const ArithmeticRelationKey& key) const { return read().find(key); }
+    const auto& at(const ArithmeticRelationKey& key) const { return read().at(key); }
+    std::size_t size() const { return read().size(); }
+    bool empty() const { return read().empty(); }
+    void clear() { storage.reset(); }
+    const void* storageIdentity() const { return storage.get(); }
+private:
+    static std::shared_ptr<Relation> copy(const Relation& value)
+    {
+        auto add = [](uint64_t& count, uint64_t amount) {
+            count = amount > UINT64_MAX - count ? UINT64_MAX : count + amount;
+        };
+        add(copyWork.entries, value.size());
+        for (const auto& [key, pieces] : value) { (void)key; add(copyWork.pieces, pieces.size()); }
+        return std::make_shared<Relation>(value);
+    }
+    std::shared_ptr<Relation> storage;
+};
 struct AnalysisLedger;
 struct ArithmeticDemandProfile {
     std::shared_ptr<AnalysisLedger> ledger;
@@ -73,7 +123,7 @@ enum class ArithmeticRelationView : uint8_t {
 };
 template<class System>
 struct ArithmeticOrderExport {
-    TypedArithmeticRelation<System> relation;
+    RetainedArithmeticRelation<System> relation;
     ArithmeticAnalysisCost cost;
     std::string error;
 };
@@ -97,9 +147,9 @@ struct TypedArithmeticDemandAnalysis {
     std::string error;
     uint64_t period = 1;
     unsigned parameterCount = 0, pipeCount = 0;
-    TypedArithmeticRelation<System> generators;
-    TypedArithmeticRelation<System> nativeOrder; // Reflexive N, restricted to present events.
-    TypedArithmeticRelation<System> requiredOrder; // Strict H, all payload event pairs when available.
+    RetainedArithmeticRelation<System> generators;
+    RetainedArithmeticRelation<System> nativeOrder; // Reflexive N, restricted to present events.
+    RetainedArithmeticRelation<System> requiredOrder; // Strict H, all payload event pairs when available.
     uint8_t availableRelations = 15;
     bool hasRelations(ArithmeticRelationView view) const
     {
@@ -108,7 +158,7 @@ struct TypedArithmeticDemandAnalysis {
     }
     bool requiredOrderAvailable = true;
     std::shared_ptr<const ArithmeticOrderContinuation<System>> requiredOrderContinuation;
-    TypedArithmeticRelation<System> minimumDemands; // F*: completion-to-start covers.
+    RetainedArithmeticRelation<System> minimumDemands; // F*: completion-to-start covers.
     ArithmeticAnalysisCost cost;
     // This certifies the relational construction only. Executable selectors and
     // cut availability remain consumer obligations.

@@ -21,6 +21,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
+#include <set>
 namespace mlir::pto::frontiersynch {
 namespace {
 std::string text(Operation* operation)
@@ -50,6 +51,7 @@ public:
     std::vector<CompletionVertex> graph;
     std::vector<Operation*> anchors, lastAnchors;
     std::vector<bool> eventUse, pendingEvents;
+    std::vector<const CompletionInlineChild*> resourceChild;
     std::vector<CompletionLossAtom> loss;
     std::size_t vertex(Operation* anchor)
     {
@@ -60,6 +62,7 @@ public:
         lastAnchors.push_back(anchor);
         eventUse.push_back(false);
         pendingEvents.push_back(false);
+        resourceChild.push_back(nullptr);
         loss.push_back({id, 0, true});
         if (!anchor) { return id; }
         graph[id].requiresEntryCompletion = readiness.protects(anchor);
@@ -99,6 +102,7 @@ public:
                 graph[id].summary = imported->classifiedSummary(storage, index);
                 loss[id] = {id, imported->payloadCount(), imported->exactRealizedOrder()};
                 lastAnchors[id] = imported->roots().back();
+                resourceChild[id] = imported;
                 eventUse[id] = imported->usesEvents();
                 pendingEvents[id] = imported->returnsPendingEvents();
                 graph[id].successors = {next};
@@ -433,26 +437,58 @@ std::shared_ptr<const CompletionRegion> CompletionRegion::buildImpl(func::FuncOp
     // notification use over the original CFG and the ALREADY selected common
     // completions. Never add a resource-driven completion here. Existing calls
     // with completed resources may share the pool only after the same cut check.
-    std::vector<unsigned> resourceStates(builder.graph.size(), 0);
-    SmallVector<std::pair<std::size_t, bool>> resourceWork{{entry, false}};
+    using Child = const CompletionInlineChild*;
+    std::map<Child, std::optional<CompletionInlineChild::ResourceFootprint>> footprints;
+    DenseMap<Child, std::size_t> childIndices;
+    for (auto [i, child] : llvm::enumerate(inlinePlans)) {
+        footprints.emplace(child.get(), child->resourceFootprint());
+        childIndices[child.get()] = i;
+    }
+    std::set<std::pair<std::size_t, std::size_t>> separate;
+    auto independent = [&](Child pending, Child current) {
+        if (!pending || !current) { return false; }
+        const auto& a = footprints.at(pending);
+        const auto& b = footprints.at(current);
+        if (!a || !b) { return false; }
+        bool sharedDirection = false;
+        for (auto [direction, mask] : *a) {
+            auto other = b->find(direction);
+            if (other == b->end()) { continue; }
+            if (mask & other->second) { return false; }
+            sharedDirection = true;
+        }
+        if (sharedDirection) {
+            auto first = childIndices.lookup(pending), second = childIndices.lookup(current);
+            separate.insert(std::minmax(first, second));
+        }
+        return true;
+    };
+    // Each pending owner propagates independently. Union at joins is a may-use
+    // union, so mutually exclusive paths cannot incorrectly prove reuse.
+    std::set<std::pair<std::size_t, Child>> resourceStates;
+    SmallVector<std::pair<std::size_t, Child>> resourceWork{{entry, nullptr}};
     bool resourceConflict = false;
     while (!resourceWork.empty()) {
         auto [v, pending] = resourceWork.pop_back_val();
-        const unsigned state = pending ? 2 : 1;
-        if (resourceStates[v] & state) { continue; }
-        resourceStates[v] |= state;
+        if (!resourceStates.insert({v, pending}).second) { continue; }
         ++owner->work.resourceStateVisits;
         auto all = dyn_cast_or_null<BarrierOp>(builder.anchors[v]);
         if (owner->result.protectEntry[v] || (all && all.getPipe().getPipe() == PIPE::PIPE_ALL)) {
-            pending = false;
+            pending = nullptr;
         }
-        if (builder.eventUse[v]) {
-            if (pending) { resourceConflict = true; break; }
-            pending = builder.pendingEvents[v];
+        Child current = builder.resourceChild[v];
+        if (builder.eventUse[v] && pending && !independent(pending, current)) {
+            resourceConflict = true;
+            break;
         }
-        if (v == exit) { owner->pendingEvents |= pending; }
-        for (auto next : builder.graph[v].successors) { resourceWork.push_back({next, pending}); }
+        Child newlyPending = builder.pendingEvents[v] ? current : nullptr;
+        if (v == exit) { owner->pendingEvents |= pending != nullptr || newlyPending != nullptr; }
+        for (auto next : builder.graph[v].successors) {
+            resourceWork.push_back({next, pending ? pending : newlyPending});
+            if (pending && newlyPending) { resourceWork.push_back({next, newlyPending}); }
+        }
     }
+    owner->separatePalettes.assign(separate.begin(), separate.end());
     if (resourceConflict) {
         // These eventful exports were provisional until the parent supplied
         // resource separation. Preserve the prior event-free composition route
@@ -525,9 +561,29 @@ LogicalResult CompletionRegion::append(PreparedLogicalPlan& destination, IRMappi
 {
     if (!validateClosedChildren(checkedCalls) ||
         (checkedSources.insert(source.get()).second && !source->unchanged())) { return failure(); }
+    SmallVector<std::pair<std::size_t, std::size_t>> groupRanges;
     for (const auto& child : inlinePlans) {
+        const auto begin = assembly.allocationGroups.size();
         if (failed(child->append(destination, mapping, completionCuts, checkedSources, checkedCalls, assembly))) {
             return failure();
+        }
+        groupRanges.push_back({begin, assembly.allocationGroups.size()});
+    }
+    Builder builder(original->getContext());
+    for (auto [first, second] : separatePalettes) {
+        for (auto a = groupRanges[first].first; a < groupRanges[first].second; ++a) {
+            for (auto b = groupRanges[second].first; b < groupRanges[second].second; ++b) {
+                auto left = cast<DictionaryAttr>(assembly.allocationGroups[a]);
+                auto right = cast<DictionaryAttr>(assembly.allocationGroups[b]);
+                if (left.get("source") != right.get("source") || left.get("target") != right.get("target")) {
+                    continue;
+                }
+                SmallVector<int64_t> conflicts(right.getAs<DenseI64ArrayAttr>("conflicts").asArrayRef());
+                conflicts.push_back(a);
+                NamedAttrList attributes(right);
+                attributes.set("conflicts", builder.getDenseI64ArrayAttr(conflicts));
+                assembly.allocationGroups[b] = attributes.getDictionary(original->getContext());
+            }
         }
     }
     for (auto* cut : cuts) {
@@ -595,14 +651,16 @@ LogicalResult CompletionRegion::insert(func::FuncOp function, PreparedLogicalPla
         attributes.getNamedAttr("families", attributes.getArrayAttr({})),
         attributes.getNamedAttr("pieces", attributes.getArrayAttr({}))}));
     }
+    if (retained.allocationCertificate) {
+        clone->setAttr("pto.finite_allocation", retained.allocationCertificate);
+    }
+    if (plan.recognitionReport) { clone->setAttr("pto.frontier_recognition", plan.recognitionReport); }
+    if (plan.completionPhysicalIds && failed(allocatePhysicalEventIds(clone, *plan.completionPhysicalIds))) {
+        return function.emitError("completion children do not fit the requested physical pool");
+    }
     if (failed(verify(*staged))) { return function.emitError("completion plan failed staged verification"); }
     function.getBody().takeBody(clone.getBody());
-    function->setAttr("pto.endpoint_families", clone->getAttr("pto.endpoint_families"));
-    function->setAttr("pto.completion_protocol", clone->getAttr("pto.completion_protocol"));
-    if (retained.allocationCertificate) {
-        function->setAttr("pto.finite_allocation", retained.allocationCertificate);
-    }
-    if (plan.recognitionReport) { function->setAttr("pto.frontier_recognition", plan.recognitionReport); }
+    function->setAttrs(clone->getAttrs());
     return success();
 }
 } // namespace mlir::pto::frontiersynch

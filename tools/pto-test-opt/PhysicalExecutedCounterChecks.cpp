@@ -186,7 +186,7 @@ bool periodThree(MLIRContext& context)
              {{fs::BoundInteger(-1), fs::BoundInteger(0)}, fs::BoundInteger(0)},
              {{fs::BoundInteger(1), fs::BoundInteger(0)}, fs::BoundInteger((10 - residue) / 3)}});
         if (failed(relation)) { return false; }
-        analysis.minimumDemands[key] = {*relation};
+        analysis.minimumDemands.edit()[key] = {*relation};
     }
     std::string error;
     fs::ArithmeticRecordMap records;
@@ -267,7 +267,7 @@ bool signedOverlappingSelectors(MLIRContext& context, unsigned route = 0, bool d
     auto first = fs::IntegerSystem::create(2, {row(1, -1, -1), row(-1, 1, 1), row(-1, 0, 3), row(1, 0, 0)});
     auto second = fs::IntegerSystem::create(2, {row(1, -1, -1), row(-1, 1, 1), row(-1, 0, 1), row(1, 0, 1)});
     if (failed(first) || failed(second)) { return false; }
-    analysis.minimumDemands[{{0, fs::ArithmeticEvent::Completion, {1}},
+    analysis.minimumDemands.edit()[{{0, fs::ArithmeticEvent::Completion, {1}},
         {1, fs::ArithmeticEvent::Start, {1}}, {}}] = {*first, *second};
     auto selectors = fs::buildGeneralArithmeticSelectors(analysis, {0, 1});
     if (!selectors.error.empty() || selectors.inverse.size() != 1 || selectors.inverse.front().pieces.size() < 2) {
@@ -291,7 +291,7 @@ bool signedOverlappingSelectors(MLIRContext& context, unsigned route = 0, bool d
     auto dbmSecond = fs::DifferenceBoundSystem::create(2, {{1, 2, fs::BoundInteger(-1)},
         {2, 1, fs::BoundInteger(1)}, {0, 1, fs::BoundInteger(1)}, {1, 0, fs::BoundInteger(1)}});
     if (failed(dbmFirst) || failed(dbmSecond)) { return false; }
-    dbm.minimumDemands[{{0, fs::ArithmeticEvent::Completion, {1}},
+    dbm.minimumDemands.edit()[{{0, fs::ArithmeticEvent::Completion, {1}},
         {1, fs::ArithmeticEvent::Start, {1}}, {}}] = {*dbmFirst, *dbmSecond};
     auto prepared = difference ? fs::prepareArithmeticLogicalInsertion(function, program, dbm, error, records) :
         fs::prepareGeneralArithmeticLogicalInsertion(function, program, analysis, error, records);
@@ -412,7 +412,7 @@ bool multipleRootRecords(MLIRContext& context, bool combined, uint64_t& arithmet
          {{fs::BoundInteger(1), fs::BoundInteger(0)}, fs::BoundInteger(5)}});
     if (failed(relation)) { return false; }
     for (unsigned source : {0U, 2U}) {
-        analysis.minimumDemands[{{source, fs::ArithmeticEvent::Completion, {0}},
+        analysis.minimumDemands.edit()[{{source, fs::ArithmeticEvent::Completion, {0}},
             {source + 1, fs::ArithmeticEvent::Start, {0}}, {}}] = {*relation};
     }
     std::string error;
@@ -422,7 +422,7 @@ bool multipleRootRecords(MLIRContext& context, bool combined, uint64_t& arithmet
         {2, 1, fs::BoundInteger(0)}, {0, 1, fs::BoundInteger(0)}, {1, 0, fs::BoundInteger(5)}});
     if (failed(dbmRelation)) { return false; }
     for (unsigned source : {0U, 2U}) {
-        dbm.minimumDemands[{{source, fs::ArithmeticEvent::Completion, {0}},
+        dbm.minimumDemands.edit()[{{source, fs::ArithmeticEvent::Completion, {0}},
             {source + 1, fs::ArithmeticEvent::Start, {0}}, {}}] = {*dbmRelation};
     }
     auto prepared = simultaneous ? simultaneousRecordPlan(program, loop, records) :
@@ -623,9 +623,9 @@ bool coordinateModulo(MLIRContext& context)
         row(-1, 0, -1), row(1, 0, 6)});
     auto required = fs::IntegerSystem::create(2, {row(1, -1, -1)});
     if (failed(demands) || failed(required)) { return false; }
-    analysis.minimumDemands[{{0, fs::ArithmeticEvent::Completion, {1}},
+    analysis.minimumDemands.edit()[{{0, fs::ArithmeticEvent::Completion, {1}},
         {1, fs::ArithmeticEvent::Start, {1}}, {}}] = {*demands};
-    analysis.requiredOrder[{{1, fs::ArithmeticEvent::Completion, {1}},
+    analysis.requiredOrder.edit()[{{1, fs::ArithmeticEvent::Completion, {1}},
         {0, fs::ArithmeticEvent::Start, {1}}, {}}] = {*required};
     const auto p = static_cast<uint32_t>(pto::PIPE::PIPE_MTE2), q = static_cast<uint32_t>(pto::PIPE::PIPE_MTE1);
     auto proof = fs::buildArithmeticCoordinateHandoffAllocation(analysis, {p, q});

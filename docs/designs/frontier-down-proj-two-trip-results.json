@@ -1,0 +1,294 @@
+{
+  "static": {
+    "input": {
+      "counts": {
+        "arith.constant": 18,
+        "scf.for": 5,
+        "arith.muli": 5,
+        "arith.divsi": 1,
+        "arith.addi": 13,
+        "arith.maxsi": 10,
+        "arith.cmpi": 13,
+        "arith.andi": 6,
+        "scf.if": 7,
+        "arith.subi": 1
+      },
+      "command_text_bytes": 0,
+      "ids": []
+    },
+    "before": {
+      "counts": {
+        "arith.constant": 18,
+        "scf.for": 5,
+        "arith.muli": 5,
+        "arith.divsi": 1,
+        "pto.barrier": 19,
+        "arith.addi": 13,
+        "arith.maxsi": 10,
+        "arith.cmpi": 13,
+        "arith.andi": 6,
+        "scf.if": 7,
+        "arith.subi": 1
+      },
+      "command_text_bytes": 931,
+      "ids": []
+    },
+    "normalized": {
+      "counts": {
+        "arith.constant": 55,
+        "scf.for": 2,
+        "arith.muli": 5,
+        "arith.divsi": 1,
+        "pto.barrier": 13,
+        "arith.addi": 7,
+        "arith.maxsi": 10,
+        "scf.if": 30,
+        "pto.set_flag": 15,
+        "pto.wait_flag": 15,
+        "arith.cmpi": 4,
+        "arith.subi": 1
+      },
+      "command_text_bytes": 2146,
+      "ids": [
+        0,
+        1
+      ]
+    }
+  },
+  "executions": [
+    {
+      "case": "empty",
+      "integer_arguments": [
+        0,
+        3,
+        0,
+        0,
+        4352,
+        0,
+        0
+      ],
+      "payloads": 0,
+      "required_ci": 0,
+      "plans": {
+        "before": {
+          "commands": {
+            "barrier": 1
+          },
+          "ci_pairs": 0,
+          "extra_ci": 0,
+          "missing_ci": 0,
+          "arithmetic_evaluations": 19,
+          "guard_evaluations": 0
+        },
+        "normalized": {
+          "commands": {
+            "barrier": 1
+          },
+          "ci_pairs": 0,
+          "extra_ci": 0,
+          "missing_ci": 0,
+          "arithmetic_evaluations": 22,
+          "guard_evaluations": 0
+        }
+      }
+    },
+    {
+      "case": "tail_only",
+      "integer_arguments": [
+        1,
+        1,
+        0,
+        0,
+        4352,
+        0,
+        0
+      ],
+      "payloads": 15,
+      "required_ci": 78,
+      "plans": {
+        "before": {
+          "commands": {
+            "barrier": 9
+          },
+          "ci_pairs": 92,
+          "extra_ci": 14,
+          "missing_ci": 0,
+          "arithmetic_evaluations": 47,
+          "guard_evaluations": 5
+        },
+        "normalized": {
+          "commands": {
+            "barrier": 5,
+            "set": 5,
+            "wait": 5
+          },
+          "ci_pairs": 85,
+          "extra_ci": 7,
+          "missing_ci": 0,
+          "arithmetic_evaluations": 47,
+          "guard_evaluations": 11
+        }
+      }
+    },
+    {
+      "case": "pair_only",
+      "integer_arguments": [
+        1,
+        2,
+        0,
+        0,
+        4352,
+        0,
+        0
+      ],
+      "payloads": 29,
+      "required_ci": 311,
+      "plans": {
+        "before": {
+          "commands": {
+            "barrier": 15
+          },
+          "ci_pairs": 376,
+          "extra_ci": 65,
+          "missing_ci": 0,
+          "arithmetic_evaluations": 70,
+          "guard_evaluations": 9
+        },
+        "normalized": {
+          "commands": {
+            "barrier": 7,
+            "set": 10,
+            "wait": 10
+          },
+          "ci_pairs": 343,
+          "extra_ci": 32,
+          "missing_ci": 0,
+          "arithmetic_evaluations": 65,
+          "guard_evaluations": 20
+        }
+      }
+    },
+    {
+      "case": "pair_tail",
+      "integer_arguments": [
+        1,
+        3,
+        0,
+        0,
+        4352,
+        0,
+        0
+      ],
+      "payloads": 43,
+      "required_ci": 772,
+      "plans": {
+        "before": {
+          "commands": {
+            "barrier": 22
+          },
+          "ci_pairs": 860,
+          "extra_ci": 88,
+          "missing_ci": 0,
+          "arithmetic_evaluations": 92,
+          "guard_evaluations": 13
+        },
+        "normalized": {
+          "commands": {
+            "barrier": 10,
+            "set": 15,
+            "wait": 15
+          },
+          "ci_pairs": 820,
+          "extra_ci": 48,
+          "missing_ci": 0,
+          "arithmetic_evaluations": 84,
+          "guard_evaluations": 30
+        }
+      }
+    },
+    {
+      "case": "two_pairs_tail",
+      "integer_arguments": [
+        1,
+        5,
+        0,
+        0,
+        4352,
+        0,
+        0
+      ],
+      "payloads": 71,
+      "required_ci": 2208,
+      "plans": {
+        "before": {
+          "commands": {
+            "barrier": 35
+          },
+          "ci_pairs": 2412,
+          "extra_ci": 204,
+          "missing_ci": 0,
+          "arithmetic_evaluations": 137,
+          "guard_evaluations": 21
+        },
+        "normalized": {
+          "commands": {
+            "barrier": 15,
+            "set": 25,
+            "wait": 25
+          },
+          "ci_pairs": 2339,
+          "extra_ci": 131,
+          "missing_ci": 0,
+          "arithmetic_evaluations": 121,
+          "guard_evaluations": 49
+        }
+      }
+    },
+    {
+      "case": "realistic_k17",
+      "integer_arguments": [
+        1,
+        17,
+        0,
+        0,
+        4352,
+        0,
+        0
+      ],
+      "payloads": 239,
+      "required_ci": 27288,
+      "plans": {
+        "before": {
+          "commands": {
+            "barrier": 113
+          },
+          "ci_pairs": 28188,
+          "extra_ci": 900,
+          "missing_ci": 0,
+          "arithmetic_evaluations": 407,
+          "guard_evaluations": 69
+        },
+        "normalized": {
+          "commands": {
+            "barrier": 45,
+            "set": 85,
+            "wait": 85
+          },
+          "ci_pairs": 27917,
+          "extra_ci": 629,
+          "missing_ci": 0,
+          "arithmetic_evaluations": 343,
+          "guard_evaluations": 163
+        }
+      }
+    }
+  ],
+  "baseline_revision": "2df046db8cca11cbb0f65f1dffccd1764347f8ad",
+  "input_sha256": "053f39b6ca12070c1c87f3b970c5ab10c23ee6e6cb5878d7dab1d7a67f59aad2",
+  "scope": "Six finite interpreted executions of unspecialized down_proj plans; raw physical IR. No device validation.",
+  "checks": [
+    "original payload labels and order preserved",
+    "required completion-to-start coverage",
+    "logical matching and six-ID causal reuse for normalized plan"
+  ]
+}

@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 namespace mlir::pto::frontiersynch {
 struct RegionalAllocationSummary;
@@ -110,6 +111,9 @@ struct PreparedLogicalPlan {
     std::unique_ptr<PrivateStatePlan> privateState;
     // Conservative completion evidence never impersonates exact mathematics.
     std::shared_ptr<const CompletionRegion> completionOwner;
+    // Combined request consumed transactionally by the existing completion
+    // insertion and physical allocator. Not a reusable fragment capability.
+    std::optional<SmallVector<int64_t>> completionPhysicalIds;
     // Numerical families and qualified sequence composition own no generated
     // SSA. Allocation consumes the fixed protocol before one final lowering.
     std::shared_ptr<const FamilyEndpointRecipe> familyRecipe;

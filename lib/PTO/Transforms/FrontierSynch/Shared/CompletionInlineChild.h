@@ -12,10 +12,12 @@
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/CompletionTransfer.h"
 #include "mlir/IR/IRMapping.h"
+#include <map>
 #include "PTO/Transforms/FrontierSynch/Shared/LogicalFamilyFragment.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 namespace mlir::pto::frontiersynch {
 struct SequenceAnalysis;
+struct BoundedLifetimeDemandResult;
 class CompletionSourceSnapshot;
 class CompletionStorage;
 class ClosedCompletionChild;
@@ -26,12 +28,25 @@ struct CompletionChildAssembly {
 class CompletionInlineChild {
 public:
     static std::shared_ptr<const CompletionInlineChild> qualify(std::shared_ptr<FiniteAnalysis> finite);
+    static std::shared_ptr<const CompletionInlineChild> qualify(
+        std::shared_ptr<FiniteAnalysis> finite, ArrayRef<int64_t> eligibleIds);
     static std::shared_ptr<const CompletionInlineChild> qualify(std::shared_ptr<const CompletionRegion> completion);
+    static std::shared_ptr<const CompletionInlineChild> qualify(
+        std::shared_ptr<BoundedLifetimeDemandResult> bounded, std::shared_ptr<const SyncInput> input);
+    // Provider-only adapter for an exact direct whole-loop protocol. The
+    // producer owns its matching proof; this adapter checks scope/resources.
+    using VisitPreparation = std::function<FailureOr<std::unique_ptr<PreparedLogicalPlan>>() >;
+    static std::shared_ptr<const CompletionInlineChild> qualifyVisit(
+        std::shared_ptr<const void> owner, std::shared_ptr<const SyncInput> input,
+        scf::ForOp loop, VisitPreparation prepare);
     const CompletionSummary& summary() const { return effects; }
     std::optional<uint64_t> payloadCount() const;
     bool exactRealizedOrder() const;
     bool usesEvents() const;
     bool returnsPendingEvents() const;
+    using ResourceFootprint = std::map<std::pair<uint32_t, uint32_t>, uint8_t>;
+    // Missing means unknown participating resources, never an empty footprint.
+    std::optional<ResourceFootprint> resourceFootprint() const;
     CompletionSummary classifiedSummary(const CompletionStorage& storage, const PhaseIndex& index) const;
     ArrayRef<Operation*> roots() const;
     const SyncInput* input() const;
@@ -41,6 +56,14 @@ public:
                          DenseSet<const ClosedCompletionChild*>& checkedCalls, CompletionChildAssembly& assembly) const;
 private:
     std::shared_ptr<FiniteAnalysis> finite;
+    std::shared_ptr<const void> visitOwner;
+    std::shared_ptr<const SyncInput> visitInput;
+    SmallVector<Operation*> visitRoots;
+    func::FuncOp visitFunction;
+    // Legacy producers may construct detached SSA. Retain their immutable
+    // mathematics, not live uses of source SSA across function replacement.
+    VisitPreparation visitPreparation;
+    SmallVector<Value> enclosingVisits;
     std::shared_ptr<const CompletionRegion> completion;
     CompletionSummary effects;
     std::shared_ptr<const LogicalFamilyFragment> fragment;
@@ -54,5 +77,7 @@ std::function<std::shared_ptr<const CompletionInlineChild>()> completionChildExp
     std::shared_ptr<FiniteAnalysis> finite);
 std::function<std::shared_ptr<const CompletionInlineChild>()> completionChildExport(
     std::shared_ptr<SequenceAnalysis> sequence);
+std::function<std::shared_ptr<const CompletionInlineChild>()> completionChildExport(
+    std::shared_ptr<BoundedLifetimeDemandResult> bounded, std::shared_ptr<const SyncInput> input);
 } // namespace mlir::pto::frontiersynch
 #endif

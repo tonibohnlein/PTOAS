@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/check_frontier_two_trip.py pto-test-opt pto-sync-input-test %s
+// Two-trip normalization precedes original-anchor capture. The loop-carried
+// value and induction-dependent branch must survive with their exact meanings.
+!mat = !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, slayout=row_major>
+!right = !pto.tile_buf<right, 16x16xf16, slayout=col_major>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @two_trip(%n: index) attributes {test.trace_arguments = array<i64: 2>} {
+    %zero = arith.constant 0 : index
+    %one_i = arith.constant 1 : index
+    %step = arith.constant 128 : index
+    %bound = arith.constant 256 : index
+    %addr = arith.constant 0 : i64
+    %mat = pto.alloc_tile addr = %addr : !mat
+    %x = pto.alloc_tile addr = %addr : !left
+    %right = pto.alloc_tile addr = %addr : !right
+    %acc = pto.alloc_tile addr = %addr : !acc
+    scf.for %outer = %zero to %n step %one_i {
+      %result = scf.for %i = %zero to %bound step %step iter_args(%carried = %zero) -> index {
+        %first = arith.cmpi eq, %i, %zero : index
+        scf.if %first {
+          pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%x : !left) {test.label = "FIRST"}
+        } else {
+          pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%x : !left) {test.label = "SECOND"}
+        }
+        pto.tmatmul ins(%x, %right : !left, !right) outs(%acc : !acc) {test.label = "READ"}
+        %next = arith.addi %carried, %step : index
+        scf.yield %next : index
+      }
+      %correct = arith.cmpi eq, %result, %bound : index
+      scf.if %correct {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%x : !left) {test.label = "RESULT"}
+      } else {
+        pto.textract ins(%mat, %zero, %zero : !mat, index, index) outs(%x : !left) {test.label = "WRONG_RESULT"}
+      }
+    }
+    return
+  }
+}

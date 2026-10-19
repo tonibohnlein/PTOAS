@@ -160,7 +160,7 @@ bool differenceCertifiedAllocation(MLIRContext& context, unsigned route)
     }
     fs::ArithmeticDemandAnalysis analysis; analysis.exactMinimum = true; analysis.period = 1;
     for (unsigned source : {0U, 2U}) {
-        analysis.minimumDemands[{{source, fs::ArithmeticEvent::Completion, {}},
+        analysis.minimumDemands.edit()[{{source, fs::ArithmeticEvent::Completion, {}},
             {source + 1, fs::ArithmeticEvent::Start, {}}, {}}] = {fs::DifferenceBoundSystem{}};
     }
     std::string error;

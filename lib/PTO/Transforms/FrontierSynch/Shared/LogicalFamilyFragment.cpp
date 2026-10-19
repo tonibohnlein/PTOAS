@@ -23,7 +23,8 @@ std::shared_ptr<const LogicalFamilyFragment> LogicalFamilyFragment::capture(
         plan.allocationPreparation || plan.allocationCertificate || plan.regionalAllocation || plan.privateState ||
         plan.familyProtocol ||
         plan.physicalOutput || plan.executedOutput || plan.allocationProofs || (!session && plan.mathematicalOwner) ||
-        plan.deferredOutput || plan.completionOwner || plan.compactBoundingOwner || plan.recognitionReport ||
+        plan.deferredOutput || plan.completionOwner || plan.completionPhysicalIds || plan.compactBoundingOwner ||
+        plan.recognitionReport ||
         plan.allocationProfile || plan.profileControl ||
         llvm::any_of(plan.families, [session](const auto& family) {
             return (family.sourceChoices && (!session || family.sourceChoices->consumerPredicate())) ||

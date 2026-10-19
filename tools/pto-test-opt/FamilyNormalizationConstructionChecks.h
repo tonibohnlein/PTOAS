@@ -90,8 +90,9 @@ bool checkNormalizedConstructionParity(mlir::MLIRContext* context)
     // Same protocol, two already supplied certified maps. Equal phases permit
     // residue compaction; different phases preserve both commands. No candidate
     // proof is constructed by the comparison or this supplied-mapping fixture.
-    for (unsigned mode = 0; mode < 4; ++mode) {
-        const bool shared = mode % 2, finite = mode >= 2;
+    for (unsigned mode = 0; mode < 8; ++mode) {
+        const bool logical = mode >= 4;
+        const bool shared = mode % 2, finite = (mode % 4) >= 2;
         auto fail = [&](llvm::StringRef stage) {
             llvm::errs() << "normalization construction mode=" << mode << " failed: " << stage << "\n";
             return false;
@@ -181,20 +182,24 @@ bool checkNormalizedConstructionParity(mlir::MLIRContext* context)
             builder.getNamedAttr("plan", builder.getI64IntegerAttr(0)),
             builder.getNamedAttr("strategy", builder.getStringAttr("regional-palettes")),
             builder.getNamedAttr("groups", builder.getArrayAttr({group}))});
-        if (failed(fs::planPhysicalFamilyOutput(*function, plan, {0, 1}))) { return fail("physical plan"); }
-        const auto predicted = fs::physicalFamilyConstructionOperations(plan);
+        if (!logical && failed(fs::planPhysicalFamilyOutput(*function, plan, {0, 1}))) {
+            return fail("physical plan");
+        }
+        const auto predicted = logical ? fs::logicalFamilyConstructionOperations(plan) :
+            fs::physicalFamilyConstructionOperations(plan);
         if (!predicted || !plan.preparation.empty() || !plan.endpoints.empty()) { return fail("count without SSA"); }
         if (failed(fs::insertLogicalSynchronization(*function, plan)) || failed(verify(*function))) {
             return fail("materialization and verification");
         }
         const auto& work = plan.familyWork;
         if (*predicted != work.preparationScalars + work.compactionScalars + work.mappingScalars +
-            work.barrierScalars || work.barrierScalars != 1 || bool(work.compactionScalars) != shared) {
+            work.barrierScalars || work.barrierScalars != 1 || (!logical && bool(work.compactionScalars) != shared)) {
             llvm::errs() << "predicted=" << *predicted << " preparation=" << work.preparationScalars
                 << " compaction=" << work.compactionScalars << " mapping=" << work.mappingScalars
                 << " barriers=" << work.barrierScalars << "\n";
             return fail("construction parity");
         }
+        if (logical) { continue; } // Physical modes below independently replay the same recipes.
         unsigned sets = 0, waits = 0;
         function->walk([&](Operation* operation) {
             sets += isa<pto::SetFlagOp, pto::SetFlagDynOp>(operation);

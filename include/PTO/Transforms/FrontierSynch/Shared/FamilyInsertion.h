@@ -102,6 +102,9 @@ bool isCertifiedEmptyFamilyPlan(func::FuncOp function, const PreparedLogicalPlan
 // Exact pre-CSE scalar construction count for the supported owned preparation
 // schedule. No SSA is built. Uncovered upstream/coalescing forms return unknown.
 std::optional<uint64_t> physicalFamilyConstructionOperations(const PreparedLogicalPlan& plan);
+// Same construction schedule with all logical matching inputs retained.
+// Normalizes owned recipes, but never generates SSA or requests an export.
+std::optional<uint64_t> logicalFamilyConstructionOperations(PreparedLogicalPlan& plan);
 bool validPhysicalFamilyOutput(const PreparedLogicalPlan& plan);
 bool validFamilyEndpointProtocol(const PreparedLogicalPlan& plan);
 bool validPhysicalFamilyEndpoint(const PreparedLogicalPlan& plan, const PreparedLogicalEndpoint& endpoint);

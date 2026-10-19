@@ -451,12 +451,12 @@ FailureOr<RegionalRelationData> Request::lower(ArrayRef<Value> parameters, std::
             } else {
                 auto key = *formula.relation; key.parameterResidues.assign(p, 0);
                 auto& relation = formula.native ? data.analysis.nativeOrder : data.analysis.requiredOrder;
-                relation[key].push_back(std::move(system));
+                relation.edit()[key].push_back(std::move(system));
             }
         }
     }
     if (nativePrerequisites) {
-        auto closed = completeGeneralArithmeticNativeOrder(std::move(data.analysis.nativeOrder),
+        auto closed = completeGeneralArithmeticNativeOrder(std::move(data.analysis.nativeOrder).take(),
             data.analysis.pipeCount, p, data.analysis.cost, diagnostic);
         if (failed(closed)) { return failure(); }
         data.analysis.nativeOrder = std::move(*closed);
