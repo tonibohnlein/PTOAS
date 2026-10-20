@@ -8,8 +8,11 @@
 // Exhaustive threshold cells retain symbolic integer values and opaque guards.
 // Only source topology survives cell rollback. Rebuilt IDs and affine-shift
 // facts belong to one transaction; unaffected source subgraphs retain identity.
+// Certificate proofs may partition a derived value using unconditional machine
+// ranges. This abstracts its value, never assumes an external caller domain.
 #include "PTO/Transforms/FrontierSynch/Shared/RegionExpressions.h"
 #include "llvm/ADT/STLExtras.h"
+#include <algorithm>
 #include <iterator>
 #include <map>
 #include <set>
@@ -31,6 +34,16 @@ struct RegionExpressions::ThresholdPreparation {
     std::map<Id, SmallVector<Id>> families;
 };
 bool RegionExpressions::inactiveByThresholds(Id expression, ThresholdProofCost* cost)
+{
+    return inactiveThresholdProof(expression, cost, false);
+}
+bool RegionExpressions::impliesByIntervals(Id premise, Id consequence, ThresholdProofCost* cost)
+{
+    if (!isBoolean(premise) || !isBoolean(consequence)) { return false; }
+    Transaction transaction(*this);
+    return inactiveThresholdProof(land(premise, lnot(consequence)), cost, true);
+}
+bool RegionExpressions::inactiveThresholdProof(Id expression, ThresholdProofCost* cost, bool derived)
 {
     if (!constructionMessage.empty() || !isBoolean(expression)) { return false; }
     if (auto value = constantValue(expression)) { return *value == 0; }
@@ -63,7 +76,34 @@ bool RegionExpressions::inactiveByThresholds(Id expression, ThresholdProofCost* 
     } else if (cost) { count(cost->preparationHits); }
     const auto retained = found->second;
     const auto& preparation = *retained;
-    for (const auto& [input, atoms] : preparation.families) {
+    std::map<Id, std::pair<uint64_t, uint64_t>> derivedBounds;
+    std::map<Id, SmallVector<Id>> derivedFamilies;
+    if (derived) {
+        for (auto id : preparation.order) {
+            if (cost) { count(cost->dagVisits); }
+            const auto& node = nodes[id];
+            if (node.kind != Kind::Eq && node.kind != Kind::Lt && node.kind != Kind::Le &&
+                node.kind != Kind::SLt && node.kind != Kind::SLe) { continue; }
+            for (auto pair : {std::make_pair(node.a, node.b), std::make_pair(node.b, node.a)}) {
+                if (!isBoolean(pair.first) && !constantValue(pair.first) && constantValue(pair.second)) {
+                    derivedFamilies[pair.first].push_back(id);
+                }
+            }
+        }
+        // Charge both range transfer and the resulting unsigned hull pass.
+        if (cost) {
+            for (auto id : preparation.order) { (void)id; count(cost->dagVisits); count(cost->dagVisits); }
+        }
+        derivedBounds = unsignedProofBounds(preparation.order);
+    }
+    const auto& families = derived ? derivedFamilies : preparation.families;
+    // Prefer the outer derived count to its original bound, without exploring
+    // combinations of independent inputs or changing any expression identity.
+    SmallVector<Id> candidates;
+    for (const auto& family : families) { candidates.push_back(family.first); }
+    if (derived) { std::reverse(candidates.begin(), candidates.end()); }
+    for (auto input : candidates) {
+        const auto& atoms = families.at(input);
         if (cost) { count(cost->families); }
         const auto key = std::make_pair(expression, input);
         auto dependencies = thresholdDependencies.find(key);
@@ -79,7 +119,9 @@ bool RegionExpressions::inactiveByThresholds(Id expression, ThresholdProofCost* 
             }
             dependencies = thresholdDependencies.emplace(key, std::move(dependent)).first;
         }
-        if (inactiveOverThresholds(expression, input, atoms, preparation, *dependencies->second, cost)) {
+        const auto bounds = derived ? derivedBounds.at(input) : std::make_pair(uint64_t(0), UINT64_MAX);
+        if (inactiveOverThresholds(expression, input, atoms, preparation, *dependencies->second,
+                                   cost, bounds.first, bounds.second)) {
             return true;
         }
     }
@@ -87,20 +129,23 @@ bool RegionExpressions::inactiveByThresholds(Id expression, ThresholdProofCost* 
 }
 bool RegionExpressions::inactiveOverThresholds(
     Id expression, Id input, ArrayRef<Id> atoms, const ThresholdPreparation& preparation,
-    const llvm::DenseSet<Id>& dependent, ThresholdProofCost* cost)
+    const llvm::DenseSet<Id>& dependent, ThresholdProofCost* cost, uint64_t minimum, uint64_t maximum)
 {
-    std::set<uint64_t> starts{0};
+    std::set<uint64_t> starts{minimum};
+    auto insert = [&](uint64_t point) {
+        if (minimum <= point && point <= maximum) { starts.insert(point); }
+    };
     for (auto atom : atoms) {
         const auto node = nodes[atom];
         const auto bound = *constantValue(node.a == input ? node.b : node.a);
-        starts.insert(bound);
-        if (bound != UINT64_MAX) { starts.insert(bound + 1); }
-        if (node.kind == Kind::SLt || node.kind == Kind::SLe) { starts.insert(uint64_t(1) << 63); }
+        insert(bound);
+        if (bound != UINT64_MAX) { insert(bound + 1); }
+        if (node.kind == Kind::SLt || node.kind == Kind::SLe) { insert(uint64_t(1) << 63); }
     }
     for (auto position = starts.begin(); position != starts.end();) {
         if (cost) { count(cost->cells); }
         const auto next = std::next(position);
-        const auto lower = *position, upper = next == starts.end() ? UINT64_MAX : *next - 1;
+        const auto lower = *position, upper = next == starts.end() ? maximum : *next - 1;
         Transaction transaction(*this);
         for (auto atom : atoms) {
             const auto node = nodes[atom];
@@ -172,6 +217,13 @@ RegionExpressions::Id RegionExpressions::specializeThresholdCell(
         if (!dependent.contains(id)) {
             memo[id] = id;
             if (cost) { count(cost->reusedNodes); }
+            pending.pop_back();
+            continue;
+        }
+        // A partitioned derived value is atomic in this cell. Its operands
+        // remain independent unless used elsewhere; no inverse is assumed.
+        if (id == input && nodes[id].kind != Kind::Input) {
+            memo[id] = lower == upper ? constant(lower) : id;
             pending.pop_back();
             continue;
         }

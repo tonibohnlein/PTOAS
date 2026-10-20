@@ -18,6 +18,7 @@
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 bool runSparseSharedBindingChecks(Operation* cut);
+bool runRegionIntervalChecks(Value first);
 bool runCompletionVisitMappingChecks();
 bool runNestedRegionalChecks(func::FuncOp function);
 bool runRepeatedRegionChecks(func::FuncOp function);
@@ -1742,6 +1743,7 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         return result;
     };
     if (!checked("runCompletionVisitMappingChecks", runCompletionVisitMappingChecks()) ||
+        !checked("runRegionIntervalChecks", runRegionIntervalChecks(function.getArgument(0))) ||
         !checked("checkReadOnlyReachability",
                  checkReadOnlyReachability(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkEmission", checkEmission(function, cuts)) ||

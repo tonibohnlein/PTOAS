@@ -176,6 +176,7 @@ add_llvm_executable(pto-sync-input-test
   NestedRegionalChecks.cpp
   RegionExpressionChecks.cpp
   CompletionVisitMappingChecks.cpp
+  RegionIntervalChecks.cpp
   AllocationPreparationChecks.cpp
   FamilyMaterializationChecks.cpp
   MixedFamilyChecks.cpp

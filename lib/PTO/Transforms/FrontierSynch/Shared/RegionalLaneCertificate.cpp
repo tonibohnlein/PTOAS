@@ -21,13 +21,28 @@ struct Lane {
     uint32_t group = 0, local = 0;
     RegionalAllocationLane boundary;
 };
-bool proves(RegionExpressions& e, Id premise, Id consequence, AllocationProfile* profile)
-{
-    AllocationProfile::Scope proofWork(profile, AllocationProfile::Proofs);
-    proofWork.constructed();
-    return e.implies(premise, consequence) || e.constantUnder(premise, premise) == 0 ||
-        e.constantUnder(premise, consequence) == 1;
-}
+// Proofs are scoped to this unchanged arena and certificate request. Cache only
+// Boolean outcomes, never transaction-local expression IDs or caller premises.
+class LaneProofs {
+public:
+    LaneProofs(RegionExpressions& expressions, AllocationProfile* profile) : e(expressions), profile(profile) {}
+    bool operator()(Id premise, Id consequence)
+    {
+        AllocationProfile::Scope work(profile, AllocationProfile::Proofs);
+        const auto key = std::make_pair(premise, consequence);
+        if (auto found = results.find(key); found != results.end()) { work.cacheHit(); return found->second; }
+        work.constructed();
+        bool answer = e.implies(premise, consequence) || e.constantUnder(premise, premise) == 0 ||
+            e.constantUnder(premise, consequence) == 1;
+        if (!answer) { answer = e.impliesByIntervals(premise, consequence); }
+        results.emplace(key, answer);
+        return answer;
+    }
+private:
+    RegionExpressions& e;
+    AllocationProfile* profile;
+    std::map<std::pair<Id, Id>, bool> results;
+};
 std::optional<int64_t> integer(DictionaryAttr d, StringRef key)
 {
     auto attr = d.getAs<IntegerAttr>(key);
@@ -41,6 +56,7 @@ DictionaryAttr regionalLaneEvidence(const RegionalAnalysis& region,
     AllocationProfile::Scope laneWork(profile, AllocationProfile::Lanes);
     if (!region.expressions || groups.size() != summary.groups.size()) { return {}; }
     auto& e = *region.expressions;
+    LaneProofs proves(e, profile);
     std::vector<Lane> lanes;
     for (uint32_t g = 0; g < summary.groups.size(); ++g) {
         auto group = summary.groups[g];
@@ -82,7 +98,7 @@ DictionaryAttr regionalLaneEvidence(const RegionalAnalysis& region,
             for (const auto& y : b.boundary.firstSources) {
                 if (profile) { profile->visited(AllocationProfile::BoundaryPairs); }
                 auto active = e.land(x.present, y.present);
-                if (proves(e, active, e.boolean(false), profile)) { continue; }
+                if (proves(active, e.boolean(false))) { continue; }
                 Key key{x.event.type, x.event.ordinal, x.event.visits,
                         y.event.type, y.event.ordinal, y.event.visits};
                 auto found = queries.end();
@@ -94,7 +110,7 @@ DictionaryAttr regionalLaneEvidence(const RegionalAnalysis& region,
                         found = queries.emplace(std::move(key), regionalHandoffReuse(region, x.event, y.event)).first;
                     } else { queryWork.cacheHit(); }
                 }
-                if (!found->second || !proves(e, active, *found->second, profile)) { return false; }
+                if (!found->second || !proves(active, *found->second)) { return false; }
             }
         }
         return true;

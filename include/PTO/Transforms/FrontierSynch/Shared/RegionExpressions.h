@@ -210,6 +210,11 @@ public:
     // unconstrained; independent input families are never multiplied together.
     // Unknown means unproved. Proof-local nodes and substitutions do not escape.
     bool inactiveByThresholds(Id expression, ThresholdProofCost* cost = nullptr);
+    // Certificate-only sufficient implication. Derive unconditional machine-bit
+    // ranges and split comparisons of shared integer subexpressions into exact
+    // cells. No caller restriction, executable substitution or new SSA is added.
+    // Unproved remains false; proof-local IDs and range facts cannot escape.
+    bool impliesByIntervals(Id premise, Id consequence, ThresholdProofCost* cost = nullptr);
     // Sound sufficient implication by forced Boolean facts and unsigned constant
     // bounds on identical integer expressions. No arithmetic propagation, Boolean
     // search or SAT. A conjunction of A distinct obligations costs O(A*G)
@@ -322,9 +327,11 @@ private:
     Id absorbBoolean(Kind kind, Id a, Id b);
     std::optional<uint64_t> fold(Kind kind, uint64_t a, uint64_t b) const;
     struct ThresholdPreparation;
+    std::map<Id, std::pair<uint64_t, uint64_t>> unsignedProofBounds(ArrayRef<Id> order) const;
+    bool inactiveThresholdProof(Id expression, ThresholdProofCost* cost, bool derived);
     bool inactiveOverThresholds(Id expression, Id input, ArrayRef<Id> atoms,
                                const ThresholdPreparation& preparation, const llvm::DenseSet<Id>& dependent,
-                               ThresholdProofCost* cost);
+                               ThresholdProofCost* cost, uint64_t minimum = 0, uint64_t maximum = UINT64_MAX);
     Id specializeThresholdCell(Id expression, Id input, uint64_t lower, uint64_t upper,
                                const ThresholdPreparation& preparation, const llvm::DenseSet<Id>& dependent,
                                SmallVectorImpl<uint64_t>& refinements, ThresholdProofCost* cost);
