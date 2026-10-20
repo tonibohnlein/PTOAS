@@ -8,6 +8,7 @@
 // Preserve a qualified exact child's barriers through the common materializer.
 #include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "CompletionInlineChild.h"
+#include "CompletionVisitMapping.h"
 #include "PTO/Transforms/FrontierSynch/ResultGuarantees.h"
 #include "CompletionStorage.h"
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeInsertion.h"
@@ -19,6 +20,34 @@
 #include <map>
 #include <set>
 namespace mlir::pto::frontiersynch {
+std::optional<PhysicalRecordAllocation> completionVisitMapping(
+    PhysicalRecordAllocation record, uint64_t originalArity, uint64_t enclosingArity)
+{
+    if (record.ids.empty() || !originalArity || originalArity > INT64_MAX ||
+        enclosingArity > uint64_t(INT64_MAX) - originalArity ||
+        llvm::any_of(record.ids, [](int64_t id) { return !isNativeEventId(id); })) { return {}; }
+    // Validate before normalizing: a constant table cannot make an invalid
+    // original offset rule or a foreign coordinate frame applicable.
+    if (record.tupleRule && (record.tupleRule->coordinateCount != originalArity ||
+        !validPhysicalTupleRule(*record.tupleRule, record.ids.size()))) { return {}; }
+    const auto first = record.ids.front();
+    if (llvm::all_of(record.ids, [first](int64_t id) { return id == first; })) {
+        record.ids.assign(1, first);
+        record.stride = record.phase = 0;
+        if (record.tupleRule) { record.tupleRule = PhysicalTupleRule{originalArity, 0, {}}; }
+    }
+    for (auto [i, id] : llvm::enumerate(record.ids)) {
+        if (id != first + static_cast<int64_t>(i)) { return {}; }
+    }
+    PhysicalTupleRule rule = record.tupleRule.value_or(PhysicalTupleRule{});
+    if (!record.tupleRule && record.ids.size() > 1) {
+        rule.terms.push_back({0, record.stride, record.phase, record.ids.size(), 1});
+    }
+    rule.coordinateCount = originalArity + enclosingArity;
+    rule.base += first;
+    record.tupleRule = std::move(rule);
+    return record;
+}
 std::function<std::shared_ptr<const CompletionInlineChild>()> completionChildExport(
     std::shared_ptr<FiniteAnalysis> finite)
 {
@@ -181,25 +210,14 @@ std::shared_ptr<const CompletionInlineChild> CompletionInlineChild::qualifyVisit
         auto [entry, inserted] = arities.emplace(endpoint.records.front(), endpoint.memberCoordinates.size());
         if (!inserted && entry->second != endpoint.memberCoordinates.size()) { return {}; }
     }
-    // Preserve the certified mapping as an offset into one directional palette.
-    // Contiguous tables admit the existing tuple-rule representation exactly.
-    // Noncontiguous tables need a different adapter and remain unavailable.
+    // Normalize certified constant tables, then preserve the exact assignment
+    // as an offset into the existing directional palette. No record is removed.
     for (auto& record : assignment->records) {
         auto arity = arities.find(record.record);
-        if (record.ids.empty() || arity == arities.end()) { return {}; }
-        for (auto [i, id] : llvm::enumerate(record.ids)) {
-            if (id != record.ids.front() + static_cast<int64_t>(i)) { return {}; }
-        }
-        if (record.tupleRule && record.tupleRule->coordinateCount != arity->second - enclosing.size()) {
-            return {};
-        }
-        PhysicalTupleRule rule = record.tupleRule.value_or(PhysicalTupleRule{});
-        if (!record.tupleRule && record.ids.size() > 1) {
-            rule.terms.push_back({0, record.stride, record.phase, record.ids.size(), 1});
-        }
-        rule.coordinateCount = arity->second;
-        rule.base += record.ids.front();
-        record.tupleRule = std::move(rule);
+        if (arity == arities.end()) { return {}; }
+        auto converted = completionVisitMapping(record, arity->second - enclosing.size(), enclosing.size());
+        if (!converted) { return {}; }
+        record = std::move(*converted);
     }
     auto child = std::shared_ptr<CompletionInlineChild>(new CompletionInlineChild);
     child->visitRoots.push_back(loop);

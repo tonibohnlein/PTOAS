@@ -18,6 +18,7 @@
 using namespace mlir;
 namespace fs = mlir::pto::frontiersynch;
 bool runSparseSharedBindingChecks(Operation* cut);
+bool runCompletionVisitMappingChecks();
 bool runNestedRegionalChecks(func::FuncOp function);
 bool runRepeatedRegionChecks(func::FuncOp function);
 bool runRepeatedStorageChecks(MLIRContext* context);
@@ -1740,7 +1741,8 @@ LogicalResult runRegionExpressionChecks(func::FuncOp function)
         if (!result) { llvm::errs() << "regional expression subcheck failed: " << name << "\n"; }
         return result;
     };
-    if (!checked("checkReadOnlyReachability",
+    if (!checked("runCompletionVisitMappingChecks", runCompletionVisitMappingChecks()) ||
+        !checked("checkReadOnlyReachability",
                  checkReadOnlyReachability(function.getArgument(0), function.getArgument(1))) ||
         !checked("checkEmission", checkEmission(function, cuts)) ||
         !checked("checkTransaction", checkTransaction(function.getArgument(0))) ||
