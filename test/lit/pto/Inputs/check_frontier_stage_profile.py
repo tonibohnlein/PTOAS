@@ -33,6 +33,17 @@ def split_report(stderr):
     for line in stderr.splitlines(keepends=True):
         if line.startswith("frontier-profile "):
             profiles.append(json.loads(line.removeprefix("frontier-profile ")))
+        elif line.startswith("frontier-retained-inventory "):
+            inventory = json.loads(line.removeprefix("frontier-retained-inventory "))
+            require(inventory["inspection"] == "no-semantic-callbacks" and
+                    inventory["scope"] == "selected-retained-owners-only" and inventory["version"] == 1 and
+                    isinstance(inventory["rows"], list), "malformed retained inspection")
+            for row in inventory["rows"]:
+                if row.get("representation") == "regional-repetition":
+                    require(row["generators"] + row["query_native_boundaries"] ==
+                            row["query_crossings_including_native"], "mixed demand/native generator count")
+                    require(row["reduced_records"] + row["retained_native_boundaries"] ==
+                            row["retained_crossings_including_native"], "mixed demand/native retained count")
         elif line.startswith("frontier-control-profile "):
             control.append(json.loads(line.removeprefix("frontier-control-profile ")))
         else:

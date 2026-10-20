@@ -83,6 +83,9 @@ RepeatedRegionAnalysis exportRepeatedRegion(std::shared_ptr<RepeatedRegionState>
     auto trips = state->trips;
     auto& out = result.regional;
     out = state->body;
+    out.retainedSequence.reset();
+    out.retainedRepetition = state;
+    out.construction.reset();
     invalidateDerivedRegionalCertificates(out);
     out.prepare = {}; out.prepareFiltered = {}; out.prepareWithVisits = {};
     out.capabilities.endpointRecipes = false;

@@ -704,11 +704,13 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
     if (!analysis.state || !analysis.error.empty()) { return out; }
     if (analysis.state->relationalResult) {
         out = *analysis.state->relationalResult;
+        out.retainedSequence = analysis.state;
         out.invocationPrefix = sequencePrefixContribution(out, analysis.state);
         return out;
     }
     auto owned = std::make_shared<SequenceAnalysis>(analysis);
     auto state = analysis.state;
+    out.retainedSequence = state;
     out.expressions = state->arena;
     const bool partial = state->partialStorage();
     out.capabilities = {!partial, true, !partial, true};

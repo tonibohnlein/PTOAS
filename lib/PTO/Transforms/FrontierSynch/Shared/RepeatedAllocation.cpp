@@ -379,7 +379,7 @@ std::shared_ptr<RegionalAllocationSummary> repeatedRegionalAllocation(
     // Repeated surplus publications need their own history/matching contract.
     if (!child || llvm::any_of(child->groups, [](const auto& group) { return group.terminalCleanup; })) { return {}; }
     bool reused = false;
-    auto build = [&]() { return coalesceRegionalAllocation(state.body, *child); };
+    auto build = [&]() { return coalesceRegionalAllocation(state.body, *child, profile); };
     auto coalesced = coalescing ? coalescing->request({child}, build, &reused) : build();
     work.coalesced(reused);
     if (!coalesced) { return {}; }

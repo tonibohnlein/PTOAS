@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "RegionalConstantPalette.h"
+#include "RegionalCoalescingProfile.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
 #include <map>
 #include <tuple>
@@ -34,12 +35,15 @@ std::optional<uint64_t> constantLane(const RegionalAllocationGroup& group,
 }
 struct Compatibility {
     const RegionalAnalysis& region;
+    RegionalCoalescingProfile& work;
     std::map<QueryKey, std::optional<Id>> queries;
     std::map<std::pair<Id, Id>, bool> proofs;
     bool proves(Id premise, Id consequence)
     {
+        work.visit(work.proofRequests);
         auto key = std::make_pair(premise, consequence);
-        if (auto found = proofs.find(key); found != proofs.end()) { return found->second; }
+        if (auto found = proofs.find(key); found != proofs.end()) { work.visit(work.proofHits); return found->second; }
+        RegionalCoalescingProfile::Scope timer(work, work.proofNs);
         auto& e = *region.expressions;
         const bool answer = e.implies(premise, consequence) || e.constantUnder(premise, premise) == 0 ||
             e.constantUnder(premise, consequence) == 1;
@@ -48,8 +52,14 @@ struct Compatibility {
     }
     std::optional<Id> query(const RegionalEvent& a, const RegionalEvent& b)
     {
+        work.visit(work.queryRequests);
         QueryKey key{{a.type, a.ordinal, a.visits}, {b.type, b.ordinal, b.visits}};
-        if (auto found = queries.find(key); found != queries.end()) { return found->second; }
+        if (auto found = queries.find(key); found != queries.end()) {
+            work.visit(work.queryHits);
+            return found->second;
+        }
+        work.visit(work.queryConstructions);
+        RegionalCoalescingProfile::Scope timer(work, work.queryNs);
         auto answer = regionalHandoffReuse(region, a, b);
         queries.emplace(std::move(key), answer);
         return answer;
@@ -59,8 +69,10 @@ struct Compatibility {
     {
         // Certify native event order, not just record or reference numbering.
         // Both operands have the same kind and original pipe.
+        work.visit(work.envelopeQueryRequests);
         auto ab = regionalReachability(region, a, b);
         if (ab && proves(active, *ab)) { return first ? a : b; }
+        work.visit(work.envelopeQueryRequests);
         auto ba = regionalReachability(region, b, a);
         if (ba && proves(active, *ba)) { return first ? b : a; }
         return std::nullopt;
@@ -78,6 +90,8 @@ struct Compatibility {
     }
     std::optional<Envelope> envelope(const RegionalAllocationGroup& group)
     {
+        work.visit(work.envelopeRequests);
+        RegionalCoalescingProfile::Scope timer(work, work.envelopeNs);
         if (group.sourcePipe == group.targetPipe) { return std::nullopt; }
         std::optional<Envelope> result;
         for (const auto& member : group.members) {
@@ -100,6 +114,7 @@ struct Compatibility {
             result = result ? combine(result, next) : std::optional<Envelope>(next);
             if (!result) { return std::nullopt; }
         }
+        if (result) { work.visit(work.envelopeAccepted); }
         return result;
     }
     bool separated(Id active, const RegionalEvent& lastA, const RegionalEvent& firstB,
@@ -126,6 +141,7 @@ struct Compatibility {
                 boundsA->last, boundsB->first, boundsB->last, boundsA->first)) { return true; }
         for (const auto& x : a.members) {
             for (const auto& y : b.members) {
+                work.visit(work.memberPairs);
                 if (!separated(e.land(x.active, y.active), x.lastTarget, y.firstSource,
                                y.lastTarget, x.firstSource)) { return false; }
             }
@@ -155,16 +171,23 @@ std::optional<std::vector<RegionalAllocationGroup>> split(const RegionalAllocati
 }
 } // namespace
 std::shared_ptr<RegionalAllocationSummary> coalesceConstantRegionalAllocation(
-    const RegionalAnalysis& region, const RegionalAllocationSummary& input)
+    const RegionalAnalysis& region, const RegionalAllocationSummary& input, AllocationProfile* profile)
 {
     if (!region.expressions || !region.capabilities.exactQueries) { return {}; }
+    RegionalCoalescingProfile work(profile, "constant");
     auto out = std::make_shared<RegionalAllocationSummary>();
     struct ConstantPalette { std::size_t index; std::optional<Compatibility::Envelope> bounds; };
     std::vector<ConstantPalette> constants;
-    Compatibility proof{region, {}, {}};
+    Compatibility proof{region, work, {}, {}};
     for (const auto& group : input.groups) {
+        work.visit(work.groups);
+        if (work.profile) { accumulateCost(work.members, group.members.size()); }
         if (!group.budget) { return {}; }
-        auto lanes = split(group);
+        std::optional<std::vector<RegionalAllocationGroup>> lanes;
+        {
+            RegionalCoalescingProfile::Scope timer(work, work.summaryNs);
+            lanes = split(group);
+        }
         if (!lanes) {
             auto copy = group;
             for (auto& member : copy.members) {

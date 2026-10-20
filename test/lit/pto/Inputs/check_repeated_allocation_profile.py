@@ -85,6 +85,16 @@ def main():
         if not allocation:
             require(not work, "logical-only compilation constructed repeated allocation support")
             continue
+        coalescers = [stage["work"] for stage in work if stage["method"].startswith("coalescer:")]
+        work = [stage for stage in work if not stage["method"].startswith("coalescer:")]
+        require(bool(coalescers), "regional coalescing was not measured")
+        for counters in coalescers:
+            require(counters["query_requests"] == counters["query_cache_hits"] +
+                    counters["unique_query_constructions"], "invalid coalescer query accounting")
+            require(counters["envelope_accepted"] <= counters["envelope_requests"],
+                    "invalid envelope qualification accounting")
+            for timer in ("summary_construction_ns", "envelope_qualification_ns", "query_construction_ns", "proof_ns"):
+                require(0 <= counters[timer] <= counters["elapsed_ns"], "invalid inclusive coalescer timer")
         require(bool(work), "repeated allocation was not measured")
         require(any(stage["work"]["matrix_pairs"] for stage in work), "fixture did not exercise sharing")
         require(any(stage["work"]["activity_computations"] < stage["work"]["activity_requests"]
@@ -112,7 +122,7 @@ def main():
     require(len(reports) == 1, "missing retry profile")
     check_stages(reports[0])
     work = [stage["work"] for stage in reports[0]["stages"]
-            if stage["stage"] == "repeated-allocation-work"]
+            if stage["stage"] == "repeated-allocation-work" and not stage["method"].startswith("coalescer:")]
     require(any(item["coalescing_cache_hits"] for item in work),
             "parent retry rebuilt every unchanged child palette")
     print("repeated allocation profile: unchanged plans and logical-only exports; owned work counters")

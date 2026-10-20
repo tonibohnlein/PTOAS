@@ -120,6 +120,9 @@ FailureOr<RegionalAnalysis> exportNumericBody(func::FuncOp function,
     }
     RegionExpressions::Transaction transaction(*arena);
     RegionalAnalysis out;
+    out.construction = RegionalConstructionRecord{"finite-numerical-body", "numeric-atom-lifetime-scan",
+        "explicit-per-pipe-rank", body.outer, body.payloads.size(), body.countedVisits, body.atoms.size(),
+        analysis->scan.generators.size(), analysis->reduction.retained.size()};
     out.expressions = arena; out.accessModel = &input.accesses(); out.gmAliasPolicy = input.memory().gmPolicy();
     out.capabilities = {true, true, true, true};
     out.cost.children = 1; out.cost.numericVisits = body.countedVisits; out.cost.physicalFragments = body.fragments;
@@ -185,6 +188,7 @@ FailureOr<RegionalAnalysis> exportNumericBody(func::FuncOp function,
         auto target = state->port(0, selector(edge.target).event);
         state->crossings.push_back({source, target, yes});
     }
+    out.retainedSequence = state;
     out.prepare = {};
     out.prepareWithVisits = [state](ArrayRef<scf::ForOp> visits) {
         std::string diagnostic;

@@ -51,7 +51,7 @@ struct RegionalAllocationSummary { std::vector<RegionalAllocationGroup> groups; 
 // These offsets are logical; physical IDs are allocated independently within each directed pipe pair.
 // Null means no complete typed result was produced.
 std::shared_ptr<RegionalAllocationSummary> coalesceRegionalAllocation(
-    const RegionalAnalysis& region, const RegionalAllocationSummary& allocation);
+    const RegionalAnalysis& region, const RegionalAllocationSummary& allocation, AllocationProfile* profile = nullptr);
 // For an unconditional fixed skeleton: every type is present in each period.
 // Guarded periodic producers must supply their own guarded lifetime selectors.
 std::shared_ptr<RegionalAllocationSummary> periodicRegionalAllocation(

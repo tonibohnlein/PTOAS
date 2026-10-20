@@ -8,6 +8,7 @@
 // Reserve contiguous child palettes using their certified lifetime envelopes.
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h"
 #include "RegionalConstantPalette.h"
+#include "RegionalCoalescingProfile.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalLaneExports.h"
 #include <algorithm>
 #include <map>
@@ -15,16 +16,19 @@
 #include <set>
 namespace mlir::pto::frontiersynch {
 std::shared_ptr<RegionalAllocationSummary> coalesceRegionalAllocation(
-    const RegionalAnalysis& region, const RegionalAllocationSummary& input)
+    const RegionalAnalysis& region, const RegionalAllocationSummary& input, AllocationProfile* profile)
 {
     if (!region.expressions || !region.capabilities.exactQueries) { return {}; }
+    RegionalCoalescingProfile work(profile, "general");
     auto& e = *region.expressions;
     const auto& groups = input.groups;
     std::set<uint32_t> records;
     for (const auto& group : groups) {
+        work.visit(work.groups);
         if (!group.budget || group.budget > INT64_MAX || group.members.empty()) { return {}; }
         if (!group.lanes.empty() && group.lanes.size() != group.budget) { return {}; }
         for (const auto& member : group.members) {
+            work.visit(work.members);
             if (!records.insert(member.record).second || !validRegionalEvent(region, member.firstSource) ||
                 !validRegionalEvent(region, member.lastTarget) || member.active >= e.size() ||
                 !e.isBoolean(member.active) ||
@@ -43,16 +47,24 @@ std::shared_ptr<RegionalAllocationSummary> coalesceRegionalAllocation(
             return regionalAllocationDirection(group, member) != std::make_pair(group.sourcePipe, group.targetPipe);
         });
     })) {
-        return coalesceConstantRegionalAllocation(region, input);
+        return coalesceConstantRegionalAllocation(region, input, profile);
     }
     using EventKey = std::tuple<uint32_t, RegionExpressions::Id, PeriodicEventKind,
                                 std::vector<RegionExpressions::Id>>;
     using QueryKey = std::pair<EventKey, EventKey>;
     std::map<QueryKey, std::optional<RegionExpressions::Id>> queryCache;
+    auto proves = [&](RegionExpressions::Id premise, RegionExpressions::Id consequence) {
+        work.visit(work.proofRequests);
+        RegionalCoalescingProfile::Scope timer(work, work.proofNs);
+        return e.implies(premise, consequence);
+    };
     auto reaches = [&](const RegionalEvent& a, const RegionalEvent& b) {
+        work.visit(work.queryRequests);
         QueryKey key{{a.type, a.ordinal, a.kind, a.visits}, {b.type, b.ordinal, b.kind, b.visits}};
         auto found = queryCache.find(key);
-        if (found != queryCache.end()) { return found->second; }
+        if (found != queryCache.end()) { work.visit(work.queryHits); return found->second; }
+        work.visit(work.queryConstructions);
+        RegionalCoalescingProfile::Scope timer(work, work.queryNs);
         auto answer = regionalReachability(region, a, b);
         queryCache.emplace(std::move(key), answer);
         return answer;
@@ -60,12 +72,13 @@ std::shared_ptr<RegionalAllocationSummary> coalesceRegionalAllocation(
     auto compatible = [&](const RegionalAllocationGroup& a, const RegionalAllocationGroup& b) {
         for (const auto& x : a.members) {
             for (const auto& y : b.members) {
+                work.visit(work.memberPairs);
                 auto active = e.land(x.active, y.active);
                 if (e.constantValue(active) == 0) { continue; }
                 auto xy = reaches(x.lastTarget, y.firstSource);
-                if (xy && e.implies(active, *xy)) { continue; }
+                if (xy && proves(active, *xy)) { continue; }
                 auto yx = reaches(y.lastTarget, x.firstSource);
-                if (!xy || !yx || !e.implies(active, e.lor(*xy, *yx))) { return false; }
+                if (!xy || !yx || !proves(active, e.lor(*xy, *yx))) { return false; }
             }
         }
         return true;
@@ -96,6 +109,7 @@ std::shared_ptr<RegionalAllocationSummary> coalesceRegionalAllocation(
         if (offset > static_cast<uint64_t>(INT64_MAX) - group.budget) { return {}; }
         offsets[i] = offset;
     }
+    RegionalCoalescingProfile::Scope summaryTimer(work, work.summaryNs);
     auto result = std::make_shared<RegionalAllocationSummary>();
     std::map<std::pair<uint32_t, uint32_t>, std::size_t> directions;
     for (std::size_t i = 0; i < groups.size(); ++i) {

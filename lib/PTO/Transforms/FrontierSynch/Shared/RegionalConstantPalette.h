@@ -12,6 +12,6 @@ namespace mlir::pto::frontiersynch {
 // Fold certified constant lanes by pairwise lifetime compatibility. Dynamic
 // coordinate formulas keep their original palettes and lane selectors.
 std::shared_ptr<RegionalAllocationSummary> coalesceConstantRegionalAllocation(
-    const RegionalAnalysis& region, const RegionalAllocationSummary& input);
+    const RegionalAnalysis& region, const RegionalAllocationSummary& input, AllocationProfile* profile = nullptr);
 } // namespace mlir::pto::frontiersynch
 #endif

@@ -600,8 +600,12 @@ std::shared_ptr<const CompletionRegion> FrontierAnalysis::completionRegion(std::
         if (auto found = sessionState->attempts.find(id); found != sessionState->attempts.end()) {
             for (const auto& attempt : found->second) {
                 const auto& math = attempt.second.mathematical;
-                if (!math || !math->completionChild) { continue; }
-                child = math->completionChild();
+                if (!math) { continue; }
+                AnalysisProfileScope qualification(sessionState->ledger,
+                    "completion-child-qualification", id, math->backend);
+                if (math->completionChild) { child = math->completionChild(); }
+                qualification.recordWork({{"export_present", math->completionChild ? 1u : 0u},
+                                          {"accepted", child ? 1u : 0u}});
                 if (child) { break; }
             }
         }

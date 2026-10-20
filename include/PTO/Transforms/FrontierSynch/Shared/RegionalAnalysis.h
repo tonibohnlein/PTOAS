@@ -119,7 +119,22 @@ struct RegionalCapabilities {
     // this property. Coordinate/query-changing adapters must requalify it.
     bool substitutionStableQueries = false;
 };
+// Diagnostic provenance only. Counts describe completed construction; observing
+// this record must never request recognition, queries, selectors or preparation.
+struct RegionalConstructionRecord {
+    std::string representation, generatorProducer, reducer;
+    Operation* original = nullptr;
+    uint64_t inputSites = 0, enumeratedVisits = 0, cells = 0;
+    std::optional<uint64_t> generators, reduced;
+};
+struct SequenceAnalysisState;
+struct RepeatedRegionState;
 struct RegionalAnalysis {
+    // Weak observers avoid owner cycles and do not extend mathematical lifetime.
+    std::weak_ptr<const SequenceAnalysisState> retainedSequence;
+    std::weak_ptr<const RepeatedRegionState> retainedRepetition;
+    std::optional<RegionalConstructionRecord> construction;
+
     std::shared_ptr<RegionExpressions> expressions;
     std::vector<TemplateEndpointAnchor> anchors;
     std::vector<scf::ForOp> occurrenceLoops; // Empty loop: ordinal must be zero.

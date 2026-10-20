@@ -11,6 +11,7 @@
 // the mathematical certification checkpoint without changing the original IR.
 #include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "AnalysisSessionInternal.h"
+#include "PTO/Transforms/FrontierSynch/Shared/RetainedInventory.h"
 #include "PTO/Transforms/FrontierSynch/ResultGuarantees.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ExecutionContexts.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ClosedCallees.h"
@@ -538,6 +539,11 @@ FailureOr<std::unique_ptr<frontiersynch::PreparedLogicalPlan>> prepareFunction(
             (*prepared)->completeInvocation |= completeInvocation;
             logicalBackend = result.completion ? StringRef("completion-transfer") :
                 StringRef(result.mathematical->backend);
+            if (profileStages && result.mathematical) {
+                llvm::errs() << "frontier-retained-inventory "
+                             << llvm::json::Value(frontiersynch::retainedAnalysisInventory(*result.mathematical))
+                             << "\n";
+            }
             // Missing allocation support leaves the selected logical graph available.
             if (prepareAllocation) { (void)analysis.attachAllocation(result, **prepared, allocationIds); }
             (*prepared)->deferredOutput = deferredOutput;
