@@ -1,0 +1,2727 @@
+{
+  "date": "2026-10-20",
+  "head": "e54d19e91cdf7c54a6b6738f0f0bd1b67cdb9f44",
+  "dirty_workspace": true,
+  "baseline": {
+    "head": "e54d19e91cdf7c54a6b6738f0f0bd1b67cdb9f44",
+    "tools": {
+      ".local/closed-child-validation/baseline/pto-test-opt": "b0b8b0df0cc790e584b6b7acdef644f7d6c6eca8c7031dec44a5017cfac1fd07",
+      ".local/closed-child-validation/baseline/pto-sync-input-test": "9c6bb014d8409a43489a6697c09e57b21dfea930e3690dadbfdc7d9f232c7a3e"
+    }
+  },
+  "source_hashes": {
+    "lib/PTO/Transforms/FrontierSynch/Shared/CompletionInlineChild.cpp": "3993a7a2d751f99a0d0df666c55ad4024dc7d1d17db7e85d0c017b7e503bd347",
+    "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.cpp": "520a197dc4ade55f58dd7dcd1a5d501857381724fe23a2f13565d3f071496741",
+    "tools/pto-test-opt/CompletionGroupedChildChecks.cpp": "469cce5754dedaff7f98d618c730af2736cf50eab98e19066f1a9f2e27a190d1",
+    "tools/pto-test-opt/CompactRegionContractChecks.cpp": "ab658cc9ac38a49984789d404ba21fa8778b6fab807263e2803e9079954f2226",
+    "tools/pto-test-opt/CMakeLists.txt": "5185776cbba1d81b2f3e428f5e1c013ee496087cc02e164ea5162f21c5e67ada",
+    "test/lit/pto/Inputs/check_closed_child_logic.py": "8769858bea928ab23c7538a6e8c7ac9498be7a917e8d985e10c19be6a1101fa4",
+    "test/lit/pto/Inputs/check_grouped_child_adapter.py": "65694c1e13aee78f93906c25948869fe3d97878e2f728b28a60ced6cfb5930a3",
+    "test/lit/pto/Inputs/completion_grouped_visit.pto": "b2b9a40b593be8fecc5f36942c99b042c2b888145d1f301bac52622e9ba3221a",
+    "test/lit/pto/sync_closed_child_adapter.pto": "ebaa1210e8708c26ba6d1ff2b9f24d0aa7a7acbff593b8f6ac53019f0eee9c84"
+  },
+  "source_manifest": ".local/closed-child-validation/source-manifest.json",
+  "tools": {
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test": "c59f892a83e213b1bc16840dd53de001cde2483846b9dcc0c7fa3405cddcc3f1",
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt": "55df3bcdaa9dee1cc595e0be6d07196f138de23194353723a9a6fcd971924c68",
+    ".local/closed-child-validation/baseline/pto-sync-input-test-fixture": "2007e07c7a206be4f9d793b570a5c36b3843f005a3dce68411e76fc8ee601461",
+    ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas": "89fa0f69d6af6db6673954389763ae2f6e57613ea7946ef6f32234d6daef7a85"
+  },
+  "scope": "Host-only; no SCC transfer or allocation algorithm changes; original Qwen uniform physical import remains refused",
+  "logical": {
+    "input_sha256": "056c1d35c85a50446de7810ffd3f58652d9e47c469c09e2bf777888c1bc0ff98",
+    "tool_sha256": "c59f892a83e213b1bc16840dd53de001cde2483846b9dcc0c7fa3405cddcc3f1",
+    "emission": {
+      "command": [
+        "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--compact-region-contract",
+        "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/symbolic-input.pto"
+      ],
+      "status": "success",
+      "returncode": 0,
+      "seconds": 0.11682236799970269,
+      "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/symbolic-child.pto",
+      "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/symbolic-child.stderr"
+    },
+    "scope": "One symbolic retained recipe, evaluated afterwards; no physical compiler certificate implied",
+    "cases": [
+      {
+        "outer_visits": 0,
+        "K": 2,
+        "payloads": 0,
+        "commands": 0,
+        "pairs": 0,
+        "matching": "passed",
+        "invocation_identity": "distinct",
+        "logical_entry_exit": "no unmatched publications",
+        "payload_completion_at_exit": "not implied",
+        "acyclic": true,
+        "required_child_ci_missing": 0,
+        "directional_widths": [],
+        "fits_six_for_this_execution": true,
+        "causal_reuse": "passed",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--structured-trace",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits0-K2.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06520210718736053,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits0-K2.json",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits0-K2.stderr"
+        }
+      },
+      {
+        "outer_visits": 1,
+        "K": 0,
+        "payloads": 1,
+        "commands": 0,
+        "pairs": 0,
+        "matching": "passed",
+        "invocation_identity": "distinct",
+        "logical_entry_exit": "no unmatched publications",
+        "payload_completion_at_exit": "not implied",
+        "acyclic": true,
+        "required_child_ci_missing": 0,
+        "directional_widths": [],
+        "fits_six_for_this_execution": true,
+        "causal_reuse": "passed",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--structured-trace",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K0.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06509107118472457,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K0.json",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K0.stderr"
+        }
+      },
+      {
+        "outer_visits": 1,
+        "K": 1,
+        "payloads": 15,
+        "commands": 0,
+        "pairs": 0,
+        "matching": "passed",
+        "invocation_identity": "distinct",
+        "logical_entry_exit": "no unmatched publications",
+        "payload_completion_at_exit": "not implied",
+        "acyclic": true,
+        "required_child_ci_missing": 0,
+        "directional_widths": [],
+        "fits_six_for_this_execution": true,
+        "causal_reuse": "passed",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--structured-trace",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K1.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06508886208757758,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K1.json",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K1.stderr"
+        }
+      },
+      {
+        "outer_visits": 1,
+        "K": 2,
+        "payloads": 29,
+        "commands": 36,
+        "pairs": 18,
+        "matching": "passed",
+        "invocation_identity": "distinct",
+        "logical_entry_exit": "no unmatched publications",
+        "payload_completion_at_exit": "not implied",
+        "acyclic": true,
+        "required_child_ci_missing": 0,
+        "directional_widths": [
+          {
+            "direction": [
+              2,
+              3
+            ],
+            "handoffs": 6,
+            "minimum": 2,
+            "antichain": [
+              [
+                0,
+                4,
+                0,
+                [
+                  39,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                4,
+                0,
+                [
+                  40,
+                  0,
+                  0
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              3,
+              2
+            ],
+            "handoffs": 8,
+            "minimum": 2,
+            "antichain": [
+              [
+                0,
+                2,
+                0,
+                [
+                  41,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                2,
+                0,
+                [
+                  42,
+                  0,
+                  0
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              4,
+              3
+            ],
+            "handoffs": 4,
+            "minimum": 4,
+            "antichain": [
+              [
+                0,
+                0,
+                0,
+                [
+                  25,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  26,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  33,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  35,
+                  0,
+                  0
+                ]
+              ]
+            ]
+          }
+        ],
+        "fits_six_for_this_execution": true,
+        "causal_reuse": "passed",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--structured-trace",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K2.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06525025423616171,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K2.json",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K2.stderr"
+        }
+      },
+      {
+        "outer_visits": 1,
+        "K": 3,
+        "payloads": 43,
+        "commands": 36,
+        "pairs": 18,
+        "matching": "passed",
+        "invocation_identity": "distinct",
+        "logical_entry_exit": "no unmatched publications",
+        "payload_completion_at_exit": "not implied",
+        "acyclic": true,
+        "required_child_ci_missing": 0,
+        "directional_widths": [
+          {
+            "direction": [
+              2,
+              3
+            ],
+            "handoffs": 6,
+            "minimum": 2,
+            "antichain": [
+              [
+                0,
+                4,
+                0,
+                [
+                  39,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                4,
+                0,
+                [
+                  40,
+                  0,
+                  0
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              3,
+              2
+            ],
+            "handoffs": 8,
+            "minimum": 2,
+            "antichain": [
+              [
+                0,
+                2,
+                0,
+                [
+                  41,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                2,
+                0,
+                [
+                  42,
+                  0,
+                  0
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              4,
+              3
+            ],
+            "handoffs": 4,
+            "minimum": 4,
+            "antichain": [
+              [
+                0,
+                0,
+                0,
+                [
+                  25,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  26,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  33,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  35,
+                  0,
+                  0
+                ]
+              ]
+            ]
+          }
+        ],
+        "fits_six_for_this_execution": true,
+        "causal_reuse": "passed",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--structured-trace",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K3.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06519238790497184,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K3.json",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K3.stderr"
+        }
+      },
+      {
+        "outer_visits": 1,
+        "K": 4,
+        "payloads": 57,
+        "commands": 84,
+        "pairs": 42,
+        "matching": "passed",
+        "invocation_identity": "distinct",
+        "logical_entry_exit": "no unmatched publications",
+        "payload_completion_at_exit": "not implied",
+        "acyclic": true,
+        "required_child_ci_missing": 0,
+        "directional_widths": [
+          {
+            "direction": [
+              2,
+              3
+            ],
+            "handoffs": 14,
+            "minimum": 2,
+            "antichain": [
+              [
+                0,
+                4,
+                0,
+                [
+                  64,
+                  0,
+                  1
+                ]
+              ],
+              [
+                0,
+                4,
+                0,
+                [
+                  65,
+                  0,
+                  1
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              3,
+              2
+            ],
+            "handoffs": 16,
+            "minimum": 2,
+            "antichain": [
+              [
+                0,
+                2,
+                0,
+                [
+                  66,
+                  0,
+                  1
+                ]
+              ],
+              [
+                0,
+                2,
+                0,
+                [
+                  67,
+                  0,
+                  1
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              3,
+              4
+            ],
+            "handoffs": 4,
+            "minimum": 4,
+            "antichain": [
+              [
+                0,
+                75,
+                0,
+                [
+                  88,
+                  0
+                ]
+              ],
+              [
+                0,
+                75,
+                0,
+                [
+                  103,
+                  0
+                ]
+              ],
+              [
+                0,
+                75,
+                0,
+                [
+                  118,
+                  0
+                ]
+              ],
+              [
+                0,
+                75,
+                0,
+                [
+                  133,
+                  0
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              4,
+              3
+            ],
+            "handoffs": 8,
+            "minimum": 4,
+            "antichain": [
+              [
+                0,
+                0,
+                0,
+                [
+                  50,
+                  0,
+                  1
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  51,
+                  0,
+                  1
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  58,
+                  0,
+                  1
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  60,
+                  0,
+                  1
+                ]
+              ]
+            ]
+          }
+        ],
+        "fits_six_for_this_execution": true,
+        "causal_reuse": "passed",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--structured-trace",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K4.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.0651535433717072,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K4.json",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K4.stderr"
+        }
+      },
+      {
+        "outer_visits": 1,
+        "K": 6,
+        "payloads": 85,
+        "commands": 132,
+        "pairs": 66,
+        "matching": "passed",
+        "invocation_identity": "distinct",
+        "logical_entry_exit": "no unmatched publications",
+        "payload_completion_at_exit": "not implied",
+        "acyclic": true,
+        "required_child_ci_missing": 0,
+        "directional_widths": [
+          {
+            "direction": [
+              2,
+              3
+            ],
+            "handoffs": 22,
+            "minimum": 2,
+            "antichain": [
+              [
+                0,
+                4,
+                0,
+                [
+                  64,
+                  0,
+                  2
+                ]
+              ],
+              [
+                0,
+                4,
+                0,
+                [
+                  65,
+                  0,
+                  2
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              3,
+              2
+            ],
+            "handoffs": 24,
+            "minimum": 2,
+            "antichain": [
+              [
+                0,
+                2,
+                0,
+                [
+                  66,
+                  0,
+                  2
+                ]
+              ],
+              [
+                0,
+                2,
+                0,
+                [
+                  67,
+                  0,
+                  2
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              3,
+              4
+            ],
+            "handoffs": 8,
+            "minimum": 4,
+            "antichain": [
+              [
+                0,
+                19,
+                1,
+                [
+                  68,
+                  0
+                ]
+              ],
+              [
+                0,
+                19,
+                1,
+                [
+                  69,
+                  0
+                ]
+              ],
+              [
+                0,
+                19,
+                1,
+                [
+                  70,
+                  0
+                ]
+              ],
+              [
+                0,
+                19,
+                1,
+                [
+                  71,
+                  0
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              4,
+              3
+            ],
+            "handoffs": 12,
+            "minimum": 4,
+            "antichain": [
+              [
+                0,
+                0,
+                0,
+                [
+                  50,
+                  0,
+                  2
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  51,
+                  0,
+                  2
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  58,
+                  0,
+                  2
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  60,
+                  0,
+                  2
+                ]
+              ]
+            ]
+          }
+        ],
+        "fits_six_for_this_execution": true,
+        "causal_reuse": "passed",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--structured-trace",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K6.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06535036629065871,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K6.json",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits1-K6.stderr"
+        }
+      },
+      {
+        "outer_visits": 2,
+        "K": 2,
+        "payloads": 58,
+        "commands": 72,
+        "pairs": 36,
+        "matching": "passed",
+        "invocation_identity": "distinct",
+        "logical_entry_exit": "no unmatched publications",
+        "payload_completion_at_exit": "not implied",
+        "acyclic": true,
+        "required_child_ci_missing": 0,
+        "directional_widths": [
+          {
+            "direction": [
+              2,
+              3
+            ],
+            "handoffs": 12,
+            "minimum": 2,
+            "antichain": [
+              [
+                0,
+                4,
+                0,
+                [
+                  39,
+                  20,
+                  0
+                ]
+              ],
+              [
+                0,
+                4,
+                0,
+                [
+                  40,
+                  20,
+                  0
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              3,
+              2
+            ],
+            "handoffs": 16,
+            "minimum": 4,
+            "antichain": [
+              [
+                0,
+                2,
+                0,
+                [
+                  41,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                2,
+                0,
+                [
+                  42,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                2,
+                0,
+                [
+                  27,
+                  20,
+                  0
+                ]
+              ],
+              [
+                0,
+                2,
+                0,
+                [
+                  28,
+                  20,
+                  0
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              4,
+              3
+            ],
+            "handoffs": 8,
+            "minimum": 8,
+            "antichain": [
+              [
+                0,
+                0,
+                0,
+                [
+                  25,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  26,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  33,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  35,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  25,
+                  20,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  26,
+                  20,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  33,
+                  20,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  35,
+                  20,
+                  0
+                ]
+              ]
+            ]
+          }
+        ],
+        "fits_six_for_this_execution": false,
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--structured-trace",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits2-K2.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06523236306384206,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits2-K2.json",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits2-K2.stderr"
+        }
+      },
+      {
+        "outer_visits": 2,
+        "K": 3,
+        "payloads": 86,
+        "commands": 72,
+        "pairs": 36,
+        "matching": "passed",
+        "invocation_identity": "distinct",
+        "logical_entry_exit": "no unmatched publications",
+        "payload_completion_at_exit": "not implied",
+        "acyclic": true,
+        "required_child_ci_missing": 0,
+        "directional_widths": [
+          {
+            "direction": [
+              2,
+              3
+            ],
+            "handoffs": 12,
+            "minimum": 2,
+            "antichain": [
+              [
+                0,
+                4,
+                0,
+                [
+                  39,
+                  20,
+                  0
+                ]
+              ],
+              [
+                0,
+                4,
+                0,
+                [
+                  40,
+                  20,
+                  0
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              3,
+              2
+            ],
+            "handoffs": 16,
+            "minimum": 4,
+            "antichain": [
+              [
+                0,
+                2,
+                0,
+                [
+                  41,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                2,
+                0,
+                [
+                  42,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                2,
+                0,
+                [
+                  27,
+                  20,
+                  0
+                ]
+              ],
+              [
+                0,
+                2,
+                0,
+                [
+                  28,
+                  20,
+                  0
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              4,
+              3
+            ],
+            "handoffs": 8,
+            "minimum": 8,
+            "antichain": [
+              [
+                0,
+                0,
+                0,
+                [
+                  25,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  26,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  33,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  35,
+                  0,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  25,
+                  20,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  26,
+                  20,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  33,
+                  20,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  35,
+                  20,
+                  0
+                ]
+              ]
+            ]
+          }
+        ],
+        "fits_six_for_this_execution": false,
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--structured-trace",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits2-K3.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06545412912964821,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits2-K3.json",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits2-K3.stderr"
+        }
+      },
+      {
+        "outer_visits": 3,
+        "K": 4,
+        "payloads": 171,
+        "commands": 252,
+        "pairs": 126,
+        "matching": "passed",
+        "invocation_identity": "distinct",
+        "logical_entry_exit": "no unmatched publications",
+        "payload_completion_at_exit": "not implied",
+        "acyclic": true,
+        "required_child_ci_missing": 0,
+        "directional_widths": [
+          {
+            "direction": [
+              2,
+              3
+            ],
+            "handoffs": 42,
+            "minimum": 2,
+            "antichain": [
+              [
+                0,
+                4,
+                0,
+                [
+                  64,
+                  40,
+                  1
+                ]
+              ],
+              [
+                0,
+                4,
+                0,
+                [
+                  65,
+                  40,
+                  1
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              3,
+              2
+            ],
+            "handoffs": 48,
+            "minimum": 4,
+            "antichain": [
+              [
+                0,
+                2,
+                0,
+                [
+                  66,
+                  20,
+                  1
+                ]
+              ],
+              [
+                0,
+                2,
+                0,
+                [
+                  67,
+                  20,
+                  1
+                ]
+              ],
+              [
+                0,
+                2,
+                0,
+                [
+                  27,
+                  40,
+                  0
+                ]
+              ],
+              [
+                0,
+                2,
+                0,
+                [
+                  28,
+                  40,
+                  0
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              3,
+              4
+            ],
+            "handoffs": 12,
+            "minimum": 4,
+            "antichain": [
+              [
+                0,
+                75,
+                0,
+                [
+                  88,
+                  40
+                ]
+              ],
+              [
+                0,
+                75,
+                0,
+                [
+                  103,
+                  40
+                ]
+              ],
+              [
+                0,
+                75,
+                0,
+                [
+                  118,
+                  40
+                ]
+              ],
+              [
+                0,
+                75,
+                0,
+                [
+                  133,
+                  40
+                ]
+              ]
+            ]
+          },
+          {
+            "direction": [
+              4,
+              3
+            ],
+            "handoffs": 24,
+            "minimum": 8,
+            "antichain": [
+              [
+                0,
+                0,
+                0,
+                [
+                  50,
+                  20,
+                  1
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  51,
+                  20,
+                  1
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  58,
+                  20,
+                  1
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  60,
+                  20,
+                  1
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  25,
+                  40,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  26,
+                  40,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  33,
+                  40,
+                  0
+                ]
+              ],
+              [
+                0,
+                0,
+                0,
+                [
+                  35,
+                  40,
+                  0
+                ]
+              ]
+            ]
+          }
+        ],
+        "fits_six_for_this_execution": false,
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--structured-trace",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits3-K4.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06537535367533565,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits3-K4.json",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_closed_child_adapter.pto.tmp.logic/visits3-K4.stderr"
+        }
+      }
+    ]
+  },
+  "certificate_diagnosis": {
+    "groups": 78,
+    "lanes": 102,
+    "directions": [
+      {
+        "direction": [
+          2,
+          3
+        ],
+        "lanes": 24,
+        "cycle": false,
+        "transitivity_witness": [
+          0,
+          84,
+          96
+        ]
+      },
+      {
+        "direction": [
+          3,
+          2
+        ],
+        "lanes": 6,
+        "cycle": false,
+        "transitivity_witness": null,
+        "supplied_relation_width": 6,
+        "antichain_lane_indices": [
+          2,
+          3,
+          14,
+          15,
+          26,
+          27
+        ]
+      },
+      {
+        "direction": [
+          3,
+          4
+        ],
+        "lanes": 60,
+        "cycle": false,
+        "transitivity_witness": [
+          4,
+          36,
+          45
+        ]
+      },
+      {
+        "direction": [
+          4,
+          3
+        ],
+        "lanes": 12,
+        "cycle": false,
+        "transitivity_witness": null,
+        "supplied_relation_width": 12,
+        "antichain_lane_indices": [
+          8,
+          9,
+          10,
+          11,
+          20,
+          21,
+          22,
+          23,
+          32,
+          33,
+          34,
+          35
+        ]
+      }
+    ],
+    "candidate_count": 1,
+    "first_greedy_refusal": {
+      "lane": 18,
+      "group": 6,
+      "local": 2,
+      "direction": [
+        3,
+        4
+      ],
+      "used_ids": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "blocking_prior_lane_for_each_id": {
+        "0": 4,
+        "1": 5,
+        "2": 6,
+        "3": 7,
+        "4": 16,
+        "5": 17
+      },
+      "records": [
+        43,
+        44,
+        45,
+        46
+      ]
+    }
+  },
+  "arity_check": {
+    "event_records": 138,
+    "endpoint_arity_inconsistencies": 0,
+    "certificate_coordinate_count_mismatches": 0
+  },
+  "qualified_adapter": {
+    "input_sha256": "b2b9a40b593be8fecc5f36942c99b042c2b888145d1f301bac52622e9ba3221a",
+    "tools": {
+      "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test": "c59f892a83e213b1bc16840dd53de001cde2483846b9dcc0c7fa3405cddcc3f1",
+      "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt": "55df3bcdaa9dee1cc595e0be6d07196f138de23194353723a9a6fcd971924c68"
+    },
+    "routes": [
+      {
+        "name": "candidate",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/closed-child-validation/adapter/candidate/input.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06520509021356702,
+          "stdout": ".local/closed-child-validation/adapter/candidate/logical.pto",
+          "stderr": ".local/closed-child-validation/adapter/candidate/logical.stderr"
+        },
+        "physical": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/closed-child-validation/adapter/candidate/logical.pto",
+            "-o",
+            ".local/closed-child-validation/adapter/candidate/physical.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.1652043699286878,
+          "stdout": ".local/closed-child-validation/adapter/candidate/physical.stdout",
+          "stderr": ".local/closed-child-validation/adapter/candidate/physical.stderr",
+          "profiles": [],
+          "bytes": 3495,
+          "sha256": "e1215465051672891b6d855b71d2e19e01108e683960ad106ed4096ecbbb8963",
+          "static_ir": {
+            "sets": 1,
+            "waits": 1,
+            "barriers": 4,
+            "arithmetic": 18
+          },
+          "guarantees": {},
+          "output": ".local/closed-child-validation/adapter/candidate/physical.pto"
+        },
+        "cases": [
+          {
+            "visits": 0,
+            "payloads": 2,
+            "commands": 2,
+            "matching": "passed",
+            "reuse": "passed",
+            "excess_ci": 0,
+            "missing_ci": 0
+          },
+          {
+            "visits": 1,
+            "payloads": 7,
+            "commands": 8,
+            "matching": "passed",
+            "reuse": "passed",
+            "excess_ci": 1,
+            "missing_ci": 0
+          },
+          {
+            "visits": 2,
+            "payloads": 12,
+            "commands": 14,
+            "matching": "passed",
+            "reuse": "passed",
+            "excess_ci": 2,
+            "missing_ci": 0
+          },
+          {
+            "visits": 3,
+            "payloads": 17,
+            "commands": 20,
+            "matching": "passed",
+            "reuse": "passed",
+            "excess_ci": 3,
+            "missing_ci": 0
+          }
+        ]
+      },
+      {
+        "name": "bad-arity",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/closed-child-validation/adapter/bad-arity/input.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06505027739331126,
+          "stdout": ".local/closed-child-validation/adapter/bad-arity/logical.pto",
+          "stderr": ".local/closed-child-validation/adapter/bad-arity/logical.stderr"
+        },
+        "physical": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/closed-child-validation/adapter/bad-arity/logical.pto",
+            "-o",
+            ".local/closed-child-validation/adapter/bad-arity/physical.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.16516174236312509,
+          "stdout": ".local/closed-child-validation/adapter/bad-arity/physical.stdout",
+          "stderr": ".local/closed-child-validation/adapter/bad-arity/physical.stderr",
+          "profiles": [],
+          "bytes": 3082,
+          "sha256": "80735e0742221674b58b5d09bb211ead559b265fdc357ebd1f019c818fc33ee3",
+          "static_ir": {
+            "sets": 0,
+            "waits": 0,
+            "barriers": 5,
+            "arithmetic": 10
+          },
+          "guarantees": {},
+          "output": ".local/closed-child-validation/adapter/bad-arity/physical.pto"
+        },
+        "cases": [
+          {
+            "visits": 0,
+            "payloads": 2,
+            "commands": 2,
+            "matching": "passed",
+            "reuse": "passed",
+            "excess_ci": 0,
+            "missing_ci": 0
+          },
+          {
+            "visits": 1,
+            "payloads": 7,
+            "commands": 7,
+            "matching": "passed",
+            "reuse": "passed",
+            "excess_ci": 4,
+            "missing_ci": 0
+          },
+          {
+            "visits": 2,
+            "payloads": 12,
+            "commands": 12,
+            "matching": "passed",
+            "reuse": "passed",
+            "excess_ci": 8,
+            "missing_ci": 0
+          },
+          {
+            "visits": 3,
+            "payloads": 17,
+            "commands": 17,
+            "matching": "passed",
+            "reuse": "passed",
+            "excess_ci": 12,
+            "missing_ci": 0
+          }
+        ]
+      },
+      {
+        "name": "baseline",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/baseline/pto-sync-input-test-fixture",
+            "--compact-region-contract",
+            ".local/closed-child-validation/adapter/baseline/input.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06506687588989735,
+          "stdout": ".local/closed-child-validation/adapter/baseline/logical.pto",
+          "stderr": ".local/closed-child-validation/adapter/baseline/logical.stderr"
+        },
+        "physical": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/closed-child-validation/adapter/baseline/logical.pto",
+            "-o",
+            ".local/closed-child-validation/adapter/baseline/physical.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.16514769895002246,
+          "stdout": ".local/closed-child-validation/adapter/baseline/physical.stdout",
+          "stderr": ".local/closed-child-validation/adapter/baseline/physical.stderr",
+          "profiles": [],
+          "bytes": 2991,
+          "sha256": "9bf27ce0b58d940713425089ad9b15f24b3bef246f92209256bdab59851ba8da",
+          "static_ir": {
+            "sets": 0,
+            "waits": 0,
+            "barriers": 5,
+            "arithmetic": 10
+          },
+          "guarantees": {},
+          "output": ".local/closed-child-validation/adapter/baseline/physical.pto"
+        },
+        "cases": [
+          {
+            "visits": 0,
+            "payloads": 2,
+            "commands": 2,
+            "matching": "passed",
+            "reuse": "passed",
+            "excess_ci": 0,
+            "missing_ci": 0
+          },
+          {
+            "visits": 1,
+            "payloads": 7,
+            "commands": 7,
+            "matching": "passed",
+            "reuse": "passed",
+            "excess_ci": 4,
+            "missing_ci": 0
+          },
+          {
+            "visits": 2,
+            "payloads": 12,
+            "commands": 12,
+            "matching": "passed",
+            "reuse": "passed",
+            "excess_ci": 8,
+            "missing_ci": 0
+          },
+          {
+            "visits": 3,
+            "payloads": 17,
+            "commands": 17,
+            "matching": "passed",
+            "reuse": "passed",
+            "excess_ci": 12,
+            "missing_ci": 0
+          }
+        ]
+      }
+    ],
+    "comparison": [
+      {
+        "visits": 0,
+        "added_ci": 0,
+        "removed_ci": 0
+      },
+      {
+        "visits": 1,
+        "added_ci": 0,
+        "removed_ci": 3
+      },
+      {
+        "visits": 2,
+        "added_ci": 0,
+        "removed_ci": 6
+      },
+      {
+        "visits": 3,
+        "added_ci": 0,
+        "removed_ci": 9
+      }
+    ]
+  },
+  "whole_kernels": {
+    "scope": "Same-policy serial host-only comparison; descriptive single runs",
+    "watchdog_seconds": 35,
+    "workers": 1,
+    "originals": [
+      {
+        "kernel": "persistent_gemm",
+        "alias": "may-alias",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto",
+        "input_sha256": "cc890b426ae89da77223b93a5ba4ad0b6f03d418f22f9bde65aea05fcde6324e",
+        "baseline": {
+          "logical": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/baseline/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/baseline/logical.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.31579452101141214,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/baseline/logical.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/baseline/logical.stderr",
+            "bytes": 71957,
+            "sha256": "6b76623d4eaab95162007d8a251bc03cb3e56c73b800858c9e8890072e3a6c8f",
+            "static_ir": {
+              "sets": 0,
+              "waits": 0,
+              "barriers": 8,
+              "arithmetic": 66
+            },
+            "guarantees": {
+              "reduction": [
+                "unavailable"
+              ],
+              "realization_order": [
+                "covers-modeled-order"
+              ]
+            },
+            "output": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/baseline/logical.pto"
+          },
+          "physical": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/baseline/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/baseline/logical.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/baseline/physical.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.1652304227463901,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/baseline/physical.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/baseline/physical.stderr",
+            "bytes": 71839,
+            "sha256": "4e01b06daecb7b3e74d96964a078c39ce0b3558abda00eec851c0e270313da12",
+            "static_ir": {
+              "sets": 0,
+              "waits": 0,
+              "barriers": 8,
+              "arithmetic": 66
+            },
+            "guarantees": {
+              "reduction": [
+                "unavailable"
+              ],
+              "realization_order": [
+                "covers-modeled-order"
+              ]
+            },
+            "output": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/baseline/physical.pto"
+          },
+          "cpp": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.venv/bin/python",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync=false",
+              "--enable-plan-memory=false",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/baseline/physical.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/baseline/kernel.cpp"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.4155584340915084,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/baseline/cpp.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/baseline/cpp.stderr"
+          }
+        },
+        "candidate": {
+          "logical": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/candidate/logical.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.3146807667799294,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/candidate/logical.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/candidate/logical.stderr",
+            "bytes": 71957,
+            "sha256": "6b76623d4eaab95162007d8a251bc03cb3e56c73b800858c9e8890072e3a6c8f",
+            "static_ir": {
+              "sets": 0,
+              "waits": 0,
+              "barriers": 8,
+              "arithmetic": 66
+            },
+            "guarantees": {
+              "reduction": [
+                "unavailable"
+              ],
+              "realization_order": [
+                "covers-modeled-order"
+              ]
+            },
+            "output": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/candidate/logical.pto"
+          },
+          "physical": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/candidate/logical.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/candidate/physical.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.16590013075619936,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/candidate/physical.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/candidate/physical.stderr",
+            "bytes": 71839,
+            "sha256": "4e01b06daecb7b3e74d96964a078c39ce0b3558abda00eec851c0e270313da12",
+            "static_ir": {
+              "sets": 0,
+              "waits": 0,
+              "barriers": 8,
+              "arithmetic": 66
+            },
+            "guarantees": {
+              "reduction": [
+                "unavailable"
+              ],
+              "realization_order": [
+                "covers-modeled-order"
+              ]
+            },
+            "output": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/candidate/physical.pto"
+          },
+          "cpp": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.venv/bin/python",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync=false",
+              "--enable-plan-memory=false",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/candidate/physical.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/candidate/kernel.cpp"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.6687110159546137,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/candidate/cpp.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/persistent_gemm/candidate/cpp.stderr"
+          }
+        },
+        "logical_byte_identical": true,
+        "physical_byte_identical": true
+      },
+      {
+        "kernel": "qwen-down",
+        "alias": "may-not-alias",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/lit/pto/Inputs/pypto_region_survey/qwen-down/input.pto",
+        "input_sha256": "056c1d35c85a50446de7810ffd3f58652d9e47c469c09e2bf777888c1bc0ff98",
+        "baseline": {
+          "logical": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/baseline/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/lit/pto/Inputs/pypto_region_survey/qwen-down/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/baseline/logical.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.8730231067165732,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/baseline/logical.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/baseline/logical.stderr",
+            "bytes": 131530,
+            "sha256": "247f0bf08f1febd7938af7a6b9f08eff255902369fb1c0fa1bb7182950fc5e63",
+            "static_ir": {
+              "sets": 0,
+              "waits": 0,
+              "barriers": 19,
+              "arithmetic": 68
+            },
+            "guarantees": {
+              "reduction": [
+                "unavailable"
+              ],
+              "realization_order": [
+                "covers-modeled-order"
+              ]
+            },
+            "output": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/baseline/logical.pto"
+          },
+          "physical": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/baseline/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/baseline/logical.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/baseline/physical.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.2187027451582253,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/baseline/physical.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/baseline/physical.stderr",
+            "bytes": 131441,
+            "sha256": "d86cb27b9705b2c0938b0bcaec54925fedcc742e17dc631f898c49b01c99cc15",
+            "static_ir": {
+              "sets": 0,
+              "waits": 0,
+              "barriers": 19,
+              "arithmetic": 68
+            },
+            "guarantees": {
+              "reduction": [
+                "unavailable"
+              ],
+              "realization_order": [
+                "covers-modeled-order"
+              ]
+            },
+            "output": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/baseline/physical.pto"
+          },
+          "cpp": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.venv/bin/python",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync=false",
+              "--enable-plan-memory=false",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/baseline/physical.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/baseline/kernel.cpp"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.7219523536041379,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/baseline/cpp.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/baseline/cpp.stderr"
+          }
+        },
+        "candidate": {
+          "logical": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/lit/pto/Inputs/pypto_region_survey/qwen-down/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/candidate/logical.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 1.47344516729936,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/candidate/logical.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/candidate/logical.stderr",
+            "bytes": 131530,
+            "sha256": "247f0bf08f1febd7938af7a6b9f08eff255902369fb1c0fa1bb7182950fc5e63",
+            "static_ir": {
+              "sets": 0,
+              "waits": 0,
+              "barriers": 19,
+              "arithmetic": 68
+            },
+            "guarantees": {
+              "reduction": [
+                "unavailable"
+              ],
+              "realization_order": [
+                "covers-modeled-order"
+              ]
+            },
+            "output": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/candidate/logical.pto"
+          },
+          "physical": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/candidate/logical.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/candidate/physical.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.21699637174606323,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/candidate/physical.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/candidate/physical.stderr",
+            "bytes": 131441,
+            "sha256": "d86cb27b9705b2c0938b0bcaec54925fedcc742e17dc631f898c49b01c99cc15",
+            "static_ir": {
+              "sets": 0,
+              "waits": 0,
+              "barriers": 19,
+              "arithmetic": 68
+            },
+            "guarantees": {
+              "reduction": [
+                "unavailable"
+              ],
+              "realization_order": [
+                "covers-modeled-order"
+              ]
+            },
+            "output": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/candidate/physical.pto"
+          },
+          "cpp": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.venv/bin/python",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync=false",
+              "--enable-plan-memory=false",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/candidate/physical.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/candidate/kernel.cpp"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.7762112799100578,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/candidate/cpp.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-down/candidate/cpp.stderr"
+          }
+        },
+        "logical_byte_identical": true,
+        "physical_byte_identical": true
+      },
+      {
+        "kernel": "qwen-finalize",
+        "alias": "may-not-alias",
+        "input": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/lit/pto/Inputs/pypto_region_survey/qwen-finalize/input.pto",
+        "input_sha256": "adf101fe830023ff85e62160fbb098974df7b23839867028541830e6d9a0d016",
+        "baseline": {
+          "logical": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/baseline/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/lit/pto/Inputs/pypto_region_survey/qwen-finalize/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/baseline/logical.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 1.676419124007225,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/baseline/logical.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/baseline/logical.stderr",
+            "bytes": 37105,
+            "sha256": "2c22d2ebe6805ddc480b53e7a35e64d029cc56a13a6228c166dd9ad4c0846f74",
+            "static_ir": {
+              "sets": 2,
+              "waits": 2,
+              "barriers": 3,
+              "arithmetic": 49
+            },
+            "guarantees": {
+              "reduction": [
+                "unavailable"
+              ],
+              "realization_order": [
+                "covers-modeled-order"
+              ]
+            },
+            "output": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/baseline/logical.pto"
+          },
+          "physical": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/baseline/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/baseline/logical.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/baseline/physical.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.26585432700812817,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/baseline/physical.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/baseline/physical.stderr",
+            "bytes": 34248,
+            "sha256": "ad2dbff586c05f109c955e2b99114012ec35a536a73c12cfe6f41760051910ea",
+            "static_ir": {
+              "sets": 2,
+              "waits": 2,
+              "barriers": 3,
+              "arithmetic": 50
+            },
+            "guarantees": {
+              "reduction": [
+                "unavailable"
+              ],
+              "realization_order": [
+                "covers-modeled-order"
+              ]
+            },
+            "output": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/baseline/physical.pto"
+          },
+          "cpp": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.venv/bin/python",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync=false",
+              "--enable-plan-memory=false",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/baseline/physical.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/baseline/kernel.cpp"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.7691118214279413,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/baseline/cpp.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/baseline/cpp.stderr"
+          }
+        },
+        "candidate": {
+          "logical": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/lit/pto/Inputs/pypto_region_survey/qwen-finalize/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/candidate/logical.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 1.7235169592313468,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/candidate/logical.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/candidate/logical.stderr",
+            "bytes": 37105,
+            "sha256": "2c22d2ebe6805ddc480b53e7a35e64d029cc56a13a6228c166dd9ad4c0846f74",
+            "static_ir": {
+              "sets": 2,
+              "waits": 2,
+              "barriers": 3,
+              "arithmetic": 49
+            },
+            "guarantees": {
+              "reduction": [
+                "unavailable"
+              ],
+              "realization_order": [
+                "covers-modeled-order"
+              ]
+            },
+            "output": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/candidate/logical.pto"
+          },
+          "physical": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/candidate/logical.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/candidate/physical.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.21566680166870356,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/candidate/physical.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/candidate/physical.stderr",
+            "bytes": 34248,
+            "sha256": "ad2dbff586c05f109c955e2b99114012ec35a536a73c12cfe6f41760051910ea",
+            "static_ir": {
+              "sets": 2,
+              "waits": 2,
+              "barriers": 3,
+              "arithmetic": 50
+            },
+            "guarantees": {
+              "reduction": [
+                "unavailable"
+              ],
+              "realization_order": [
+                "covers-modeled-order"
+              ]
+            },
+            "output": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/candidate/physical.pto"
+          },
+          "cpp": {
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.venv/bin/python",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync=false",
+              "--enable-plan-memory=false",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/candidate/physical.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/candidate/kernel.cpp"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.8217665506526828,
+            "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/candidate/cpp.stdout",
+            "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/closed-child-validation/production/qwen-finalize/candidate/cpp.stderr"
+          }
+        },
+        "logical_byte_identical": true,
+        "physical_byte_identical": true
+      }
+    ],
+    "small": []
+  },
+  "scaling": {
+    "cases": [
+      {
+        "name": "replays-0",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/replays-0/input.pto",
+          "-o",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/replays-0/logical.pto"
+        ],
+        "seconds": 0.259051991160959,
+        "input_sha256": "3420e50caca544040e95efbded3e7463e7dc709f30c1f210d190c7a2732f21c6",
+        "backend": "identity-sequence",
+        "max_repeated_types": 0,
+        "largest_numerical_body": 0,
+        "arena_nodes": 4
+      },
+      {
+        "name": "replays-1",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/replays-1/input.pto",
+          "-o",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/replays-1/logical.pto"
+        ],
+        "seconds": 0.5049451580271125,
+        "input_sha256": "3082a5109fd520d6ff3af5d273722477d5d450541d3b25073d6150a77ad7b1f9",
+        "backend": "identity-sequence",
+        "max_repeated_types": 124,
+        "largest_numerical_body": 8,
+        "arena_nodes": 125
+      },
+      {
+        "name": "replays-2",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/replays-2/input.pto",
+          "-o",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/replays-2/logical.pto"
+        ],
+        "seconds": 0.3483603443019092,
+        "input_sha256": "d35265565a5776f7fcc94f65cc16283d9ca484eee85ee1316fbe88714a3c5539",
+        "backend": "identity-sequence",
+        "max_repeated_types": 124,
+        "largest_numerical_body": 8,
+        "arena_nodes": 141
+      },
+      {
+        "name": "replays-3",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/replays-3/input.pto",
+          "-o",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/replays-3/logical.pto"
+        ],
+        "seconds": 0.2953875991515815,
+        "input_sha256": "c6011a37593e7d5a182b920c11cee823824136c8d630b4660711b807972eb6db",
+        "backend": "identity-sequence",
+        "max_repeated_types": 124,
+        "largest_numerical_body": 8,
+        "arena_nodes": 141
+      },
+      {
+        "name": "replays-8",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/replays-8/input.pto",
+          "-o",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/replays-8/logical.pto"
+        ],
+        "seconds": 0.29804444313049316,
+        "input_sha256": "37293ad192a503aeb7feabf24d1e5b8c30724a14f302d71cef329e59d2d54cac",
+        "backend": "identity-sequence",
+        "max_repeated_types": 124,
+        "largest_numerical_body": 8,
+        "arena_nodes": 143
+      },
+      {
+        "name": "inner-K-4",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/inner-K-4/input.pto",
+          "-o",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/inner-K-4/logical.pto"
+        ],
+        "seconds": 0.5015632100403309,
+        "input_sha256": "c53d19145e43bb87840ac64920160a4f0ebb17635aa73438a227d6ee30e5a158",
+        "backend": "identity-sequence",
+        "max_repeated_types": 332,
+        "largest_numerical_body": 14,
+        "arena_nodes": 192
+      },
+      {
+        "name": "inner-K-8",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/inner-K-8/input.pto",
+          "-o",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/inner-K-8/logical.pto"
+        ],
+        "seconds": 0.6172578250989318,
+        "input_sha256": "d251e74faad4586a98d7e46544318ae0456c03c68c357f1194d564b9e3431ef6",
+        "backend": "identity-sequence",
+        "max_repeated_types": 332,
+        "largest_numerical_body": 14,
+        "arena_nodes": 196
+      },
+      {
+        "name": "inner-K-16",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/inner-K-16/input.pto",
+          "-o",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/inner-K-16/logical.pto"
+        ],
+        "seconds": 0.6244100877083838,
+        "input_sha256": "bff95c2be7845ade87539940618c37bd89843d1cd286d735e45ff50785b5765a",
+        "backend": "identity-sequence",
+        "max_repeated_types": 332,
+        "largest_numerical_body": 14,
+        "arena_nodes": 200
+      },
+      {
+        "name": "inner-kk-1",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/inner-kk-1/input.pto",
+          "-o",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/inner-kk-1/logical.pto"
+        ],
+        "seconds": 0.35996650205925107,
+        "input_sha256": "cda83170d739b2e0f7179c2a85ee2cd08488f2068239de0e72a6742919fc11cc",
+        "backend": "identity-sequence",
+        "max_repeated_types": 116,
+        "largest_numerical_body": 5,
+        "arena_nodes": 171
+      },
+      {
+        "name": "inner-kk-2",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/inner-kk-2/input.pto",
+          "-o",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/inner-kk-2/logical.pto"
+        ],
+        "seconds": 0.39063528273254633,
+        "input_sha256": "e88fc5d644e07cacf0062c0fa3725961b59f156ede9e3c8765e0e82f2e337bc8",
+        "backend": "identity-sequence",
+        "max_repeated_types": 188,
+        "largest_numerical_body": 8,
+        "arena_nodes": 188
+      },
+      {
+        "name": "inner-kk-4",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/inner-kk-4/input.pto",
+          "-o",
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_compact_replay_scaling.pto.tmp.scaling/inner-kk-4/logical.pto"
+        ],
+        "seconds": 0.508715137373656,
+        "input_sha256": "c53d19145e43bb87840ac64920160a4f0ebb17635aa73438a227d6ee30e5a158",
+        "backend": "identity-sequence",
+        "max_repeated_types": 332,
+        "largest_numerical_body": 14,
+        "arena_nodes": 192
+      }
+    ],
+    "structural_gate": "passed",
+    "full_receipt": ".local/closed-child-validation/scaling.json"
+  },
+  "zero_inner": {
+    "name": "w2-k1-i0-c0-e1",
+    "spec": [
+      2,
+      1,
+      0,
+      0,
+      1
+    ],
+    "input_sha256": "6ba90482d60dc1517d0633a5074c489ca52f41f1334d95a351d494e149deaf38",
+    "selected_backend": "identity-sequence",
+    "access_comparisons": 12,
+    "potential_occurrences": 10,
+    "payloads": 6,
+    "event_query_comparisons": 400,
+    "storage_probes": 7,
+    "minimum_covers": 2,
+    "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; actual retained regional records are expanded and deduplicated against the same covers",
+    "extra_ci": 2,
+    "extra_witness": {
+      "source": {
+        "phase": 1,
+        "coordinates": [
+          0
+        ],
+        "pipe": 4
+      },
+      "target": {
+        "phase": 0,
+        "coordinates": [
+          1
+        ],
+        "pipe": 4
+      }
+    },
+    "missing_ci": 0,
+    "physical_reuse": "passed",
+    "seconds": {
+      "contract_probe": 0.12150085205212235,
+      "production_logical": 0.2639645482413471,
+      "allocation": 0.2667807750403881
+    }
+  },
+  "gate": {
+    "tests": 15,
+    "codes": {
+      "PASS": 15
+    },
+    "receipt": ".local/closed-child-validation/final-gate.json"
+  },
+  "limitations": [
+    "No uniform six-ID certificate for original K child",
+    "Multiple outer-visit parameters are structural relative-layout stress cases, not validated original HIDDEN=5120 ABI executions",
+    "Zero K matching is vacuous; no claim about uninitialized accumulator numerical results",
+    "Supplied grouped fixture is a test producer with independently checked certificate, not a new production recognizer",
+    "No device compiler or execution"
+  ],
+  "compliance": {
+    "scope": [
+      "lib/PTO/Transforms/FrontierSynch/Shared/CompletionInlineChild.cpp",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.cpp",
+      "tools/pto-test-opt/CompletionGroupedChildChecks.cpp",
+      "test/lit/pto/Inputs/check_closed_child_logic.py",
+      "test/lit/pto/Inputs/check_grouped_child_adapter.py"
+    ],
+    "lines_checked": 520,
+    "findings": [],
+    "reviewed_regex_false_positives": [
+      {
+        "path": "lib/PTO/Transforms/FrontierSynch/Shared/CompletionInlineChild.cpp",
+        "line": 47,
+        "text": "        if (endpoint.records.empty() || endpoint.memberCoordinates.empty() ||",
+        "reason": "Regex false positive: control body is braced, or assignment-condition cast; reviewed in source"
+      },
+      {
+        "path": "lib/PTO/Transforms/FrontierSynch/Shared/CompletionInlineChild.cpp",
+        "line": 193,
+        "text": "    if (!collectRecordArities(*plan, enclosing.size(), arities) ||",
+        "reason": "Regex false positive: control body is braced, or assignment-condition cast; reviewed in source"
+      },
+      {
+        "path": "lib/PTO/Transforms/FrontierSynch/Shared/CompletionInlineChild.cpp",
+        "line": 446,
+        "text": "            if (endpoint.records.size() == 1) {",
+        "reason": "Regex false positive: control body is braced, or assignment-condition cast; reviewed in source"
+      },
+      {
+        "path": "tools/pto-test-opt/CompletionGroupedChildChecks.cpp",
+        "line": 77,
+        "text": "    if (!loop || !fixedTwoVisits(loop) || !mathematics || !mathematics->input) { return failure(); }",
+        "reason": "Regex false positive: control body is braced, or assignment-condition cast; reviewed in source"
+      },
+      {
+        "path": "tools/pto-test-opt/CompletionGroupedChildChecks.cpp",
+        "line": 79,
+        "text": "        if (op.getName().getStringRef() == \"pto.textract\") { cut = &op; }",
+        "reason": "Regex false positive: control body is braced, or assignment-condition cast; reviewed in source"
+      },
+      {
+        "path": "tools/pto-test-opt/CompletionGroupedChildChecks.cpp",
+        "line": 104,
+        "text": "    if (!parent) { return function.emitError(\"explicit conservative parent: \") << error; }",
+        "reason": "Regex false positive: control body is braced, or assignment-condition cast; reviewed in source"
+      }
+    ],
+    "whole_worktree_check": ".local/closed-child-validation/compliance.log",
+    "note": "Whole-worktree baseline includes unrelated previous task changes; not reported as clean"
+  },
+  "formatting_followup_gate": {
+    "receipt": ".local/closed-child-validation/format-gate.json",
+    "passed": 1
+  },
+  "raw_artifacts": {
+    "logical-final/results.json": {
+      "path": ".local/closed-child-validation/logical-final/results.json",
+      "sha256": "2ec3108a8f6c61f5ede9bf1599add886ef9d8aae751dd6fadb6e722435e419d0"
+    },
+    "adapter/results.json": {
+      "path": ".local/closed-child-validation/adapter/results.json",
+      "sha256": "f1a9c4fa78838d97999bd973c40a0b29515efbf0969e2c2778d10d68dabdefad"
+    },
+    "campaign.json": {
+      "path": ".local/closed-child-validation/campaign.json",
+      "sha256": "a5b2a9c1af38d1ccfd629d9fe9504e371da85038972c40ed2b9ba7800792dbda"
+    },
+    "refusal/results.json": {
+      "path": ".local/closed-child-validation/refusal/results.json",
+      "sha256": "75a5ff82e38885b419c2057d455b73476a34d189e03e1835536a155bcdace162"
+    },
+    "default-frame.json": {
+      "path": ".local/closed-child-validation/default-frame.json",
+      "sha256": "a8ea002da921b683e926650888828d82193eb29a6d6464cf01cfa3e68a9832c4"
+    },
+    "certificate-diagnosis.json": {
+      "path": ".local/closed-child-validation/certificate-diagnosis.json",
+      "sha256": "60136310597cd722cb2cfb919e9fc21544484ff0c22e871c3c49ecd1de75adba"
+    },
+    "scaling.json": {
+      "path": ".local/closed-child-validation/scaling.json",
+      "sha256": "289accae0bf78fe8d378cd2f72d1fdc042fcd9242ca11f7b28d7f0b506bbd36c"
+    },
+    "compact-K-semantics.json": {
+      "path": ".local/closed-child-validation/compact-K-semantics.json",
+      "sha256": "96f6edd077c7a6733385adc0de950b3459b3d1cc5db99c480c9d561c24846194"
+    },
+    "replay-semantics.json": {
+      "path": ".local/closed-child-validation/replay-semantics.json",
+      "sha256": "5ef06c592fff24054280e3342ac90624b7366e513afde743448d2d463deae813"
+    },
+    "zero-inner/results.json": {
+      "path": ".local/closed-child-validation/zero-inner/results.json",
+      "sha256": "0832481993c9d42291b52a48456abef68f7f8f7fc304f9699ccb9ffb66db4e26"
+    },
+    "final-gate.json": {
+      "path": ".local/closed-child-validation/final-gate.json",
+      "sha256": "382a791348b1b337fdf8903df155e78836d1830c32dd8bdfe7e741b4ff4200c9"
+    },
+    "format-gate.json": {
+      "path": ".local/closed-child-validation/format-gate.json",
+      "sha256": "3cb4b6bd0b33e1a3a0c42161ffd005f9c4c36ef9d5f7ff6fd272d44aad88d4a8"
+    },
+    "source-manifest.json": {
+      "path": ".local/closed-child-validation/source-manifest.json",
+      "sha256": "a3bf86bdf5868fc1f44c726891f34c8ac1752f8232699538c3dc69105cb0ea85"
+    },
+    "baseline-fixture.json": {
+      "path": ".local/closed-child-validation/baseline-fixture.json",
+      "sha256": "cdcad5a8f8bc07182070ea40cbb1cb446ed9f79174285e3b838e8ef19c20b170"
+    }
+  },
+  "llvm_revision": "fa2fd1f75d742fec91ecf40d98c9c7961647ec42",
+  "build_directory": ".local/section8-refactor/source-pinned/candidate-build",
+  "build_source_directory": ".local/section8-refactor/source-pinned/candidate-source",
+  "host_only": true,
+  "eligible_ids": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "build_workers_max": 2,
+  "unchanged_algorithm_files": {
+    "lib/PTO/Transforms/FrontierSynch/Shared/CompletionTransfer.cpp": {
+      "sha256": "4dc16afb6f555c1491fdb9d81884695b80e080f6fe036ad097995260a186c8fe",
+      "diff_from_HEAD": ""
+    },
+    "lib/PTO/Transforms/FrontierSynch/Shared/RegionalLaneCertificate.cpp": {
+      "sha256": "3688937703ef126076d49c1b3379a37154d7e980b666c842401b5be0de243cf8",
+      "diff_from_HEAD": ""
+    },
+    "lib/PTO/Transforms/FrontierSynch/Shared/SharedHandoffAllocation.cpp": {
+      "sha256": "421dfc53b5df48f1cdd595d7dac96815075d7332bcab7a4e23ee5bfe2a3c8030",
+      "diff_from_HEAD": ""
+    }
+  }
+}

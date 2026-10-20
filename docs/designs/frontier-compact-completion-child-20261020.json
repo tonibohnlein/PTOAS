@@ -1,0 +1,373 @@
+{
+  "outcome": "blocked-contract witness; production import eligibility unchanged; no new adapter enabled",
+  "completion_criterion": "Concrete retained compact K child reaches unsupported coordinate/group adapter and existing six-ID certificate refusal",
+  "source": {
+    "head": "e54d19e91cdf7c54a6b6738f0f0bd1b67cdb9f44",
+    "dirty": true,
+    "branch": "codex/frontier-shared-input",
+    "manifest": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/source-manifest.json",
+      "sha256": "a7de592b6422a225527c03aa799e378df18246148b4211b5c2ebcd22a49e52ae"
+    }
+  },
+  "tools": {
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt": "b0b8b0df0cc790e584b6b7acdef644f7d6c6eca8c7031dec44a5017cfac1fd07",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test": "9c6bb014d8409a43489a6697c09e57b21dfea930e3690dadbfdc7d9f232c7a3e",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas": "89fa0f69d6af6db6673954389763ae2f6e57613ea7946ef6f32234d6daef7a85"
+  },
+  "environment": {
+    "target": "a3",
+    "event_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "device": false,
+    "aggregate_worker_limit": 2,
+    "new_campaign_workers": 1,
+    "campaign_watchdog_seconds": 35,
+    "memory_limit_bytes": 4294967296,
+    "existing_lit_watchdogs": "unchanged fixture defaults; not raised"
+  },
+  "primary": {
+    "kernel": "qwen-down",
+    "alias_policy": "may-not-alias",
+    "whole_kernel_source": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/lit/pto/Inputs/pypto_region_survey/qwen-down/input.pto",
+    "region": 5,
+    "producer": "sequence with three phased/repeated numerical bodies",
+    "coordinate_frame": "K loop arg11, enclosing output-block loop arg10",
+    "query_types": 84,
+    "ports": 105,
+    "materialized_storage_entries": 143,
+    "shared_nodes_before_preparation": 236,
+    "required_outer_loops": 1,
+    "families": 171,
+    "materialized_endpoints": 282,
+    "grouped_endpoints": 27,
+    "out_of_scope_endpoints": 0,
+    "terminal_alternative_families": 0,
+    "six_id_certificate_accepted": false,
+    "capacity_lower_bound": null,
+    "missing_exact_gm_selectors": "Remain unavailable; not required by coarse completion effect summary"
+  },
+  "contract": {
+    "accesses": "Shared original input/class interpretation; summary covers all possible modeled effects with read/write modes",
+    "payload_exit": "May remain pending; E=S=A, transparent=true",
+    "notification_exit": "Not established for a newly imported K child; import remains refused",
+    "physical": "Existing allocator refuses its sufficient certificate; no relabeling/scarcity repair performed",
+    "coordinates": "Original enclosing frame required; grouped selected-record identity must be preserved",
+    "ownership": "Retained mathematics untouched; no new result or fabricated empty selector published"
+  },
+  "implementation": {
+    "production": [
+      "AnalysisRequest.cpp adds qualification profiling to existing export calls"
+    ],
+    "diagnostic": [
+      "CompactRegionContractChecks.cpp adds explicit original-frame preparation/certificate experiment"
+    ],
+    "regression": [
+      "test/lit/pto/sync_completion_compact_child_contract.pto",
+      "test/lit/pto/Inputs/check_completion_child_contract.py"
+    ],
+    "not_changed": [
+      "SCC transfer",
+      "allocation algorithms",
+      "recognition/dispatch eligibility",
+      "access importer",
+      "expert protocols",
+      "zero-inner barriers"
+    ],
+    "experimental_adapter_edits": "Removed before final build and all acceptance checks"
+  },
+  "validation": {
+    "lit": {
+      "passed": 14,
+      "total": 14,
+      "full_suite": false
+    },
+    "same_policy_originals": [
+      {
+        "kernel": "persistent_gemm",
+        "alias": "may-alias",
+        "logical_byte_identical": true,
+        "physical_byte_identical": true,
+        "candidate_stages": {
+          "logical": "success",
+          "physical": "success",
+          "cpp": "success"
+        }
+      },
+      {
+        "kernel": "qwen-down",
+        "alias": "may-not-alias",
+        "logical_byte_identical": true,
+        "physical_byte_identical": true,
+        "candidate_stages": {
+          "logical": "success",
+          "physical": "success",
+          "cpp": "success"
+        }
+      },
+      {
+        "kernel": "qwen-finalize",
+        "alias": "may-not-alias",
+        "logical_byte_identical": true,
+        "physical_byte_identical": true,
+        "candidate_stages": {
+          "logical": "success",
+          "physical": "success",
+          "cpp": "success"
+        }
+      }
+    ],
+    "bounded_cases": 9,
+    "independent_logical_checks_passed": 19,
+    "independent_physical_checks_passed": 19,
+    "same_policy_relations_equal_cases": 5,
+    "ordinary_small_refusals_both_versions": [
+      "qwen-v0-k2",
+      "persistent-k0",
+      "persistent-k1",
+      "persistent-k2"
+    ],
+    "explicit_primitive_checks_passed": 9,
+    "new_child_notification_proof": false,
+    "new_child_physical_proof": false,
+    "native_footprint_validation": false,
+    "replay": 4,
+    "compact_K": 5,
+    "zero_inner": {
+      "name": "w2-k1-i0-c0-e1",
+      "spec": [
+        2,
+        1,
+        0,
+        0,
+        1
+      ],
+      "input_sha256": "6ba90482d60dc1517d0633a5074c489ca52f41f1334d95a351d494e149deaf38",
+      "selected_backend": "identity-sequence",
+      "access_comparisons": 12,
+      "potential_occurrences": 10,
+      "payloads": 6,
+      "event_query_comparisons": 400,
+      "storage_probes": 7,
+      "minimum_covers": 2,
+      "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; actual retained regional records are expanded and deduplicated against the same covers",
+      "extra_ci": 2,
+      "extra_witness": {
+        "source": {
+          "phase": 1,
+          "coordinates": [
+            0
+          ],
+          "pipe": 4
+        },
+        "target": {
+          "phase": 0,
+          "coordinates": [
+            1
+          ],
+          "pipe": 4
+        }
+      },
+      "missing_ci": 0,
+      "physical_reuse": "passed",
+      "seconds": {
+        "contract_probe": 0.065175571013242,
+        "production_logical": 0.21539475629106164,
+        "allocation": 0.2155286860652268
+      }
+    }
+  },
+  "scaling": [
+    {
+      "name": "replays-0",
+      "backend": "identity-sequence",
+      "max_repeated_types": 0,
+      "largest_numerical_body": 0,
+      "arena_nodes": 4,
+      "seconds": 0.35340843303129077
+    },
+    {
+      "name": "replays-1",
+      "backend": "identity-sequence",
+      "max_repeated_types": 124,
+      "largest_numerical_body": 8,
+      "arena_nodes": 125,
+      "seconds": 0.6775404368527234
+    },
+    {
+      "name": "replays-2",
+      "backend": "identity-sequence",
+      "max_repeated_types": 124,
+      "largest_numerical_body": 8,
+      "arena_nodes": 141,
+      "seconds": 0.739473516587168
+    },
+    {
+      "name": "replays-3",
+      "backend": "identity-sequence",
+      "max_repeated_types": 124,
+      "largest_numerical_body": 8,
+      "arena_nodes": 141,
+      "seconds": 0.689927461091429
+    },
+    {
+      "name": "replays-8",
+      "backend": "identity-sequence",
+      "max_repeated_types": 124,
+      "largest_numerical_body": 8,
+      "arena_nodes": 143,
+      "seconds": 0.6801859517581761
+    },
+    {
+      "name": "inner-K-4",
+      "backend": "identity-sequence",
+      "max_repeated_types": 332,
+      "largest_numerical_body": 14,
+      "arena_nodes": 192,
+      "seconds": 1.1495362273417413
+    },
+    {
+      "name": "inner-K-8",
+      "backend": "identity-sequence",
+      "max_repeated_types": 332,
+      "largest_numerical_body": 14,
+      "arena_nodes": 196,
+      "seconds": 1.5316971610300243
+    },
+    {
+      "name": "inner-K-16",
+      "backend": "identity-sequence",
+      "max_repeated_types": 332,
+      "largest_numerical_body": 14,
+      "arena_nodes": 200,
+      "seconds": 1.6407212149351835
+    },
+    {
+      "name": "inner-kk-1",
+      "backend": "identity-sequence",
+      "max_repeated_types": 116,
+      "largest_numerical_body": 5,
+      "arena_nodes": 171,
+      "seconds": 0.8012475520372391
+    },
+    {
+      "name": "inner-kk-2",
+      "backend": "identity-sequence",
+      "max_repeated_types": 188,
+      "largest_numerical_body": 8,
+      "arena_nodes": 188,
+      "seconds": 0.9769758200272918
+    },
+    {
+      "name": "inner-kk-4",
+      "backend": "identity-sequence",
+      "max_repeated_types": 332,
+      "largest_numerical_body": 14,
+      "arena_nodes": 192,
+      "seconds": 1.3714300659485161
+    }
+  ],
+  "limitations": [
+    "No new ordering improvement demonstrated",
+    "No minimum-capacity lower bound",
+    "Missing GM exports remain unavailable",
+    "Whole-function matched flags do not qualify an unimported child",
+    "Native command/footprint premises remain unqualified",
+    "No device compilation/execution",
+    "Unrelated allocation/atomic/indirect/frontend issues deferred"
+  ],
+  "reproduce": [
+    ".venv/bin/python test/lit/pto/Inputs/check_completion_child_contract.py --trace-tool .local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test --input test/lit/pto/Inputs/pypto_region_survey/qwen-down/input.pto --output .local/compact-completion-child/contract",
+    ".venv/bin/python .local/compact-completion-child/run_campaign.py",
+    ".venv/bin/python .local/compact-completion-child/check_zero_inner.py",
+    "PATH=\"$PWD/.venv/bin:$PATH\" .venv/bin/python /home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit -j1 --filter \"sync_(completion_(compact_child_contract|bounded_child|children|eventful|inputs|public|region|scoped|transfer)|closed_completion|storage_export_coverage|compact_(persistent_contract|replay_scaling)|whole_kernel_alias)\" .local/section8-refactor/source-pinned/candidate-build/test/lit -o .local/compact-completion-child/gate.json"
+  ],
+  "artifacts": {
+    "baseline.json": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/baseline.json",
+      "sha256": "12c10a930ec332d0860b0fe00a173ea134769c70dc21bc2643844a23f389e620"
+    },
+    "source-manifest.json": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/source-manifest.json",
+      "sha256": "a7de592b6422a225527c03aa799e378df18246148b4211b5c2ebcd22a49e52ae"
+    },
+    "run_campaign.py": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/run_campaign.py",
+      "sha256": "3ada8da503718c978df6025c251657e4569b4386e65d8fa9899856921cae2db3"
+    },
+    "campaign.json": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/campaign.json",
+      "sha256": "fe9df17e6d3f39db6dd9dd54f51fe49b4dc3aa49ea9bebb3446c3ae5264c456e"
+    },
+    "contract/results.json": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/contract/results.json",
+      "sha256": "55c0a5eb40a171090b0290ba864080ce3cd8156e451209a078f1dffefd920518"
+    },
+    "scaling.json": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/scaling.json",
+      "sha256": "c260bb988476f3b0d9cbd3b5b9fd9a7a75945c433730a9a989ace8041fec9a75"
+    },
+    "compact-K-semantics.json": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/compact-K-semantics.json",
+      "sha256": "7bba416862eedd30dd2698adba7ae603defea1aee516b0d5629d0a7ca90d9be4"
+    },
+    "replay-semantics.json": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/replay-semantics.json",
+      "sha256": "70fe0eceb3ad350acc4239b2cc48376b6e50372fbb33fd7433f6e2864fb9dc8a"
+    },
+    "check_zero_inner.py": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/check_zero_inner.py",
+      "sha256": "97a1ed2e4c26846909b7ba6d1db66e84353155134e9dc86cb275f0ed1b629e27"
+    },
+    "zero-inner/results.json": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/zero-inner/results.json",
+      "sha256": "0dda2a382d362592225966b37b1aee35a059bb999ade9276a21bf9be1893dc01"
+    },
+    "gate.json": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/gate.json",
+      "sha256": "ded8183c9f84eb40647a7395e06c9c33cdc460c6b30fccf71fd7541dd1c9e11a"
+    },
+    "gate.log": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/gate.log",
+      "sha256": "fbe2905e107d5aa1bdf20d65dc97a832209659c58f6bc89e0ce05e2362ddb68f"
+    },
+    "final-probe-build.log": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/final-probe-build.log",
+      "sha256": "abcf8cc425eea35274b95df31d763e029bde9b3a30aa8d363355d535fa504644"
+    },
+    "compliance.log": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/compliance.log",
+      "sha256": "2deb933edd9b7ae6f156b6ee3dd022ae5e629c05d0057f42536ee45ac7e3aa02"
+    },
+    "scoped-compliance.json": {
+      "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-completion-child/scoped-compliance.json",
+      "sha256": "84a62030be716a044751f707601aa68c76cf61af31dbba276f5288770758d49e"
+    }
+  },
+  "paper_consequences": [
+    {
+      "section": "5.5",
+      "established": "Retained compact regional mathematics and bounded K/replay interfaces",
+      "remaining": "Executable endpoint/notification/resource capability",
+      "claim": "Mathematical compactness does not imply executable closed-child import"
+    },
+    {
+      "section": "6",
+      "established": "Existing coarse child summaries need effect coverage rather than complete exact GM selectors",
+      "remaining": "Grouped provenance translation and valid six-ID certificate for retained K invocation",
+      "claim": "Conservative parent may retain only children satisfying separate executable resource contracts"
+    },
+    {
+      "section": "6",
+      "established": "Certificate decoder refuses this child",
+      "remaining": "Exact directional width is not established",
+      "claim": "Sufficient assignment failure is not infeasibility"
+    }
+  ]
+}

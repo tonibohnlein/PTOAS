@@ -1,0 +1,1277 @@
+{
+  "version": 1,
+  "source_revision": "e54d19e91cdf7c54a6b6738f0f0bd1b67cdb9f44",
+  "source_state": "base plus task-owned instrumentation/test changes; no demand/allocation policy change",
+  "source_files_sha256": {
+    "docs/designs/frontier-compact-demand-checkpoint-20261019.md": "053941ca42e3038a372e157f63353ad57db91412bf7c385688678640f861ae7c",
+    "include/PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h": "86e9685eb7a76ec8ae4172a75e288a6f0ce4ac5e166a3ac49b5a5d7b1dd5be41",
+    "include/PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h": "8b742f617a3b1748c4d7bcb3fdc8c3622f23fd3068cee272c5c603c10811618c",
+    "include/PTO/Transforms/FrontierSynch/Shared/RetainedInventory.h": "5b5fa6ea4f8a5e0379c7aa37bb8728953d4fdf69b13bceacf9bc156dab2de9de",
+    "lib/PTO/Transforms/CMakeLists.txt": "ba91ea6a170efa740055d381b5026774beaad0b79f8d567f6b317e06ba28298b",
+    "lib/PTO/Transforms/FrontierSynch/FrontierAnalysis.cpp": "6ec50e77026230199a5f03b0f5f2745afb03cd8e14f6b2193d8999ad73f5fe3d",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RegionalCoalescingProfile.h": "dbd584e04ff796a0fcd52ec2d2df72b4db06a42306b253d79997eca5116cbe6f",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RegionalConstantPalette.cpp": "2fab2f88f7aaebcdf18c41fb22c608694df9c6553323d52bbb44497a10fcaebc",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RegionalConstantPalette.h": "cc3bad82c44635fd4a946061caa45bb41acc41adcafb6abc6aa39af73f090210",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RegionalPalette.cpp": "07755287cca3b577c10cfbc9e92c39b423c5a5c445d4af99c810e168c942b372",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedAllocation.cpp": "30a73df5566bc0ad16ba217c6619fb118730a8a5e6f6e937d9f2ef50d95f3fc7",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedRegionExports.cpp": "8cb7800264be6a2e0bbfe60162c379a5e9623ad3db32591c521f52702946247d",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RetainedInventory.cpp": "d5b6b970988fef37c133e52aeec945f63cab2bc7e0ba089d14a485e421aed50f",
+    "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAdapters.cpp": "e8db0f14d53d245ab737942bd33073004b3ae37bb116e1d4afba8bc707df6bd9",
+    "lib/PTO/Transforms/FrontierSynch/Structured/NumericTemplateRegional.cpp": "db47afc1cdde559cfa1bd1623a98a5c97927749518226af09b7687cf0e42bd46",
+    "test/lit/pto/Inputs/check_compact_persistent_contract.py": "15bae2d2affd224d49525605b5d3989f2d5d02c40fe12471598980b7df879752",
+    "test/lit/pto/Inputs/check_frontier_stage_profile.py": "e5815e802205133d8e4a994a0d7338d87e43a45508309808eed55325375a65d1",
+    "test/lit/pto/Inputs/check_repeated_allocation_profile.py": "05d736d1f8730349d946cfed2b3f6eec024713e49bf7f3c0822f90c7cf275674",
+    "test/lit/pto/Inputs/compact_persistent_oracle.py": "f821c022245b018b270f2852103413429f5aaf5b2410bc0a946022d47cb2dd0e",
+    "test/lit/pto/Inputs/profile_compact_persistent.py": "815dc81edd02f46d6c4a1c1ac564ce2244bcf9b500ebb416151bc326b9739315",
+    "test/lit/pto/sync_compact_persistent_contract.pto": "ca504224b6e0ec586a16500647451d8ad927996bfc2b39de16c9652cf3efd453",
+    "tools/pto-test-opt/CMakeLists.txt": "c853d5a96d485f42a5be6972fe6367a61806155043cf12b094a16f633dc9b9f1",
+    "tools/pto-test-opt/CompactRegionContractChecks.cpp": "f0201ee48666bcadec89595aa5d5a385d1b6894aaedd3537983058916c5e73c3",
+    "tools/pto-test-opt/CompactRegionCoordinates.h": "e49fb77fa4fedbe8ea222fd91f1d029c84f29894bb6b5d04aae018e6526c9460",
+    "tools/pto-test-opt/pto-sync-input-test.cpp": "a9e713e0f0f4ee0cc2f2a8693c3bc6bde9fd57242a36edd79e508d4afb82389f"
+  },
+  "design_sha256": "0295f1dc70a4dd20d81be6d79d63ba89a07257c9f377e8d1ac98eef8a60023fb",
+  "input_sha256": "cc890b426ae89da77223b93a5ba4ad0b6f03d418f22f9bde65aea05fcde6324e",
+  "target": "a3/cube",
+  "alias_policy": "may-not-alias",
+  "eligible_ids": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "final_inventory_command": [
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+    "--mlir-disable-threading",
+    "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5 profile-stages=true",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto",
+    "-o",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/checkpoint2-final.mlir"
+  ],
+  "final_optimizer_sha256": "35d10acb308dee55acab4b9ed98c3a6535717a56677f29824827a5c1b2cb72b2",
+  "inventory": {
+    "inspection": "no-semantic-callbacks",
+    "rows": [
+      {
+        "id": 0,
+        "original_region": 0,
+        "representation": "identity-sequence"
+      },
+      {
+        "arena_nodes": 416,
+        "boundary_summary_visits": 3448,
+        "bridge_pair_visits": 0,
+        "bridge_pairs_appended": 0,
+        "bridge_residual_pair_visits": 0,
+        "children": 1,
+        "construction_origin": "requested-region",
+        "crossing_records": 0,
+        "diagnostic_region": 2,
+        "generator_producer": "regional-storage-and-prerequisite-bridges",
+        "generators": null,
+        "id": 1,
+        "original_location": "loc(\"/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto\":43:5)",
+        "original_operation": "scf.for",
+        "original_region": 2,
+        "parent": 0,
+        "ports": 132,
+        "query_cache_entries": 0,
+        "reduced_records": null,
+        "reducer": "guarded-regional-frontiers",
+        "representation": "regional-sequence",
+        "storage_cells": 141
+      },
+      {
+        "arena_nodes": 416,
+        "boundary_summary_visits": 3448,
+        "bridge_pair_visits": 0,
+        "bridge_pairs_appended": 0,
+        "bridge_residual_pair_visits": 0,
+        "children": 2,
+        "construction_origin": "direct-composition",
+        "crossing_records": 0,
+        "endpoint_interface": true,
+        "generator_producer": "regional-storage-and-prerequisite-bridges",
+        "generators": null,
+        "id": 2,
+        "numeric_visit_preflight_bound_inclusive": 15768,
+        "parent": 1,
+        "phase_descriptions_inclusive": 8,
+        "physical_fragments_inclusive": 23180,
+        "ports": 178,
+        "query_cache_entries": 0,
+        "query_interface": true,
+        "query_types": 1796,
+        "reduced_records": null,
+        "reducer": "guarded-regional-frontiers",
+        "representation": "regional-sequence",
+        "rotating_residues_inclusive": 0,
+        "selector_interface": true,
+        "selector_partition_atoms_inclusive": 0,
+        "selector_partition_visits_inclusive": 0,
+        "storage_cells": 141,
+        "symbolic_effects": 5
+      },
+      {
+        "arena_nodes": 416,
+        "body_query_cache_entries": 0,
+        "distance_cache_entries": 0,
+        "endpoint_interface": true,
+        "generator_producer": "cross-visit-storage-and-native-boundaries",
+        "generators": 38,
+        "id": 3,
+        "numeric_visit_preflight_bound_inclusive": 15768,
+        "original_location": "loc(\"/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto\":43:5)",
+        "original_operation": "scf.for",
+        "parent": 2,
+        "phase_count": 4,
+        "phase_descriptions_inclusive": 4,
+        "physical_fragments_inclusive": 23180,
+        "query_cache_entries": 0,
+        "query_interface": true,
+        "query_types": 1796,
+        "reduced_records": 15,
+        "reducer": "repeated-boundary-frontiers",
+        "representation": "regional-repetition",
+        "rotating_residues_inclusive": 0,
+        "selector_interface": true,
+        "selector_partition_atoms_inclusive": 0,
+        "selector_partition_visits_inclusive": 0,
+        "storage_cells": 141,
+        "symbolic_effects": 5
+      },
+      {
+        "arena_nodes": 416,
+        "body_query_cache_entries": 0,
+        "distance_cache_entries": 0,
+        "endpoint_interface": true,
+        "generator_producer": "cross-visit-storage-and-native-boundaries",
+        "generators": 0,
+        "id": 4,
+        "numeric_visit_preflight_bound_inclusive": 0,
+        "original_location": "loc(\"/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto\":43:5)",
+        "original_operation": "scf.for",
+        "parent": 2,
+        "phase_count": 4,
+        "phase_descriptions_inclusive": 4,
+        "physical_fragments_inclusive": 0,
+        "query_cache_entries": 0,
+        "query_interface": true,
+        "query_types": 0,
+        "reduced_records": 0,
+        "reducer": "repeated-boundary-frontiers",
+        "representation": "regional-repetition",
+        "rotating_residues_inclusive": 0,
+        "selector_interface": true,
+        "selector_partition_atoms_inclusive": 0,
+        "selector_partition_visits_inclusive": 0,
+        "storage_cells": 0,
+        "symbolic_effects": 0
+      },
+      {
+        "arena_nodes": 416,
+        "boundary_summary_visits": 3448,
+        "bridge_pair_visits": 846,
+        "bridge_pairs_appended": 90,
+        "bridge_residual_pair_visits": 0,
+        "children": 4,
+        "construction_origin": "direct-composition",
+        "crossing_records": 21,
+        "endpoint_interface": true,
+        "generator_producer": "regional-storage-and-prerequisite-bridges",
+        "generators": null,
+        "id": 5,
+        "numeric_visit_preflight_bound_inclusive": 15768,
+        "parent": 3,
+        "phase_descriptions_inclusive": 0,
+        "physical_fragments_inclusive": 23180,
+        "ports": 128,
+        "query_cache_entries": 0,
+        "query_interface": true,
+        "query_types": 1796,
+        "reduced_records": null,
+        "reducer": "numerical-chain-composition",
+        "representation": "regional-sequence",
+        "rotating_residues_inclusive": 0,
+        "selector_interface": true,
+        "selector_partition_atoms_inclusive": 0,
+        "selector_partition_visits_inclusive": 0,
+        "storage_cells": 141,
+        "symbolic_effects": 0
+      },
+      {
+        "arena_nodes": 416,
+        "boundary_summary_visits": 0,
+        "bridge_pair_visits": 0,
+        "bridge_pairs_appended": 0,
+        "bridge_residual_pair_visits": 0,
+        "children": 4,
+        "construction_origin": "direct-composition",
+        "crossing_records": 0,
+        "endpoint_interface": true,
+        "generator_producer": "regional-storage-and-prerequisite-bridges",
+        "generators": null,
+        "id": 6,
+        "numeric_visit_preflight_bound_inclusive": 0,
+        "parent": 4,
+        "phase_descriptions_inclusive": 0,
+        "physical_fragments_inclusive": 0,
+        "ports": 0,
+        "query_cache_entries": 0,
+        "query_interface": true,
+        "query_types": 0,
+        "reduced_records": null,
+        "reducer": "numerical-chain-composition",
+        "representation": "regional-sequence",
+        "rotating_residues_inclusive": 0,
+        "selector_interface": true,
+        "selector_partition_atoms_inclusive": 0,
+        "selector_partition_visits_inclusive": 0,
+        "storage_cells": 0,
+        "symbolic_effects": 0
+      },
+      {
+        "arena_nodes": 416,
+        "endpoint_interface": true,
+        "generator_producer": "numeric-atom-lifetime-scan",
+        "generators": 1317,
+        "id": 7,
+        "input_sites": 449,
+        "numeric_visit_preflight_bound_inclusive": 3942,
+        "original_location": "loc(\"/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto\":43:5)",
+        "original_operation": "scf.for",
+        "parent": 5,
+        "phase_descriptions_inclusive": 0,
+        "physical_fragments_inclusive": 5795,
+        "query_interface": true,
+        "query_types": 449,
+        "reduced_records": 379,
+        "reducer": "explicit-per-pipe-rank",
+        "representation": "finite-numerical-body",
+        "rotating_residues_inclusive": 0,
+        "selector_interface": true,
+        "selector_partition_atoms_inclusive": 0,
+        "selector_partition_visits_inclusive": 0,
+        "storage_cells": 141,
+        "symbolic_effects": 0,
+        "visit_preflight_bound": 3942
+      },
+      {
+        "arena_nodes": 416,
+        "endpoint_interface": true,
+        "generator_producer": "numeric-atom-lifetime-scan",
+        "generators": 1317,
+        "id": 8,
+        "input_sites": 449,
+        "numeric_visit_preflight_bound_inclusive": 3942,
+        "original_location": "loc(\"/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto\":43:5)",
+        "original_operation": "scf.for",
+        "parent": 5,
+        "phase_descriptions_inclusive": 0,
+        "physical_fragments_inclusive": 5795,
+        "query_interface": true,
+        "query_types": 449,
+        "reduced_records": 379,
+        "reducer": "explicit-per-pipe-rank",
+        "representation": "finite-numerical-body",
+        "rotating_residues_inclusive": 0,
+        "selector_interface": true,
+        "selector_partition_atoms_inclusive": 0,
+        "selector_partition_visits_inclusive": 0,
+        "storage_cells": 141,
+        "symbolic_effects": 0,
+        "visit_preflight_bound": 3942
+      },
+      {
+        "arena_nodes": 416,
+        "endpoint_interface": true,
+        "generator_producer": "numeric-atom-lifetime-scan",
+        "generators": 1317,
+        "id": 9,
+        "input_sites": 449,
+        "numeric_visit_preflight_bound_inclusive": 3942,
+        "original_location": "loc(\"/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto\":43:5)",
+        "original_operation": "scf.for",
+        "parent": 5,
+        "phase_descriptions_inclusive": 0,
+        "physical_fragments_inclusive": 5795,
+        "query_interface": true,
+        "query_types": 449,
+        "reduced_records": 379,
+        "reducer": "explicit-per-pipe-rank",
+        "representation": "finite-numerical-body",
+        "rotating_residues_inclusive": 0,
+        "selector_interface": true,
+        "selector_partition_atoms_inclusive": 0,
+        "selector_partition_visits_inclusive": 0,
+        "storage_cells": 141,
+        "symbolic_effects": 0,
+        "visit_preflight_bound": 3942
+      },
+      {
+        "arena_nodes": 416,
+        "endpoint_interface": true,
+        "generator_producer": "numeric-atom-lifetime-scan",
+        "generators": 1317,
+        "id": 10,
+        "input_sites": 449,
+        "numeric_visit_preflight_bound_inclusive": 3942,
+        "original_location": "loc(\"/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/test/npu_validation/benchmarks/auto_sync/prepared/persistent_gemm/input.pto\":43:5)",
+        "original_operation": "scf.for",
+        "parent": 5,
+        "phase_descriptions_inclusive": 0,
+        "physical_fragments_inclusive": 5795,
+        "query_interface": true,
+        "query_types": 449,
+        "reduced_records": 379,
+        "reducer": "explicit-per-pipe-rank",
+        "representation": "finite-numerical-body",
+        "rotating_residues_inclusive": 0,
+        "selector_interface": true,
+        "selector_partition_atoms_inclusive": 0,
+        "selector_partition_visits_inclusive": 0,
+        "storage_cells": 141,
+        "symbolic_effects": 0,
+        "visit_preflight_bound": 3942
+      },
+      {
+        "arena_nodes": 416,
+        "boundary_summary_visits": 0,
+        "bridge_pair_visits": 0,
+        "bridge_pairs_appended": 0,
+        "bridge_residual_pair_visits": 0,
+        "children": 0,
+        "construction_origin": "direct-composition",
+        "crossing_records": 0,
+        "endpoint_interface": true,
+        "generator_producer": "regional-storage-and-prerequisite-bridges",
+        "generators": null,
+        "id": 11,
+        "numeric_visit_preflight_bound_inclusive": 0,
+        "parent": 6,
+        "phase_descriptions_inclusive": 0,
+        "physical_fragments_inclusive": 0,
+        "ports": 0,
+        "query_cache_entries": 0,
+        "query_interface": true,
+        "query_types": 0,
+        "reduced_records": null,
+        "reducer": "guarded-regional-frontiers",
+        "representation": "regional-sequence",
+        "rotating_residues_inclusive": 0,
+        "selector_interface": true,
+        "selector_partition_atoms_inclusive": 0,
+        "selector_partition_visits_inclusive": 0,
+        "storage_cells": 0,
+        "symbolic_effects": 0
+      },
+      {
+        "arena_nodes": 416,
+        "boundary_summary_visits": 0,
+        "bridge_pair_visits": 0,
+        "bridge_pairs_appended": 0,
+        "bridge_residual_pair_visits": 0,
+        "children": 0,
+        "construction_origin": "direct-composition",
+        "crossing_records": 0,
+        "endpoint_interface": true,
+        "generator_producer": "regional-storage-and-prerequisite-bridges",
+        "generators": null,
+        "id": 12,
+        "numeric_visit_preflight_bound_inclusive": 0,
+        "parent": 6,
+        "phase_descriptions_inclusive": 0,
+        "physical_fragments_inclusive": 0,
+        "ports": 0,
+        "query_cache_entries": 0,
+        "query_interface": true,
+        "query_types": 0,
+        "reduced_records": null,
+        "reducer": "guarded-regional-frontiers",
+        "representation": "regional-sequence",
+        "rotating_residues_inclusive": 0,
+        "selector_interface": true,
+        "selector_partition_atoms_inclusive": 0,
+        "selector_partition_visits_inclusive": 0,
+        "storage_cells": 0,
+        "symbolic_effects": 0
+      },
+      {
+        "arena_nodes": 416,
+        "boundary_summary_visits": 0,
+        "bridge_pair_visits": 0,
+        "bridge_pairs_appended": 0,
+        "bridge_residual_pair_visits": 0,
+        "children": 0,
+        "construction_origin": "direct-composition",
+        "crossing_records": 0,
+        "endpoint_interface": true,
+        "generator_producer": "regional-storage-and-prerequisite-bridges",
+        "generators": null,
+        "id": 13,
+        "numeric_visit_preflight_bound_inclusive": 0,
+        "parent": 6,
+        "phase_descriptions_inclusive": 0,
+        "physical_fragments_inclusive": 0,
+        "ports": 0,
+        "query_cache_entries": 0,
+        "query_interface": true,
+        "query_types": 0,
+        "reduced_records": null,
+        "reducer": "guarded-regional-frontiers",
+        "representation": "regional-sequence",
+        "rotating_residues_inclusive": 0,
+        "selector_interface": true,
+        "selector_partition_atoms_inclusive": 0,
+        "selector_partition_visits_inclusive": 0,
+        "storage_cells": 0,
+        "symbolic_effects": 0
+      },
+      {
+        "arena_nodes": 416,
+        "boundary_summary_visits": 0,
+        "bridge_pair_visits": 0,
+        "bridge_pairs_appended": 0,
+        "bridge_residual_pair_visits": 0,
+        "children": 0,
+        "construction_origin": "direct-composition",
+        "crossing_records": 0,
+        "endpoint_interface": true,
+        "generator_producer": "regional-storage-and-prerequisite-bridges",
+        "generators": null,
+        "id": 14,
+        "numeric_visit_preflight_bound_inclusive": 0,
+        "parent": 6,
+        "phase_descriptions_inclusive": 0,
+        "physical_fragments_inclusive": 0,
+        "ports": 0,
+        "query_cache_entries": 0,
+        "query_interface": true,
+        "query_types": 0,
+        "reduced_records": null,
+        "reducer": "guarded-regional-frontiers",
+        "representation": "regional-sequence",
+        "rotating_residues_inclusive": 0,
+        "selector_interface": true,
+        "selector_partition_atoms_inclusive": 0,
+        "selector_partition_visits_inclusive": 0,
+        "storage_cells": 0,
+        "symbolic_effects": 0
+      }
+    ],
+    "scope": "selected-retained-owners-only",
+    "version": 1
+  },
+  "coalescer_work": [
+    {
+      "cache_hits": 0,
+      "constructions": null,
+      "elapsed_ns": 0,
+      "exclusive_ns": 0,
+      "first_dispatches": 0,
+      "id": 99,
+      "method": "coalescer:constant",
+      "parent": 98,
+      "parent_request": 6,
+      "region": 0,
+      "request": 6,
+      "stage": "repeated-allocation-work",
+      "work": {
+        "elapsed_ns": 1182325789,
+        "envelope_accepted": 1537,
+        "envelope_qualification_ns": 252662,
+        "envelope_query_requests": 3064,
+        "envelope_requests": 1537,
+        "groups": 1537,
+        "member_pair_visits": 91609,
+        "members": 1537,
+        "proof_cache_hits": 201370,
+        "proof_ns": 3348,
+        "proof_requests": 201372,
+        "query_cache_hits": 1290,
+        "query_construction_ns": 1156450346,
+        "query_requests": 98265,
+        "summary_construction_ns": 179996,
+        "unique_query_constructions": 96975
+      }
+    },
+    {
+      "cache_hits": 0,
+      "constructions": null,
+      "elapsed_ns": 0,
+      "exclusive_ns": 0,
+      "first_dispatches": 0,
+      "id": 100,
+      "method": "coalescer:general",
+      "parent": 98,
+      "parent_request": 6,
+      "region": 0,
+      "request": 6,
+      "stage": "repeated-allocation-work",
+      "work": {
+        "elapsed_ns": 1182451636,
+        "envelope_accepted": 0,
+        "envelope_qualification_ns": 0,
+        "envelope_query_requests": 0,
+        "envelope_requests": 0,
+        "groups": 1537,
+        "member_pair_visits": 0,
+        "members": 1537,
+        "proof_cache_hits": 0,
+        "proof_ns": 0,
+        "proof_requests": 0,
+        "query_cache_hits": 0,
+        "query_construction_ns": 0,
+        "query_requests": 0,
+        "summary_construction_ns": 0,
+        "unique_query_constructions": 0
+      }
+    },
+    {
+      "cache_hits": 0,
+      "constructions": null,
+      "elapsed_ns": 0,
+      "exclusive_ns": 0,
+      "first_dispatches": 0,
+      "id": 102,
+      "method": "coalescer:general",
+      "parent": 98,
+      "parent_request": 6,
+      "region": 0,
+      "request": 6,
+      "stage": "repeated-allocation-work",
+      "work": {
+        "elapsed_ns": 1053,
+        "envelope_accepted": 0,
+        "envelope_qualification_ns": 0,
+        "envelope_query_requests": 0,
+        "envelope_requests": 0,
+        "groups": 0,
+        "member_pair_visits": 0,
+        "members": 0,
+        "proof_cache_hits": 0,
+        "proof_ns": 0,
+        "proof_requests": 0,
+        "query_cache_hits": 0,
+        "query_construction_ns": 0,
+        "query_requests": 0,
+        "summary_construction_ns": 314,
+        "unique_query_constructions": 0
+      }
+    }
+  ],
+  "coalescer_time_scope": "inclusive spans; nested timers and delegated general/constant spans overlap; do not sum",
+  "semantic": {
+    "passed": 8,
+    "unresolved": 1,
+    "access_descriptions_compared": 730,
+    "event_query_entries_compared": 203192,
+    "local_selector_probes": 602,
+    "flat_retained_covers_compared": 226,
+    "cases": [
+      {
+        "name": "w1-k1-i1-c0-e1",
+        "spec": [
+          1,
+          1,
+          1,
+          0,
+          1
+        ],
+        "input_sha256": "5a467d63a2fed37b8ac73841efe094feef11abf4b8dea44894500d524a361d82",
+        "selected_backend": "identity-sequence",
+        "access_comparisons": 13,
+        "potential_occurrences": 9,
+        "payloads": 6,
+        "event_query_comparisons": 324,
+        "storage_probes": 43,
+        "minimum_covers": 4,
+        "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; regional closure agrees; raw regional record minimality not enumerated",
+        "extra_ci": 0,
+        "extra_witness": null,
+        "missing_ci": 0,
+        "physical_reuse": "passed",
+        "status": "passed"
+      },
+      {
+        "name": "w2-k2-i2-c0-e1",
+        "spec": [
+          2,
+          2,
+          2,
+          0,
+          1
+        ],
+        "input_sha256": "f4fd88d6fe7b81c8d4a4a40510ef999a53f4cf49455b155b6e15a436958fc665",
+        "selected_backend": "identity-sequence",
+        "access_comparisons": 82,
+        "potential_occurrences": 46,
+        "payloads": 34,
+        "event_query_comparisons": 8464,
+        "storage_probes": 111,
+        "minimum_covers": 29,
+        "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; regional closure agrees; raw regional record minimality not enumerated",
+        "extra_ci": 0,
+        "extra_witness": null,
+        "missing_ci": 0,
+        "physical_reuse": "passed",
+        "status": "passed"
+      },
+      {
+        "name": "w2-k3-i4-c255-e1",
+        "spec": [
+          2,
+          3,
+          4,
+          255,
+          1
+        ],
+        "input_sha256": "e7dd5a15e1d2a315ae82b5fdf7e44cd3c2dc1e527cdf6643c9ab1ed81a9abb78",
+        "selected_backend": "identity-sequence",
+        "access_comparisons": 109,
+        "potential_occurrences": 114,
+        "payloads": 43,
+        "event_query_comparisons": 51984,
+        "storage_probes": 145,
+        "minimum_covers": 31,
+        "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; regional closure agrees; raw regional record minimality not enumerated",
+        "extra_ci": 0,
+        "extra_witness": null,
+        "missing_ci": 0,
+        "physical_reuse": "passed",
+        "status": "passed"
+      },
+      {
+        "name": "w1-k0-i2-c0-e1",
+        "spec": [
+          1,
+          0,
+          2,
+          0,
+          1
+        ],
+        "input_sha256": "711a2c3ffdc4968448731769113d369dd09299f2434437223223f6d6a1c936fb",
+        "selected_backend": "identity-sequence",
+        "access_comparisons": 6,
+        "potential_occurrences": 3,
+        "payloads": 3,
+        "event_query_comparisons": 36,
+        "storage_probes": 6,
+        "minimum_covers": 0,
+        "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; regional closure agrees; raw regional record minimality not enumerated",
+        "extra_ci": 0,
+        "extra_witness": null,
+        "missing_ci": 0,
+        "physical_reuse": "passed",
+        "status": "passed"
+      },
+      {
+        "name": "w0-k3-i4-c0-e1",
+        "spec": [
+          0,
+          3,
+          4,
+          0,
+          1
+        ],
+        "input_sha256": "d2a5972fabd49027c186e23256645ae7396b5b92e2eec6b42620a93504f1e3bc",
+        "selected_backend": "identity-sequence",
+        "access_comparisons": 0,
+        "potential_occurrences": 0,
+        "payloads": 0,
+        "event_query_comparisons": 0,
+        "storage_probes": 0,
+        "minimum_covers": 0,
+        "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; regional closure agrees; raw regional record minimality not enumerated",
+        "extra_ci": 0,
+        "extra_witness": null,
+        "missing_ci": 0,
+        "physical_reuse": "passed",
+        "status": "passed"
+      },
+      {
+        "name": "w2-k1-i0-c0-e1",
+        "spec": [
+          2,
+          1,
+          0,
+          0,
+          1
+        ],
+        "input_sha256": "6ba90482d60dc1517d0633a5074c489ca52f41f1334d95a351d494e149deaf38",
+        "selected_backend": "identity-sequence",
+        "access_comparisons": 12,
+        "potential_occurrences": 10,
+        "payloads": 6,
+        "event_query_comparisons": 400,
+        "storage_probes": 7,
+        "minimum_covers": 2,
+        "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; regional closure agrees; raw regional record minimality not enumerated",
+        "extra_ci": 2,
+        "extra_witness": {
+          "source": {
+            "phase": 1,
+            "coordinates": [
+              0
+            ],
+            "pipe": 4
+          },
+          "target": {
+            "phase": 0,
+            "coordinates": [
+              1
+            ],
+            "pipe": 4
+          }
+        },
+        "missing_ci": 0,
+        "physical_reuse": "passed",
+        "status": "passed"
+      },
+      {
+        "name": "w2-k3-i4-c0-e1",
+        "spec": [
+          2,
+          3,
+          4,
+          0,
+          1
+        ],
+        "input_sha256": "8e2114462404d7961c5957a76978d28e93d170a231af59f88645dfc12e163a11",
+        "selected_backend": "identity-sequence",
+        "access_comparisons": 218,
+        "potential_occurrences": 114,
+        "payloads": 86,
+        "event_query_comparisons": 51984,
+        "storage_probes": 145,
+        "minimum_covers": 67,
+        "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; regional closure agrees; raw regional record minimality not enumerated",
+        "extra_ci": 0,
+        "extra_witness": null,
+        "missing_ci": 0,
+        "physical_reuse": "passed",
+        "status": "passed"
+      },
+      {
+        "name": "w2-k4-i4-c0-e1",
+        "spec": [
+          2,
+          4,
+          4,
+          0,
+          1
+        ],
+        "input_sha256": "461f89943e860b4812e1e6ad0a94c39a0c49ee62c0f433eaa86c967d1363f402",
+        "selected_backend": "identity-sequence",
+        "access_comparisons": 290,
+        "potential_occurrences": 150,
+        "payloads": 114,
+        "event_query_comparisons": 90000,
+        "storage_probes": 145,
+        "minimum_covers": 93,
+        "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; regional closure agrees; raw regional record minimality not enumerated",
+        "extra_ci": 0,
+        "extra_witness": null,
+        "missing_ci": 0,
+        "physical_reuse": "passed",
+        "status": "passed"
+      },
+      {
+        "spec": [
+          2,
+          2,
+          2,
+          0,
+          2
+        ],
+        "status": "unresolved",
+        "reason": "selected completion owner has no exact root query export; GM discharge and numerical interfaces unavailable"
+      }
+    ],
+    "probe_sha256": "2bb7bdc93c6e00d7834d71a3e90b506e7d0620a85c5df6e421e3b2a9476661a0",
+    "optimizer_sha256": "35d10acb308dee55acab4b9ed98c3a6535717a56677f29824827a5c1b2cb72b2",
+    "oracle_limitations": [
+      "declared layout, not native instruction footprint qualification",
+      "explicit GM disjointness and ACC protection assumptions",
+      "all four regional queries checked; raw regional reduced-record expansion not independently enumerated",
+      "GM storage-selector probes excluded",
+      "nonnegative constant loop coordinates only",
+      "zero-inner structural derivative is not a numerical GEMM output test"
+    ]
+  },
+  "trace_comparison": [
+    {
+      "core": 0,
+      "events": 15860,
+      "complete_arrays_equal_to_preinstrumentation": true
+    },
+    {
+      "core": 19,
+      "events": 14639,
+      "complete_arrays_equal_to_preinstrumentation": true
+    }
+  ],
+  "byte_identical_ir_claim": false,
+  "scaling": {
+    "revision": "e54d19e91cdf7c54a6b6738f0f0bd1b67cdb9f44",
+    "optimizer_sha256": "0014000b849b06b79938abb3e4f8a71ca7e14ca87297fb9f19281306d374ad8a",
+    "scope": "original production requests, three serial runs; instrumented runs separate; no audit",
+    "cases": [
+      {
+        "name": "trips-2",
+        "input_sha256": "199e3bcd8d8aa3ffc84a2e63679db0ed953f21ccf8828e1fa5a8b6dfed3283ca",
+        "runs": {
+          "logical-only": {
+            "status": "success",
+            "seconds": [
+              0.21543561713770032,
+              0.21605382999405265,
+              0.21573829231783748
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-2/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-2/logical-only.pto"
+            ],
+            "profile_status": 0
+          },
+          "allocation-support": {
+            "status": "success",
+            "seconds": [
+              0.21516908705234528,
+              0.21543332608416677,
+              0.2155025419779122
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5 profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-2/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-2/allocation-support.pto"
+            ],
+            "profile_status": 0
+          }
+        }
+      },
+      {
+        "name": "trips-4",
+        "input_sha256": "461f89943e860b4812e1e6ad0a94c39a0c49ee62c0f433eaa86c967d1363f402",
+        "runs": {
+          "logical-only": {
+            "status": "success",
+            "seconds": [
+              0.2152111162431538,
+              0.21532523399218917,
+              0.21535308798775077
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-4/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-4/logical-only.pto"
+            ],
+            "profile_status": 0
+          },
+          "allocation-support": {
+            "status": "success",
+            "seconds": [
+              0.2653660299256444,
+              0.26542949164286256,
+              0.2654525600373745
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5 profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-4/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-4/allocation-support.pto"
+            ],
+            "profile_status": 0
+          }
+        }
+      },
+      {
+        "name": "trips-8",
+        "input_sha256": "176230c7826e0a34cc3836e2578f3ebb5f56bc043ab934f452e21f18a0db61e5",
+        "runs": {
+          "logical-only": {
+            "status": "success",
+            "seconds": [
+              0.2659285836853087,
+              0.26591542828828096,
+              0.2654739269055426
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-8/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-8/logical-only.pto"
+            ],
+            "profile_status": 0
+          },
+          "allocation-support": {
+            "status": "success",
+            "seconds": [
+              0.3154057776555419,
+              0.31554546719416976,
+              0.3156286389566958
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5 profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-8/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-8/allocation-support.pto"
+            ],
+            "profile_status": 0
+          }
+        }
+      },
+      {
+        "name": "trips-16",
+        "input_sha256": "0b47c77ceb8777f55980edd00a4c30e99a31527574b44a5ecbf7c4e6bd0a01a0",
+        "runs": {
+          "logical-only": {
+            "status": "success",
+            "seconds": [
+              0.26537493895739317,
+              0.26559382025152445,
+              0.2654119022190571
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-16/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-16/logical-only.pto"
+            ],
+            "profile_status": 0
+          },
+          "allocation-support": {
+            "status": "success",
+            "seconds": [
+              0.5656580296345055,
+              0.5658966852352023,
+              0.5659865671768785
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5 profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-16/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-16/allocation-support.pto"
+            ],
+            "profile_status": 0
+          }
+        }
+      },
+      {
+        "name": "trips-32",
+        "input_sha256": "c02f58c2562bad37066ded023e7a0f3c7d51ac687c6779d6a4d5fa3e68858d3d",
+        "runs": {
+          "logical-only": {
+            "status": "success",
+            "seconds": [
+              0.31536730006337166,
+              0.3657750659622252,
+              0.3664242150261998
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-32/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-32/logical-only.pto"
+            ],
+            "profile_status": 0
+          },
+          "allocation-support": {
+            "status": "success",
+            "seconds": [
+              1.9174544112756848,
+              1.9176090778782964,
+              1.9181167068891227
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5 profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-32/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/trips-32/allocation-support.pto"
+            ],
+            "profile_status": 0
+          }
+        }
+      },
+      {
+        "name": "static-stages-1",
+        "input_sha256": "84455e54cd6ed7f80fa8961d3b232d1cca6110e958e0ce4bd0baa8b8005bcb16",
+        "runs": {
+          "logical-only": {
+            "status": "watchdog",
+            "seconds": [
+              120.0071742250584
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/static-stages-1/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/static-stages-1/logical-only.pto"
+            ]
+          },
+          "allocation-support": {
+            "status": "watchdog",
+            "seconds": [
+              120.00715458905324
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/static-stages-1/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/static-stages-1/allocation-support.pto"
+            ]
+          }
+        }
+      },
+      {
+        "name": "static-stages-2",
+        "input_sha256": "982fdbc4746025fbee1ff2f59beb56f877a40d56385edaded10811f8915bfada",
+        "runs": {
+          "logical-only": {
+            "status": "watchdog",
+            "seconds": [
+              120.05638604983687
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/static-stages-2/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/static-stages-2/logical-only.pto"
+            ]
+          },
+          "allocation-support": {
+            "status": "watchdog",
+            "seconds": [
+              120.05462423572317
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/static-stages-2/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/static-stages-2/allocation-support.pto"
+            ]
+          }
+        }
+      },
+      {
+        "name": "static-stages-4",
+        "input_sha256": "95126f06e0ddf34c6d4a478054b548d9b5328338b2973ab5b3f015a6f1a21eb1",
+        "runs": {
+          "logical-only": {
+            "status": "success",
+            "seconds": [
+              0.21517567010596395,
+              0.2154997382313013,
+              0.2153855673968792
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/static-stages-4/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/static-stages-4/logical-only.pto"
+            ],
+            "profile_status": 0
+          },
+          "allocation-support": {
+            "status": "success",
+            "seconds": [
+              0.2654359922744334,
+              0.26557849207893014,
+              0.2655860190279782
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5 profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/static-stages-4/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/static-stages-4/allocation-support.pto"
+            ],
+            "profile_status": 0
+          }
+        }
+      },
+      {
+        "name": "nesting-0",
+        "input_sha256": "f4fd88d6fe7b81c8d4a4a40510ef999a53f4cf49455b155b6e15a436958fc665",
+        "runs": {
+          "logical-only": {
+            "status": "success",
+            "seconds": [
+              0.21540450118482113,
+              0.2155685443431139,
+              0.21537666907534003
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/nesting-0/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/nesting-0/logical-only.pto"
+            ],
+            "profile_status": 0
+          },
+          "allocation-support": {
+            "status": "success",
+            "seconds": [
+              0.21525744581595063,
+              0.2154077268205583,
+              0.2153609679080546
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5 profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/nesting-0/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/nesting-0/allocation-support.pto"
+            ],
+            "profile_status": 0
+          }
+        }
+      },
+      {
+        "name": "nesting-1",
+        "input_sha256": "6e3d4d124af5a92c75fe8359573b39d31d44859011a717dc4e12dcf1cfa37178",
+        "runs": {
+          "logical-only": {
+            "status": "success",
+            "seconds": [
+              0.36552082328125834,
+              0.3658026522025466,
+              0.3658532458357513
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/nesting-1/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/nesting-1/logical-only.pto"
+            ],
+            "profile_status": 0
+          },
+          "allocation-support": {
+            "status": "success",
+            "seconds": [
+              0.41568826604634523,
+              0.3662150208838284,
+              0.36572545720264316
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5 profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/nesting-1/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/nesting-1/allocation-support.pto"
+            ],
+            "profile_status": 0
+          }
+        }
+      },
+      {
+        "name": "nesting-2",
+        "input_sha256": "3993470121d737f86b1030dddb428953c285efe6d8ed71f1367bcacacfae6c1f",
+        "runs": {
+          "logical-only": {
+            "status": "success",
+            "seconds": [
+              0.7662379429675639,
+              0.716110723093152,
+              0.7663796860724688
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/nesting-2/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/nesting-2/logical-only.pto"
+            ],
+            "profile_status": 0
+          },
+          "allocation-support": {
+            "status": "success",
+            "seconds": [
+              0.8163825697265565,
+              0.8166571310721338,
+              0.7668131459504366
+            ],
+            "command": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+              "--mlir-disable-threading",
+              "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5 profile-stages=true",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/nesting-2/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/compact-demand-experiment/scaling/nesting-2/allocation-support.pto"
+            ],
+            "profile_status": 0
+          }
+        }
+      }
+    ]
+  },
+  "scaling_scope": "three serial launcher-wall samples per production route; no audit; no speedup claim; later diagnostics may overlap a separately pinned worker",
+  "watchdog_attribution": {
+    "variant": "static-stages-1",
+    "allocation_requested": false,
+    "sample_seconds": 5,
+    "stack": "ArithmeticRegional::finiteBoundaries -> State::storage/selected -> RegionExpressions::integerPredicate -> arbitrary-precision arithmetic",
+    "exclusive_cost_claim": false,
+    "artifact_sha256": "604bf0f3f707cc06cfb3cabe58aa3e80d7540342eb240333da007d9f3c75355f"
+  },
+  "validation": {
+    "focused_lit": "7/7 fresh; no full-suite rerun",
+    "build": "pto-test-opt, pto-sync-input-test, PTOASCompiler, PTOASPythonCore incremental targets passed",
+    "source_review": "ACCEPT by correctness_review for instrumentation/test checkpoint; no production correctness blocker",
+    "compliance": "real line-width errors fixed; 16 G.FMT.11 regex false positives manually checked (nested condition calls, actual braces present); 6 weak_ptr.lock mutex warnings false positives; no compiler warning introduced",
+    "device_compilation": "not_run",
+    "device_execution": "not_run"
+  },
+  "raw_artifacts": {
+    "baseline.json": "bda1bb9794eb8685612e100866c27e426d5c4a9a5babe0a72488e2e01201c189",
+    "checkpoint2-final.json": "0adb1ad5d349a3e40bf93f64961acbab9fb5bc2ef198b850f6c98a41b50bea6d",
+    "section5-final/results.json": "bd90fb811aee42fda5d96587031d715d73d10a0c0040d277d96bb4d3927debc1",
+    "scaling/results.json": "cc27acb04ad1b08a3f360340ed1667e7eb52521978e4441f74c77b31d9743f36",
+    "lit-final.log": "b7e13e71058fef139bfb5b4aff08c86a76a902dba39e94e58bf2d60595b887d1",
+    "compliance-final.log": "b7580db883f037262b6ea5ce227a51266b1be403759ae86f402b61f4cfa9a9d6",
+    "static-stage-stack-unsandboxed.log": "604bf0f3f707cc06cfb3cabe58aa3e80d7540342eb240333da007d9f3c75355f"
+  }
+}

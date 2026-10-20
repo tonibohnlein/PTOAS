@@ -1,0 +1,1000 @@
+{
+  "schema": 1,
+  "date": "2026-10-19",
+  "source": {
+    "revision": "e54d19e91cdf7c54a6b6738f0f0bd1b67cdb9f44",
+    "branch": "codex/frontier-shared-input",
+    "dirty": true,
+    "files_sha256": {
+      "include/PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h": "3697f1c069efb4b3e83d407bb81ef8f3cdd0f6234475aa4e4ccde76fded265c5",
+      "lib/PTO/Transforms/CMakeLists.txt": "5409e9ccd994cf85c677f16bf0412b133f39444b84fab01d85784cb91498241a",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RegionalSelectorPartition.cpp": "7dd1c8c70c6a2f5dd795830f38eae3651c7968ae9c27071360e797e94200dc0d",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RegionalSelectorPartition.h": "ced435fd8e2c6f6c35278593811e94d3c3cd5dc6352ff3c100ebbf7de29b3554",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceAdapters.cpp": "77f39676b1af5b8b2ce03298837a805d1d6fcc6e44b96caf1181035c3b1fa4ae",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedPhases.cpp": "e0e61ea1ec91950dc19fadf4edc9f7d03fbe6c2e15b50e6292d9f51bf448d391",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedReadOnlyStorage.cpp": "c07d01eb2caf5bbb219ea8fd9e6fdc43b7b408c9fcbea8706d578aba6f3e4fbc",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedFiniteStorage.cpp": "9661bebc281e8a1aca78472413aae100c0deb2ce46b09b6b4444b6d4a79d7fd6",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedStorage.cpp": "2946288c8546de5504fdb370f99be2f7a3248a19c7401ee21193d6dd93489122",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedStorageInternal.h": "c3302d890a2399d918c31371844c14573d441eddb3bb1d12a2664133f3ff58f0",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedStorageSupport.cpp": "adb8223335de7792624de69db27133a490847696a4bc8d5bb981fc72cdd7755c",
+      "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.cpp": "d64a148fa491cb85d097e5a9a404413e80b1902b6dc50ba52486c58c7eb6ac10",
+      "lib/PTO/Transforms/FrontierSynch/Finite/FiniteRegional.cpp": "64e088736085403cdfea229a571aff8457bd50753d3f77a484d96945bffca38c",
+      "tools/pto-test-opt/CompactRegionContractChecks.cpp": "196428ba6696c81665912e69be20b3917272860795fc5cad18c97e8ccd676ff8",
+      "include/PTO/Transforms/FrontierSynch/Shared/RegionalAllocation.h": "86e9685eb7a76ec8ae4172a75e288a6f0ce4ac5e166a3ac49b5a5d7b1dd5be41",
+      "lib/PTO/Transforms/FrontierSynch/FrontierAnalysis.cpp": "6ec50e77026230199a5f03b0f5f2745afb03cd8e14f6b2193d8999ad73f5fe3d",
+      "lib/PTO/Transforms/FrontierSynch/Shared/PhasedRecognition.cpp": "dce0185518256d8670a4902c76917047b48889e3aa35cc1e8d2da8dc969221e7",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RegionalConstantPalette.cpp": "2fab2f88f7aaebcdf18c41fb22c608694df9c6553323d52bbb44497a10fcaebc",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RegionalConstantPalette.h": "cc3bad82c44635fd4a946061caa45bb41acc41adcafb6abc6aa39af73f090210",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RegionalPalette.cpp": "07755287cca3b577c10cfbc9e92c39b423c5a5c445d4af99c810e168c942b372",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedAllocation.cpp": "30a73df5566bc0ad16ba217c6619fb118730a8a5e6f6e937d9f2ef50d95f3fc7",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedRecognition.cpp": "cab185f00bbfc9ee1b1cb541f4926f294a18d63d4b9e0d08655fa2f12ff73cd2",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedRegionExports.cpp": "8cb7800264be6a2e0bbfe60162c379a5e9623ad3db32591c521f52702946247d",
+      "lib/PTO/Transforms/FrontierSynch/Shared/RepeatedStorageGeometry.cpp": "df374d414aa0f5df3f3a75671f65780b35faba72bebefcb570699edc18626d4b",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SequenceStorage.cpp": "e6c1101b457a03056731e34eb8559f5103a934afdc034b612bf015a04858ab3e",
+      "lib/PTO/Transforms/FrontierSynch/Structured/NumericTemplateRegional.cpp": "d1f3385f802e7d3fd15daee6214b91e98397c6709feb02d31b060b259bf87e5f",
+      "test/lit/pto/Inputs/check_frontier_stage_profile.py": "e5815e802205133d8e4a994a0d7338d87e43a45508309808eed55325375a65d1",
+      "test/lit/pto/Inputs/check_repeated_allocation_profile.py": "05d736d1f8730349d946cfed2b3f6eec024713e49bf7f3c0822f90c7cf275674",
+      "tools/pto-test-opt/CMakeLists.txt": "c853d5a96d485f42a5be6972fe6367a61806155043cf12b094a16f633dc9b9f1",
+      "tools/pto-test-opt/RepeatedReadOnlyStorageChecks.cpp": "ce110d0c5f08bad8daa462ae80ca90b1524f57cd982229d60d71a4b156db34df",
+      "tools/pto-test-opt/RepeatedStorageChecks.cpp": "ee5d6c04ba38e5951a59dc935b2a52e6a5236803b7b8873d6b16eb17432d3dfe",
+      "tools/pto-test-opt/pto-sync-input-test.cpp": "a9e713e0f0f4ee0cc2f2a8693c3bc6bde9fd57242a36edd79e508d4afb82389f",
+      "test/lit/pto/Inputs/check_compact_replay_checkpoint.py": "68daaca96440e2bd738f4505cef0efb3dc9b0c28e173219feb2d9434a19f0499",
+      "test/lit/pto/Inputs/check_storage_export_coverage.py": "23e62f6bf843133d397b2e2534882c7c32148784588238324edc6027805e1a7d",
+      "test/lit/pto/Inputs/profile_compact_replay.py": "943b583f0409fc31e00d28e85e0a13e5904581ecc288ab91900f6f6ac3dde4c6",
+      "test/lit/pto/Inputs/survey_pypto_regions.py": "7be78c33117ed157dbc9c9311f602f6f82d6734932842f564b9d22a3338fff07",
+      "test/lit/pto/Inputs/check_compact_persistent_contract.py": "d29bb8611c902f77829ab2f28ae858c8814cfe844cb2fae6cbd835bed2ab108b",
+      "test/lit/pto/sync_storage_export_coverage.pto": "3f9f8282bd61aa020603703e8e40e6315eaeee8db9c28283301b8b66de380e0c",
+      "test/lit/pto/sync_compact_replay_scaling.pto": "2c95e0796d6ba3ecb398b21269a28f455afd1716929401b5cb81727d31c368b7"
+    },
+    "snapshot_files_match": true
+  },
+  "environment": {
+    "target": "a3",
+    "alias_policy": "gm-alias=may-not-alias (supplied disjoint arguments)",
+    "python": "3.12.13",
+    "llvm_revision": "fa2fd1f75d742fec91ecf40d98c9c7961647ec42",
+    "aggregate_worker_limit": 2,
+    "device_compile": false,
+    "device_execution": false
+  },
+  "baseline_pins": {
+    "head": "e54d19e91cdf7c54a6b6738f0f0bd1b67cdb9f44",
+    "dirty_tree": true,
+    "baseline_receipts": [
+      "docs/designs/frontier-expert-replay-checkpoint-20261019.json",
+      "docs/designs/frontier-pypto-region-survey-20261019.json"
+    ],
+    "tools": {
+      ".local/storage-export-replay/baseline/pto-sync-input-test": "9b62047ca51018d2de81749fa495f00422f734e8584265efa89d570e9dedb5da",
+      ".local/storage-export-replay/baseline/pto-test-opt": "ae0eba9b93ad85f02fa5e87b1308b4d2726d48f3b46dc5fb65b750682262f290"
+    }
+  },
+  "tools": {
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test": "820cf1c0aff649705f1dbdc1ba0df547ce39fd638cb7643bb96f328c0c7a37e3",
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt": "94a3e06638d036d2aceb0ab86e5d90b17bb643ed3679c07d8278dd369c1065bd"
+  },
+  "receipts": {
+    "focused_gate": {
+      "path": ".local/storage-export-replay/accepted-gate.json",
+      "sha256": "3df8450959a44ef3135321cac6ba18b2ec168abd05f61904907da3d66d9705b5"
+    },
+    "full_compact": {
+      "path": ".local/storage-export-replay/full-compact-regression/results.json",
+      "sha256": "8df997e34507b0a1cb60b83896b2fe65fec36e1e8a82a6d4a4cc03f3c121356a"
+    },
+    "replay_pipeline": {
+      "path": ".local/storage-export-replay/replay-pipeline/results.json",
+      "sha256": "1497bb1f26cea6782b550c4046b7e0257b41ba3b19c1937701db5f826a299e26"
+    },
+    "replay_contracts": {
+      "path": ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_expert_replay_checkpoint.pto.tmp.replay/results.json",
+      "sha256": "fc7a89d2e658e1ff8e921840f38dce8b255007b59e24465f1d70dc9278d980d4"
+    },
+    "pypto_children": {
+      "path": ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_pypto_region_survey.pto.tmp.children/results.json",
+      "sha256": "3029b1861e7b862b04324290bd661457d4a6de593141bec15e5fd82912c58c46"
+    },
+    "pypto_rms": {
+      "path": ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_pypto_region_survey.pto.tmp.rms/results.json",
+      "sha256": "d3e46a0f5e159a5de314bbd90a6ad76361145360c14e1fad46f08d28817bf548"
+    },
+    "root_recheck": {
+      "path": ".local/storage-export-replay/region-recheck/results.json",
+      "sha256": "7c70419a5951cf54a79fd728130da1d8e1b312623c91a776114c2731bb69c678"
+    },
+    "scaling": {
+      "path": ".local/storage-export-replay/scaling/results.json",
+      "sha256": "d5a498603011a1e46fff3c58b884bde9d21702ae5dd5a820df54d2dcef89db6b"
+    },
+    "cpp": {
+      "path": ".local/storage-export-replay/cpp-results.json",
+      "sha256": "758d4e5261e5ddf0dbecf189b253b15565618e46af422a997bf010232c733d24"
+    },
+    "gm_inputs": {
+      "path": ".local/storage-export-replay/gm-input-results.json",
+      "sha256": "962d888dfe3b4172268b8ab95299b9740be9bca8e0d076adf527fbf39220111f"
+    },
+    "baseline": {
+      "path": ".local/storage-export-replay/baseline-comparison.json",
+      "sha256": "0f07ba3a6c8779a7aaa3eb70cdb3383c3cd108d06b178b7f7534c6bcd0b6d750"
+    },
+    "commands": {
+      "path": ".local/storage-export-replay/final-commands.json",
+      "sha256": "4d946c70dc7f645f0a25491c2bdcdbec1b355bbcd89c16b650546325c6595992"
+    }
+  },
+  "validation": {
+    "focused_gate": {
+      "passed": 17,
+      "total": 17,
+      "command": [
+        ".venv/bin/python",
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_storage_export_coverage.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_compact_replay_scaling.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_pypto_region_survey.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_expert_replay_checkpoint.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_compact_persistent_contract.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_repeated_storage.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_repeated_region.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_finite_allocation.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_analysis.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_sequence_bridge_work.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_finite_guarded_analysis.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_finite_family_pipeline.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_finite_partition_macro.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_finite_qualification.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_finite_emission_scaling.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_finite_crossing_recipe.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit/pto/sync_repeated_allocation_profile.pto"
+      ],
+      "path_prefix": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.venv/bin",
+      "returncode": 0,
+      "seconds": 141.75874609686434,
+      "workers": 1
+    },
+    "full_compact": {
+      "passed": 11,
+      "complete": true
+    },
+    "replay_pipeline": [
+      {
+        "name": "w2-k2-i2-c0-e0",
+        "spec": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "input_sha256": "3420e50caca544040e95efbded3e7463e7dc709f30c1f210d190c7a2732f21c6",
+        "selected_backend": "identity-sequence",
+        "access_comparisons": 0,
+        "potential_occurrences": 0,
+        "payloads": 0,
+        "event_query_comparisons": 0,
+        "storage_probes": 0,
+        "minimum_covers": 0,
+        "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; actual retained regional records are expanded and deduplicated against the same covers",
+        "extra_ci": 0,
+        "extra_witness": null,
+        "missing_ci": 0,
+        "physical_reuse": "passed",
+        "seconds": {
+          "contract_probe": 0.1153806229121983,
+          "production_logical": 0.26622781716287136,
+          "allocation": 0.26413419703021646
+        },
+        "status": "passed"
+      },
+      {
+        "name": "w2-k2-i2-c0-e1",
+        "spec": [
+          2,
+          2,
+          2,
+          0,
+          1
+        ],
+        "input_sha256": "3082a5109fd520d6ff3af5d273722477d5d450541d3b25073d6150a77ad7b1f9",
+        "selected_backend": "identity-sequence",
+        "access_comparisons": 82,
+        "potential_occurrences": 46,
+        "payloads": 34,
+        "event_query_comparisons": 8464,
+        "storage_probes": 111,
+        "minimum_covers": 29,
+        "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; actual retained regional records are expanded and deduplicated against the same covers",
+        "extra_ci": 0,
+        "extra_witness": null,
+        "missing_ci": 0,
+        "physical_reuse": "passed",
+        "seconds": {
+          "contract_probe": 0.9210950662381947,
+          "production_logical": 0.467025529127568,
+          "allocation": 0.26591881876811385
+        },
+        "status": "passed"
+      },
+      {
+        "name": "w2-k2-i2-c0-e2",
+        "spec": [
+          2,
+          2,
+          2,
+          0,
+          2
+        ],
+        "input_sha256": "d35265565a5776f7fcc94f65cc16283d9ca484eee85ee1316fbe88714a3c5539",
+        "selected_backend": "identity-sequence",
+        "access_comparisons": 164,
+        "potential_occurrences": 92,
+        "payloads": 68,
+        "event_query_comparisons": 33856,
+        "storage_probes": 111,
+        "minimum_covers": 65,
+        "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; actual retained regional records are expanded and deduplicated against the same covers",
+        "extra_ci": 0,
+        "extra_witness": null,
+        "missing_ci": 0,
+        "physical_reuse": "passed",
+        "seconds": {
+          "contract_probe": 1.0729883182793856,
+          "production_logical": 0.46994637697935104,
+          "allocation": 0.266742292791605
+        },
+        "status": "passed"
+      },
+      {
+        "name": "w2-k2-i2-c0-e3",
+        "spec": [
+          2,
+          2,
+          2,
+          0,
+          3
+        ],
+        "input_sha256": "c6011a37593e7d5a182b920c11cee823824136c8d630b4660711b807972eb6db",
+        "selected_backend": "identity-sequence",
+        "access_comparisons": 246,
+        "potential_occurrences": 138,
+        "payloads": 102,
+        "event_query_comparisons": 76176,
+        "storage_probes": 111,
+        "minimum_covers": 101,
+        "cover_scope": "Independent interval graph covers agree with flat explicit retained edges; actual retained regional records are expanded and deduplicated against the same covers",
+        "extra_ci": 0,
+        "extra_witness": null,
+        "missing_ci": 0,
+        "physical_reuse": "passed",
+        "seconds": {
+          "contract_probe": 1.2743889270350337,
+          "production_logical": 0.2653427799232304,
+          "allocation": 0.16523613780736923
+        },
+        "status": "passed"
+      }
+    ],
+    "replay_interfaces": [
+      {
+        "epochs": 0,
+        "error": "",
+        "independent_contract": {
+          "active_occurrences": 0,
+          "covers": 0,
+          "event_query_comparisons": 0,
+          "local_cell_queries": 0
+        },
+        "independent_gm_selector": {
+          "active_occurrences": 0,
+          "covers": 0,
+          "event_query_comparisons": 0,
+          "local_cell_queries": 1
+        },
+        "gm_conflicts_already_in_local_closure": true
+      },
+      {
+        "epochs": 1,
+        "error": "",
+        "independent_contract": {
+          "active_occurrences": 34,
+          "covers": 29,
+          "event_query_comparisons": 8464,
+          "local_cell_queries": 111
+        },
+        "independent_gm_selector": {
+          "active_occurrences": 34,
+          "covers": 29,
+          "event_query_comparisons": 8464,
+          "local_cell_queries": 1280
+        },
+        "gm_conflicts_already_in_local_closure": true
+      },
+      {
+        "epochs": 2,
+        "error": "",
+        "independent_contract": {
+          "active_occurrences": 68,
+          "covers": 65,
+          "event_query_comparisons": 33856,
+          "local_cell_queries": 111
+        },
+        "independent_gm_selector": {
+          "active_occurrences": 68,
+          "covers": 65,
+          "event_query_comparisons": 33856,
+          "local_cell_queries": 1280
+        },
+        "gm_conflicts_already_in_local_closure": true
+      },
+      {
+        "epochs": 3,
+        "error": "",
+        "independent_contract": {
+          "active_occurrences": 102,
+          "covers": 101,
+          "event_query_comparisons": 76176,
+          "local_cell_queries": 111
+        },
+        "independent_gm_selector": {
+          "active_occurrences": 102,
+          "covers": 101,
+          "event_query_comparisons": 76176,
+          "local_cell_queries": 1280
+        },
+        "gm_conflicts_already_in_local_closure": true
+      }
+    ],
+    "cpp": [
+      {
+        "epochs": 0,
+        "physical_sha256": "e2cb3e64b40680a933c0c71fcb0fc13d0882a261b2dddf7a5fb46569c0dea542",
+        "cpp_sha256": "741d820493d161dee0c459ab1788a341294a4e32a6a3fa2b6a33b86c71cdbf37",
+        "output_bytes": 911,
+        "command": [
+          ".venv/bin/python",
+          ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+          "--pto-arch=a3",
+          "--pto-level=level3",
+          "--enable-insert-sync=false",
+          "--enable-plan-memory=false",
+          ".local/storage-export-replay/replay-pipeline/w2-k2-i2-c0-e0/physical.pto",
+          "-o",
+          ".local/storage-export-replay/e0.cpp"
+        ],
+        "returncode": 0
+      },
+      {
+        "epochs": 1,
+        "physical_sha256": "d17be31f0314e26d66b8e971e49dd3b96dfdd52420fb04dd26ce2eb387b0498f",
+        "cpp_sha256": "4c60eb64b8ee1e51d06d1f85b562b2460e90b6f81f53259d52071cf12c0eb5f3",
+        "output_bytes": 28634,
+        "command": [
+          ".venv/bin/python",
+          ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+          "--pto-arch=a3",
+          "--pto-level=level3",
+          "--enable-insert-sync=false",
+          "--enable-plan-memory=false",
+          ".local/storage-export-replay/replay-pipeline/w2-k2-i2-c0-e1/physical.pto",
+          "-o",
+          ".local/storage-export-replay/e1.cpp"
+        ],
+        "returncode": 0
+      },
+      {
+        "epochs": 2,
+        "physical_sha256": "25edbabde22822af012ac50152be1de5e79239706b17de43d1df0e3218193723",
+        "cpp_sha256": "63eb25f2c193af2848ecbfbd94ee62ef3d41e68394a8b51ead242e176872c714",
+        "output_bytes": 33269,
+        "command": [
+          ".venv/bin/python",
+          ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+          "--pto-arch=a3",
+          "--pto-level=level3",
+          "--enable-insert-sync=false",
+          "--enable-plan-memory=false",
+          ".local/storage-export-replay/replay-pipeline/w2-k2-i2-c0-e2/physical.pto",
+          "-o",
+          ".local/storage-export-replay/e2.cpp"
+        ],
+        "returncode": 0
+      },
+      {
+        "epochs": 3,
+        "physical_sha256": "c0e7d01f9b00271a4873958fb0942f8c5c3c340d1a406c6ec78ef3c8617a1516",
+        "cpp_sha256": "a18b389fca21a3be4e6814699e3059630cd501ed59f9b805aa5fa213a481d170",
+        "output_bytes": 33266,
+        "command": [
+          ".venv/bin/python",
+          ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+          "--pto-arch=a3",
+          "--pto-level=level3",
+          "--enable-insert-sync=false",
+          "--enable-plan-memory=false",
+          ".local/storage-export-replay/replay-pipeline/w2-k2-i2-c0-e3/physical.pto",
+          "-o",
+          ".local/storage-export-replay/e3.cpp"
+        ],
+        "returncode": 0
+      }
+    ],
+    "ruff": "passed (standalone ruff executable)",
+    "diff_check": "passed",
+    "compliance_prefilter": {
+      "returncode": 1,
+      "findings": 80,
+      "all_findings_reviewed": true,
+      "unresolved": [],
+      "review_receipt": ".local/storage-export-replay/compliance-review.json",
+      "scope": "regex brace and weak_ptr lock false positives; not external SecK/EChecker qualification"
+    }
+  },
+  "scaling": {
+    "scope": "single production profiles; no speedup claim",
+    "structural_gate": "passed",
+    "allocation": "not requested",
+    "cases": [
+      {
+        "name": "replays-0",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          ".local/storage-export-replay/scaling/replays-0/input.pto",
+          "-o",
+          ".local/storage-export-replay/scaling/replays-0/logical.pto"
+        ],
+        "seconds": 0.25634413911029696,
+        "input_sha256": "3420e50caca544040e95efbded3e7463e7dc709f30c1f210d190c7a2732f21c6",
+        "backend": "identity-sequence",
+        "max_repeated_types": 0,
+        "largest_numerical_body": 0,
+        "arena_nodes": 4
+      },
+      {
+        "name": "replays-1",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          ".local/storage-export-replay/scaling/replays-1/input.pto",
+          "-o",
+          ".local/storage-export-replay/scaling/replays-1/logical.pto"
+        ],
+        "seconds": 0.45845516212284565,
+        "input_sha256": "3082a5109fd520d6ff3af5d273722477d5d450541d3b25073d6150a77ad7b1f9",
+        "backend": "identity-sequence",
+        "max_repeated_types": 124,
+        "largest_numerical_body": 8,
+        "arena_nodes": 125
+      },
+      {
+        "name": "replays-2",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          ".local/storage-export-replay/scaling/replays-2/input.pto",
+          "-o",
+          ".local/storage-export-replay/scaling/replays-2/logical.pto"
+        ],
+        "seconds": 0.5153789981268346,
+        "input_sha256": "d35265565a5776f7fcc94f65cc16283d9ca484eee85ee1316fbe88714a3c5539",
+        "backend": "identity-sequence",
+        "max_repeated_types": 124,
+        "largest_numerical_body": 8,
+        "arena_nodes": 141
+      },
+      {
+        "name": "replays-3",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          ".local/storage-export-replay/scaling/replays-3/input.pto",
+          "-o",
+          ".local/storage-export-replay/scaling/replays-3/logical.pto"
+        ],
+        "seconds": 0.5059805070050061,
+        "input_sha256": "c6011a37593e7d5a182b920c11cee823824136c8d630b4660711b807972eb6db",
+        "backend": "identity-sequence",
+        "max_repeated_types": 124,
+        "largest_numerical_body": 8,
+        "arena_nodes": 141
+      },
+      {
+        "name": "replays-8",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          ".local/storage-export-replay/scaling/replays-8/input.pto",
+          "-o",
+          ".local/storage-export-replay/scaling/replays-8/logical.pto"
+        ],
+        "seconds": 0.5084019019268453,
+        "input_sha256": "37293ad192a503aeb7feabf24d1e5b8c30724a14f302d71cef329e59d2d54cac",
+        "backend": "identity-sequence",
+        "max_repeated_types": 124,
+        "largest_numerical_body": 8,
+        "arena_nodes": 143
+      },
+      {
+        "name": "inner-K-4",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          ".local/storage-export-replay/scaling/inner-K-4/input.pto",
+          "-o",
+          ".local/storage-export-replay/scaling/inner-K-4/logical.pto"
+        ],
+        "seconds": 0.9061151039786637,
+        "input_sha256": "c53d19145e43bb87840ac64920160a4f0ebb17635aa73438a227d6ee30e5a158",
+        "backend": "identity-sequence",
+        "max_repeated_types": 332,
+        "largest_numerical_body": 14,
+        "arena_nodes": 192
+      },
+      {
+        "name": "inner-K-8",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          ".local/storage-export-replay/scaling/inner-K-8/input.pto",
+          "-o",
+          ".local/storage-export-replay/scaling/inner-K-8/logical.pto"
+        ],
+        "seconds": 1.2067612688988447,
+        "input_sha256": "d251e74faad4586a98d7e46544318ae0456c03c68c357f1194d564b9e3431ef6",
+        "backend": "identity-sequence",
+        "max_repeated_types": 332,
+        "largest_numerical_body": 14,
+        "arena_nodes": 196
+      },
+      {
+        "name": "inner-K-16",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          ".local/storage-export-replay/scaling/inner-K-16/input.pto",
+          "-o",
+          ".local/storage-export-replay/scaling/inner-K-16/logical.pto"
+        ],
+        "seconds": 1.1039061630144715,
+        "input_sha256": "bff95c2be7845ade87539940618c37bd89843d1cd286d735e45ff50785b5765a",
+        "backend": "identity-sequence",
+        "max_repeated_types": 332,
+        "largest_numerical_body": 14,
+        "arena_nodes": 200
+      },
+      {
+        "name": "inner-kk-1",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          ".local/storage-export-replay/scaling/inner-kk-1/input.pto",
+          "-o",
+          ".local/storage-export-replay/scaling/inner-kk-1/logical.pto"
+        ],
+        "seconds": 0.5498127248138189,
+        "input_sha256": "cda83170d739b2e0f7179c2a85ee2cd08488f2068239de0e72a6742919fc11cc",
+        "backend": "identity-sequence",
+        "max_repeated_types": 116,
+        "largest_numerical_body": 5,
+        "arena_nodes": 171
+      },
+      {
+        "name": "inner-kk-2",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          ".local/storage-export-replay/scaling/inner-kk-2/input.pto",
+          "-o",
+          ".local/storage-export-replay/scaling/inner-kk-2/logical.pto"
+        ],
+        "seconds": 0.694686550181359,
+        "input_sha256": "e88fc5d644e07cacf0062c0fa3725961b59f156ede9e3c8765e0e82f2e337bc8",
+        "backend": "identity-sequence",
+        "max_repeated_types": 188,
+        "largest_numerical_body": 8,
+        "arena_nodes": 188
+      },
+      {
+        "name": "inner-kk-4",
+        "command": [
+          "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+          "--mlir-disable-threading",
+          "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+          ".local/storage-export-replay/scaling/inner-kk-4/input.pto",
+          "-o",
+          ".local/storage-export-replay/scaling/inner-kk-4/logical.pto"
+        ],
+        "seconds": 0.9365166244097054,
+        "input_sha256": "c53d19145e43bb87840ac64920160a4f0ebb17635aa73438a227d6ee30e5a158",
+        "backend": "identity-sequence",
+        "max_repeated_types": 332,
+        "largest_numerical_body": 14,
+        "arena_nodes": 192
+      }
+    ]
+  },
+  "root_results": [
+    {
+      "kernel": "qwen-down",
+      "input_sha256": "c9f0d2f4e22b096f8e19a0a7aa1746192fa76761a49074dd53746395495ecef6",
+      "stages": {
+        "logical": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+            ".local/pypto-region-survey/qwen-down/input.pto",
+            "-o",
+            ".local/storage-export-replay/region-recheck/qwen-down/logical.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.3898809142410755,
+          "backend": "completion-transfer",
+          "static_sites": {
+            "set": 0,
+            "wait": 0,
+            "barrier": 19
+          }
+        },
+        "allocation-support": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            ".local/pypto-region-survey/qwen-down/input.pto",
+            "-o",
+            ".local/storage-export-replay/region-recheck/qwen-down/allocation-support.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.1881179427728057
+        },
+        "physical": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/storage-export-replay/region-recheck/qwen-down/allocation-support.pto",
+            "-o",
+            ".local/storage-export-replay/region-recheck/qwen-down/physical.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.12152517028152943
+        },
+        "mathematics": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/storage-export-replay/region-recheck/qwen-down/mathematics.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.09232937591150403,
+          "backend": "unavailable",
+          "error": "production exact export not ready",
+          "obligations": [
+            "explicit route requires resolved control and shared modeled effects",
+            "order coverage requires an unconditional fixed original body",
+            "loop-domain",
+            "structured-body",
+            "structured-body",
+            "mixed-stride adapter requires one complete fixed-body invocation",
+            "guarded rotating form is not established",
+            "loop-domain",
+            "unsupported-control",
+            "unsupported-control",
+            "bounded lifetime form is not established",
+            "loop-domain",
+            "unsupported-control",
+            "unsupported-control",
+            "backend has no standalone regional adapter; order coverage requires an unconditional fixed original body; loop-domain; structured-body; structured-body; backend has no standalone regional adapter; guarded rotating form is not established; loop-domain; unsupported-control; unsupported-control; bounded lifetime form is not established; loop-domain; unsupported-control; unsupported-control; whole-invocation arithmetic capability belongs to the outer request; affine repeating-boundary form is not established; structured-body; finite type child interface: rotating compact child: rotating compact child control and nested domains are not invariant after bank renaming; q1 repeat recognition: no nested body; q-phase repeat: finite phase body requires complete periodic local access maps; boundary slice recognition / guard-invariance / guard-invariance / unsupported-slot-footprint / unsupported-slot-footprint / unsupported-slot-footprint / unsupported-slot-footprint; regional arithmetic: regional arithmetic primitives do not satisfy the configured class; symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/mathematics.pto\":131:9); symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/mathematics.pto\":133:9); symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/mathematics.pto\":136:9); symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/mathematics.pto\":139:9); numeric repeat recognition: exact regional template unavailable / unsupported-control; regional arithmetic primitives do not satisfy the configured class; arithmetic-dimension at func.func loc(\".local/storage-export-replay/region-recheck/qwen-down/mathematics.pto\":2:1); arithmetic-dimension; backend has no standalone regional adapter; regional numerical template form is unavailable; loop-domain; numerical sequence adapter requires retained exact numerical mathematics; finite expansion requires a bounded exact occurrence/access adapter / loop-domain; loop-domain",
+            "affine repeating-boundary form is not established",
+            "structured-body",
+            "finite type child interface: rotating compact child: rotating compact child control and nested domains are not invariant after bank renaming; q1 repeat recognition: no nested body; q-phase repeat: finite phase body requires complete periodic local access maps; boundary slice recognition / guard-invariance / guard-invariance / unsupported-slot-footprint / unsupported-slot-footprint / unsupported-slot-footprint / unsupported-slot-footprint; regional arithmetic: regional arithmetic primitives do not satisfy the configured class; symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/mathematics.pto\":131:9); symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/mathematics.pto\":133:9); symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/mathematics.pto\":136:9); symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/mathematics.pto\":139:9); numeric repeat recognition: exact regional template unavailable / unsupported-control",
+            "regional numerical template form is unavailable",
+            "loop-domain",
+            "finite expansion requires a bounded exact occurrence/access adapter / loop-domain",
+            "loop-domain",
+            "periodic site/residue skeleton is unavailable or exceeds its index representation",
+            "arithmetic-dimension",
+            "exact producer or adapter did not establish its required contract",
+            "arithmetic-dimension",
+            "finite guarded analysis cannot export this region / unsupported-control",
+            "numerical sequence adapter requires retained exact numerical mathematics"
+          ]
+        },
+        "selectors": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/storage-export-replay/region-recheck/qwen-down/selectors.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.09313852014020085,
+          "backend": "unavailable",
+          "error": "production exact export not ready",
+          "obligations": [
+            "explicit route requires resolved control and shared modeled effects",
+            "order coverage requires an unconditional fixed original body",
+            "loop-domain",
+            "structured-body",
+            "structured-body",
+            "mixed-stride adapter requires one complete fixed-body invocation",
+            "guarded rotating form is not established",
+            "loop-domain",
+            "unsupported-control",
+            "unsupported-control",
+            "bounded lifetime form is not established",
+            "loop-domain",
+            "unsupported-control",
+            "unsupported-control",
+            "backend has no standalone regional adapter; order coverage requires an unconditional fixed original body; loop-domain; structured-body; structured-body; backend has no standalone regional adapter; guarded rotating form is not established; loop-domain; unsupported-control; unsupported-control; bounded lifetime form is not established; loop-domain; unsupported-control; unsupported-control; whole-invocation arithmetic capability belongs to the outer request; affine repeating-boundary form is not established; structured-body; finite type child interface: rotating compact child: rotating compact child control and nested domains are not invariant after bank renaming; q1 repeat recognition: no nested body; q-phase repeat: finite phase body requires complete periodic local access maps; boundary slice recognition / guard-invariance / guard-invariance / unsupported-slot-footprint / unsupported-slot-footprint / unsupported-slot-footprint / unsupported-slot-footprint; regional arithmetic: regional arithmetic primitives do not satisfy the configured class; symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/selectors.pto\":131:9); symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/selectors.pto\":133:9); symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/selectors.pto\":136:9); symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/selectors.pto\":139:9); numeric repeat recognition: exact regional template unavailable / unsupported-control; regional arithmetic primitives do not satisfy the configured class; arithmetic-dimension at func.func loc(\".local/storage-export-replay/region-recheck/qwen-down/selectors.pto\":2:1); arithmetic-dimension; backend has no standalone regional adapter; regional numerical template form is unavailable; loop-domain; numerical sequence adapter requires retained exact numerical mathematics; finite expansion requires a bounded exact occurrence/access adapter / loop-domain; loop-domain",
+            "affine repeating-boundary form is not established",
+            "structured-body",
+            "finite type child interface: rotating compact child: rotating compact child control and nested domains are not invariant after bank renaming; q1 repeat recognition: no nested body; q-phase repeat: finite phase body requires complete periodic local access maps; boundary slice recognition / guard-invariance / guard-invariance / unsupported-slot-footprint / unsupported-slot-footprint / unsupported-slot-footprint / unsupported-slot-footprint; regional arithmetic: regional arithmetic primitives do not satisfy the configured class; symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/selectors.pto\":131:9); symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/selectors.pto\":133:9); symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/selectors.pto\":136:9); symbolic-storage-partition at pto.textract loc(\".local/storage-export-replay/region-recheck/qwen-down/selectors.pto\":139:9); numeric repeat recognition: exact regional template unavailable / unsupported-control",
+            "periodic site/residue skeleton is unavailable or exceeds its index representation",
+            "arithmetic-dimension",
+            "exact producer or adapter did not establish its required contract",
+            "arithmetic-dimension",
+            "finite guarded analysis cannot export this region / unsupported-control",
+            "regional numerical template form is unavailable",
+            "loop-domain",
+            "numerical sequence adapter requires retained exact numerical mathematics",
+            "finite expansion requires a bounded exact occurrence/access adapter / loop-domain",
+            "loop-domain"
+          ]
+        }
+      }
+    },
+    {
+      "kernel": "qwen-finalize",
+      "input_sha256": "c817a5c5fe122d8700e505585510598cb47883cb8467b760f256f26b4a7ac873",
+      "stages": {
+        "logical": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+            ".local/pypto-region-survey/qwen-finalize/input.pto",
+            "-o",
+            ".local/storage-export-replay/region-recheck/qwen-finalize/logical.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.8380295713432133,
+          "backend": "completion-transfer",
+          "static_sites": {
+            "set": 2,
+            "wait": 2,
+            "barrier": 3
+          }
+        },
+        "allocation-support": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            ".local/pypto-region-survey/qwen-finalize/input.pto",
+            "-o",
+            ".local/storage-export-replay/region-recheck/qwen-finalize/allocation-support.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.7630567592568696
+        },
+        "physical": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/storage-export-replay/region-recheck/qwen-finalize/allocation-support.pto",
+            "-o",
+            ".local/storage-export-replay/region-recheck/qwen-finalize/physical.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.119773187674582
+        },
+        "mathematics": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/storage-export-replay/region-recheck/qwen-finalize/mathematics.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.6712790969759226,
+          "backend": "unavailable",
+          "error": "production exact export not ready",
+          "obligations": [
+            "explicit route requires resolved control and shared modeled effects",
+            "order coverage requires an unconditional fixed original body",
+            "loop-domain",
+            "structured-body",
+            "mixed-stride adapter requires one complete fixed-body invocation",
+            "guarded rotating form is not established",
+            "loop-domain",
+            "guard-invariance",
+            "unknown-geometry",
+            "overlapping-families",
+            "bounded lifetime form is not established",
+            "loop-domain",
+            "backend has no standalone regional adapter; regional numerical template form is unavailable; loop-domain; order coverage requires an unconditional fixed original body; loop-domain; structured-body; backend has no standalone regional adapter; guarded rotating form is not established; loop-domain; guard-invariance; unknown-geometry; overlapping-families; bounded lifetime form is not established; loop-domain; whole-invocation arithmetic capability belongs to the outer request; affine repeating-boundary form is not established; structured-body; finite visit joint storage projection: no constant-stride evolving storage family was constructed; finite expansion requires a bounded exact occurrence/access adapter / loop-domain; loop-domain; regional arithmetic primitives do not satisfy the configured class; index-arithmetic at scf.for loc(\".local/storage-export-replay/region-recheck/qwen-finalize/mathematics.pto\":21:3); index-arithmetic; backend has no standalone regional adapter",
+            "affine repeating-boundary form is not established",
+            "structured-body",
+            "finite visit joint storage projection: no constant-stride evolving storage family was constructed",
+            "regional numerical template form is unavailable",
+            "loop-domain",
+            "finite expansion requires a bounded exact occurrence/access adapter / loop-domain",
+            "loop-domain",
+            "periodic site/residue skeleton is unavailable or exceeds its index representation",
+            "index-arithmetic",
+            "exact producer or adapter did not establish its required contract",
+            "index-arithmetic",
+            "finite guarded analysis cannot export this region / unsupported-control",
+            "numerical sequence adapter requires retained exact numerical mathematics"
+          ]
+        },
+        "selectors": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/storage-export-replay/region-recheck/qwen-finalize/selectors.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.6737837730906904,
+          "backend": "unavailable",
+          "error": "production exact export not ready",
+          "obligations": [
+            "explicit route requires resolved control and shared modeled effects",
+            "order coverage requires an unconditional fixed original body",
+            "loop-domain",
+            "structured-body",
+            "mixed-stride adapter requires one complete fixed-body invocation",
+            "guarded rotating form is not established",
+            "loop-domain",
+            "guard-invariance",
+            "unknown-geometry",
+            "overlapping-families",
+            "bounded lifetime form is not established",
+            "loop-domain",
+            "backend has no standalone regional adapter; regional numerical template form is unavailable; loop-domain; order coverage requires an unconditional fixed original body; loop-domain; structured-body; backend has no standalone regional adapter; guarded rotating form is not established; loop-domain; guard-invariance; unknown-geometry; overlapping-families; bounded lifetime form is not established; loop-domain; whole-invocation arithmetic capability belongs to the outer request; affine repeating-boundary form is not established; structured-body; finite visit joint storage projection: no constant-stride evolving storage family was constructed; finite expansion requires a bounded exact occurrence/access adapter / loop-domain; loop-domain; regional arithmetic primitives do not satisfy the configured class; index-arithmetic at scf.for loc(\".local/storage-export-replay/region-recheck/qwen-finalize/selectors.pto\":21:3); index-arithmetic; backend has no standalone regional adapter",
+            "affine repeating-boundary form is not established",
+            "structured-body",
+            "finite visit joint storage projection: no constant-stride evolving storage family was constructed",
+            "periodic site/residue skeleton is unavailable or exceeds its index representation",
+            "index-arithmetic",
+            "exact producer or adapter did not establish its required contract",
+            "index-arithmetic",
+            "finite guarded analysis cannot export this region / unsupported-control",
+            "regional numerical template form is unavailable",
+            "loop-domain",
+            "numerical sequence adapter requires retained exact numerical mathematics",
+            "finite expansion requires a bounded exact occurrence/access adapter / loop-domain",
+            "loop-domain"
+          ]
+        }
+      }
+    },
+    {
+      "kernel": "deepseek-rms",
+      "input_sha256": "f999d9c35afd3e9fc20d7165dd0a3c4e4a6d3b6fd8062ba61f68ca7ed0d124cc",
+      "stages": {
+        "logical": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=gm-alias=may-not-alias prepare-allocation=false profile-stages=true",
+            ".local/pypto-region-survey/deepseek-rms/input.pto",
+            "-o",
+            ".local/storage-export-replay/region-recheck/deepseek-rms/logical.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.16322310827672482,
+          "backend": "sequence",
+          "static_sites": {
+            "set": 8,
+            "wait": 8,
+            "barrier": 13
+          }
+        },
+        "allocation-support": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-analysis=gm-alias=may-not-alias allocation-ids=0,1,2,3,4,5",
+            ".local/pypto-region-survey/deepseek-rms/input.pto",
+            "-o",
+            ".local/storage-export-replay/region-recheck/deepseek-rms/allocation-support.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.12429411429911852
+        },
+        "physical": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt",
+            "--mlir-disable-threading",
+            "--pto-frontier-allocate=eligible-ids=0,1,2,3,4,5",
+            ".local/storage-export-replay/region-recheck/deepseek-rms/allocation-support.pto",
+            "-o",
+            ".local/storage-export-replay/region-recheck/deepseek-rms/physical.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.1207274030894041
+        },
+        "mathematics": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/storage-export-replay/region-recheck/deepseek-rms/mathematics.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.03654095996171236,
+          "backend": "sequence",
+          "error": "",
+          "obligations": []
+        },
+        "selectors": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/storage-export-replay/region-recheck/deepseek-rms/selectors.pto"
+          ],
+          "returncode": 0,
+          "seconds": 0.040369092021137476,
+          "backend": "sequence",
+          "error": "production exact export not ready",
+          "obligations": [
+            "explicit route requires resolved control and shared modeled effects",
+            "route requires an original certified loop",
+            "mixed-stride adapter requires one complete fixed-body invocation",
+            "route requires an original certified loop",
+            "route requires an original certified loop",
+            "sequence: requested export is unavailable",
+            "route requires an original certified loop",
+            "route requires an original certified loop",
+            "periodic site/residue skeleton is unavailable or exceeds its index representation",
+            "arithmetic-dimension",
+            "exact producer or adapter did not establish its required contract",
+            "arithmetic-dimension",
+            "finite guarded analysis cannot export this region / unsupported-control / unsupported-control",
+            "route requires an original certified loop",
+            "numerical sequence adapter requires retained exact numerical mathematics",
+            "finite expansion requires a bounded exact occurrence/access adapter / loop-domain",
+            "loop-domain"
+          ]
+        }
+      }
+    }
+  ],
+  "remaining": {
+    "incomplete_storage_exports": [
+      "Nonzero replay input-reader GM A/B selectors remain unavailable",
+      "RMSNorm root storage-selector request remains unavailable"
+    ],
+    "atomic_access_recovery": [
+      "Qwen down-projection unresolved atomic GM footprints"
+    ],
+    "symbolic_parent_control": [
+      "Qwen down and finalize root exact contracts unavailable; conservative completion retained"
+    ],
+    "other": [
+      "General residual GM conflicts not implied by local closure still require a supported crossing/interface construction",
+      "Outer and inner count sweeps do not establish arbitrary nested-loop compactness"
+    ]
+  },
+  "guarantee_limits": [
+    "Exactness is relative to supplied modeled effects/layouts, not independently qualified native instruction footprints",
+    "Production realization classification remains covers-selected-order; finite positive C-to-I equality is not a uniform proof",
+    "Zero-inner-body retains two extra C-to-I pairs from existing barriers",
+    "Six-ID allocation establishes feasibility of the selected protocol, not minimum capacity",
+    "GM output probe samples complement provider certificate validation; they are not a uniformity proof",
+    "Expert protocols and allocation algorithms unchanged by this follow-up"
+  ]
+}
