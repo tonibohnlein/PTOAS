@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: %python %S/Inputs/survey_pypto_regions.py --optimizer pto-test-opt --trace-tool pto-sync-input-test --input-root %S/Inputs/pypto_region_survey --output %t.children --cases qwen-down qwen-finalize --children --require-supported
+// RUN: %python %S/Inputs/survey_pypto_regions.py --optimizer pto-test-opt --trace-tool pto-sync-input-test --input-root %S/Inputs/pypto_region_survey --output %t.rms --cases deepseek-rms --require-supported
+// Actual regional covers and all four event queries versus original-access oracle.
+// GM export unavailability is distinct from exact empty; allocation is not changed.
+module {}

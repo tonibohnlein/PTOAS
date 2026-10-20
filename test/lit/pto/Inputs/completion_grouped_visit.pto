@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// Supplied compact finite child: two bank handoffs, grouped by the fixed
+// j=0,1 selector. Prefix WAW creates a nonzero record namespace offset.
+!mat = !pto.tile_buf<mat, 16x16xf16, valid=?x?, blayout=col_major, slayout=row_major>
+!left = !pto.tile_buf<left, 16x16xf16, valid=?x?, blayout=row_major, slayout=row_major>
+module attributes {pto.target_arch = "a3"} {
+ func.func @grouped_visit(%arg0: !pto.ptr<f16>, %arg1: index) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  %z = arith.constant 0 : index
+  %one = arith.constant 1 : index
+  %two = arith.constant 2 : index
+  %sixteen = arith.constant 16 : index
+  %bytes = arith.constant 512 : index
+  %zero = arith.constant 0 : i64
+  %view = pto.make_tensor_view %arg0, shape = [%sixteen, %sixteen], strides = [%sixteen, %one] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf16>
+  %part = pto.partition_view %view, offsets = [%z, %z], sizes = [%sixteen, %sixteen] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+  %mat0 = pto.alloc_tile addr = %zero valid_row = %sixteen valid_col = %sixteen : !mat
+  %left0 = pto.alloc_tile addr = %zero valid_row = %sixteen valid_col = %sixteen : !left
+  pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%mat0 : !mat) {test.prefix_payload}
+  pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%mat0 : !mat) {test.prefix_payload}
+  scf.for %outer = %z to %arg1 step %one {
+   %context = arith.addi %outer, %one : index
+   scf.for %j = %z to %two step %one {
+    %offset = arith.muli %j, %bytes : index
+    %address = arith.index_cast %offset : index to i64
+    %mat = pto.alloc_tile addr = %address valid_row = %sixteen valid_col = %sixteen : !mat
+    %left = pto.alloc_tile addr = %address valid_row = %sixteen valid_col = %sixteen : !left
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%mat : !mat)
+    pto.textract ins(%mat, %z, %z : !mat, index, index) outs(%left : !left)
+   } {test.grouped_visit}
+   pto.textract ins(%mat0, %z, %z : !mat, index, index) outs(%left0 : !left)
+  }
+  return
+ }
+}

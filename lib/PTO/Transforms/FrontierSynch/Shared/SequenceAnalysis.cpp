@@ -548,7 +548,11 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceLogicalInsertion(
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareSequenceInsertion(SequenceAnalysis& analysis)
 {
-    auto result = prepareSequenceLogicalInsertion(analysis);
+    // Export this retained original invocation in its established frame.
+    // Explicit contextual requests still check their supplied frame in prepare().
+    const auto enclosing = analysis.state ? ArrayRef<scf::ForOp>(analysis.state->requiredOuterLoops) :
+                                            ArrayRef<scf::ForOp>{};
+    auto result = prepareSequenceLogicalInsertion(analysis, enclosing);
     if (succeeded(result)) { prepareAllocationSupport(**result); }
     const bool needsAllocation = succeeded(result) && !(*result)->allocationCertificate;
     if (needsAllocation) {

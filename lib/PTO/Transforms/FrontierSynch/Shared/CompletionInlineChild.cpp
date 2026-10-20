@@ -5,7 +5,8 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Preserve a qualified exact child's barriers through the common materializer.
+// Retain qualified closed children through the common materializer. Grouped
+// endpoints keep their selected record and translated physical coordinate map.
 #include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
 #include "CompletionInlineChild.h"
 #include "CompletionVisitMapping.h"
@@ -66,6 +67,21 @@ bool contains(const DenseSet<Operation*>& roots, Operation* operation)
         if (roots.contains(op)) { return true; }
     }
     return false;
+}
+using RecordArities = std::map<int64_t, uint64_t>;
+bool collectRecordArities(const PreparedLogicalPlan& plan, uint64_t extra, RecordArities& arities)
+{
+    for (const auto& endpoint : plan.endpoints) {
+        if (endpoint.kind == LogicalCommandKind::Barrier) { continue; }
+        if (endpoint.records.empty() || endpoint.memberCoordinates.empty() ||
+            extra > UINT64_MAX - endpoint.memberCoordinates.size()) { return false; }
+        const auto count = endpoint.memberCoordinates.size() + extra;
+        for (auto record : endpoint.records) {
+            auto [entry, inserted] = arities.emplace(record, count);
+            if (!inserted && entry->second != count) { return false; }
+        }
+    }
+    return true;
 }
 bool eventFree(const PreparedLogicalPlan& plan)
 {
@@ -202,14 +218,9 @@ std::shared_ptr<const CompletionInlineChild> CompletionInlineChild::qualifyVisit
         if (auto loop = dyn_cast<scf::ForOp>(parent)) { enclosing.push_back(loop.getInductionVar()); }
         else if (!isa<scf::IfOp>(parent)) { return {}; }
     }
-    std::map<int64_t, uint64_t> arities;
-    for (auto& endpoint : plan->endpoints) {
-        if (endpoint.kind == LogicalCommandKind::Barrier) { continue; }
-        if (endpoint.records.size() != 1 || endpoint.memberCoordinates.empty()) { return {}; }
-        endpoint.memberCoordinates.append(enclosing.begin(), enclosing.end());
-        auto [entry, inserted] = arities.emplace(endpoint.records.front(), endpoint.memberCoordinates.size());
-        if (!inserted && entry->second != endpoint.memberCoordinates.size()) { return {}; }
-    }
+    RecordArities arities;
+    if (!collectRecordArities(*plan, enclosing.size(), arities) ||
+        arities.size() != assignment->records.size()) { return {}; }
     // Normalize certified constant tables, then preserve the exact assignment
     // as an offset into the existing directional palette. No record is removed.
     for (auto& record : assignment->records) {
@@ -304,13 +315,8 @@ LogicalResult appendChildPalettes(const PhysicalAllocationPlan& assignment, cons
     MLIRContext* context, uint64_t recordBase, CompletionChildAssembly& assembly)
 {
     Builder b(context);
-    std::map<uint32_t, uint64_t> arities;
-    for (const auto& endpoint : plan.endpoints) {
-        if (endpoint.kind == LogicalCommandKind::Barrier) { continue; }
-        if (endpoint.records.size() != 1) { return failure(); }
-        auto [found, added] = arities.emplace(endpoint.records.front(), endpoint.memberCoordinates.size());
-        if (!added && found->second != endpoint.memberCoordinates.size()) { return failure(); }
-    }
+    RecordArities arities;
+    if (!collectRecordArities(plan, 0, arities)) { return failure(); }
     std::map<std::pair<uint32_t, uint32_t>, SmallVector<const PhysicalRecordAllocation*>> directions;
     for (const auto& record : assignment.records) {
         directions[{record.sourcePipe, record.targetPipe}].push_back(&record);
@@ -341,6 +347,8 @@ LogicalResult appendChildPalettes(const PhysicalAllocationPlan& assignment, cons
             const auto first = member->ids.front();
             if (rule.base < static_cast<uint64_t>(first)) { return failure(); }
             rule.base = rule.base - first + std::distance(slots.begin(), slots.find(first));
+            // Tuple coordinates exclude the record selector. Renaming labels
+            // leaves the ordinal/visit rule unchanged; only its arity grows.
             if (!validPhysicalTupleRule(rule, budget)) { return failure(); }
             SmallVector<Attribute> terms;
             for (const auto& term : rule.terms) {
@@ -387,6 +395,7 @@ LogicalResult CompletionInlineChild::append(PreparedLogicalPlan& destination, IR
     if (!eventAssignment && !eventFree(plan)) { return failure(); }
     auto function = visitPreparation ? visitFunction : finite->originalInput()->function();
     const uint64_t recordBase = assembly.nextRecord;
+    if (recordBase > UINT32_MAX) { return failure(); }
     for (const auto& family : plan.families) {
         for (const auto& member : family.members) {
             const auto record = recordBase + member.record;
@@ -394,9 +403,10 @@ LogicalResult CompletionInlineChild::append(PreparedLogicalPlan& destination, IR
             assembly.nextRecord = std::max(assembly.nextRecord, record + 1);
         }
     }
-    // Preserve singleton family provenance, including barrier-only siblings.
+    // Preserve grouped family provenance, including barrier-only siblings.
     // The shared insertion path performs final namespace normalization.
     for (auto family : plan.families) {
+        if (family.id > UINT32_MAX - recordBase) { return failure(); }
         family.id += recordBase;
         for (auto* cut : {&family.sourceCut, &family.targetCut}) {
             cut->before = mapping.lookupOrNull(cut->before);
@@ -437,9 +447,11 @@ LogicalResult CompletionInlineChild::append(PreparedLogicalPlan& destination, IR
             endpoint.memberCoordinates.append(enclosingVisits.begin(), enclosingVisits.end());
         }
         for (auto& coordinate : endpoint.memberCoordinates) { coordinate = mapping.lookupOrDefault(coordinate); }
-        // Concrete/contextual singleton fragments retain one provenance label.
-        if (endpoint.records.size() != 1) { return failure(); }
-        endpoint.records.front() += recordBase;
+        if (endpoint.records.empty()) { return failure(); }
+        for (auto& record : endpoint.records) {
+            if (record > UINT32_MAX - recordBase) { return failure(); }
+            record += recordBase;
+        }
         endpoint.domain.clear();
         endpoint.piece = destination.endpoints.size();
         if (endpoint.kind != LogicalCommandKind::Barrier) {
@@ -447,8 +459,16 @@ LogicalResult CompletionInlineChild::append(PreparedLogicalPlan& destination, IR
             auto& code = destination.addPreparation(endpoint.before);
             OpBuilder builder(endpoint.before->getContext());
             builder.setInsertionPointToEnd(&code);
-            endpoint.memberCoordinates.front() = builder.create<arith::ConstantIndexOp>(
-                endpoint.before->getLoc(), endpoint.records.front());
+            // Preserve the dynamic selection; provenance and coordinate maps
+            // receive the same checked namespace translation.
+            if (endpoint.records.size() == 1) {
+                endpoint.memberCoordinates.front() = builder.create<arith::ConstantIndexOp>(
+                    endpoint.before->getLoc(), endpoint.records.front());
+            } else if (recordBase) {
+                auto offset = builder.create<arith::ConstantIndexOp>(endpoint.before->getLoc(), recordBase);
+                endpoint.memberCoordinates.front() = builder.create<arith::AddIOp>(
+                    endpoint.before->getLoc(), endpoint.memberCoordinates.front(), offset);
+            }
         }
         destination.endpoints.push_back(std::move(endpoint));
     }

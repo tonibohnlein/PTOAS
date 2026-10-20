@@ -15,6 +15,8 @@
 // ERROR: unknown GM alias policy; expected may-alias or may-not-alias
 // CONTRACT: shared-alias-contract: passed
 // NO-LABEL: storage gm_dynamic
+// NO: description=declared-region fallback=0 space=6 shared-provenance-complete=1
+// NO: description=declared-region fallback=0 space=1 shared-provenance-complete=1
 // NO: overlap 1,2=0
 // NO: overlap 1,4=1
 // NO: conflict 1,2=0

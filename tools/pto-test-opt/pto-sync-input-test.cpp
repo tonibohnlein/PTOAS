@@ -1601,7 +1601,12 @@ LogicalResult dumpStorageEffects(func::FuncOp function, const pto::SyncInput &in
                  << (effect.mode == pto::SyncAccessMode::Read ? " read " : " write ")
                  << representation << " cells=";
     llvm::interleaveComma(effect.cells, llvm::outs());
-    llvm::outs() << "\n";
+    llvm::outs() << " description="
+                 << (effect.description == pto::SyncAccessDescription::DeclaredRegion ?
+                     "declared-region" : "allocation-enclosure")
+                 << " fallback=" << static_cast<unsigned>(effect.fallback)
+                 << " space=" << (effect.memory ? static_cast<unsigned>(effect.memory->scope) : 0)
+                 << " shared-provenance-complete=" << effect.sharedProvenanceComplete << "\n";
     auto dumpRegion = [&](const pto::SyncAccessRegion& region, StringRef label) {
       llvm::outs() << "    " << label << " base=" << (region.base ? "pointer" : "absolute")
                    << " bytes=" << region.elementBytes << " map=";
@@ -1965,7 +1970,11 @@ bool runRegionalAllocationCandidateChecks(mlir::func::FuncOp function,
     mlir::pto::frontiersynch::PreparedLogicalPlan& plan);
 
 LogicalResult emitFiniteComposed(func::FuncOp function, pto::GMAliasPolicy policy);
+int runCompactRegionContract(const char* filename);
 int main(int argc, char **argv) {
+  if (argc == 3 && StringRef(argv[1]) == "--compact-region-contract") {
+    return runCompactRegionContract(argv[2]);
+  }
   const bool boundedPrefix = argc == 2 && StringRef(argv[1]) == "--bounded-prefix-realization-checks";
   if (boundedPrefix) {
     return runBoundedPrefixRealizationChecks() ? 0 : 1;
