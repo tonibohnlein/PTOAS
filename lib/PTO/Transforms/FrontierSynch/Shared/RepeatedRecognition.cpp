@@ -12,6 +12,8 @@
 #include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RepeatedStorage.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/Support/Debug.h"
+#define DEBUG_TYPE "frontier-representation"
 namespace mlir::pto::frontiersynch {
 namespace {
 class Invariance {
@@ -82,6 +84,7 @@ private:
 bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
 {
     auto unavailable = [&](const std::string& reason) {
+        LLVM_DEBUG(llvm::dbgs() << "q1 repeat rejected at " << node.anchor->getLoc() << ": " << reason << "\n");
         if (!repeatedAttempt.empty()) { repeatedAttempt += "; "; }
         repeatedAttempt += reason;
         return false;
@@ -146,6 +149,11 @@ bool SequenceAnalysisState::repeatedChild(const StructureNode& node, Expr trips)
     auto analyzed = originalRegion(node.children.front(), diagnostic);
     if (failed(analyzed)) { return unavailable("q1 repeat body interface: " + diagnostic); }
     auto body = std::move(*analyzed);
+    LLVM_DEBUG(llvm::dbgs() << "q1 repeat body at " << loop.getLoc() << ": types=" << body.anchors.size()
+        << " exact-queries=" << body.capabilities.exactQueries
+        << " exact-selectors=" << body.capabilities.exactSelectors
+        << " cells=" << body.storageBoundary.size() << " symbolic-effects=" << body.symbolicStorageEffects.size()
+        << " deferred-boundaries=" << body.deferredAccessBoundary.size() << "\n");
     if (evolving || !body.deferredAccessBoundary.empty()) {
         auto exported = body;
         exported.accessBoundary.insert(exported.accessBoundary.end(), exported.deferredAccessBoundary.begin(),

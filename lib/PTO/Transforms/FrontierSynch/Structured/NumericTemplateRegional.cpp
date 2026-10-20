@@ -244,13 +244,14 @@ FailureOr<RegionalAnalysis> specializedExplicitRunRegional(func::FuncOp function
     if (!detail::prepareTemplateEffects(builder)) {
         error = "explicit phase lacks a finite shared storage partition"; return failure();
     }
-    // A single run cannot discharge a reader merely because its writer is in
-    // a sibling region. Only the shared whole-input no-writer proof is enough
-    // here; all other GM geometry stays with the general regional provider.
+    // The internal numerical partition alone says nothing about siblings.
+    // Require the existing original-map certificate: no other phase conflicts,
+    // and a repeated writing phase has disjoint visits. Keep its original
+    // access boundary for the enclosing composition's physical reconstruction.
     for (const auto& payload : body.payloads) {
         for (const auto& effect : payload.effects) {
             if (effect.discharge != TemplateDischarge::None &&
-                !detail::dischargeGlobalReadOnlyEffect(effect.sourceEffect, input.accesses())) {
+                !detail::dischargeGlobalEffect(effect.sourceEffect, outer, input, index)) {
                 error = "explicit phase discharge needs an external storage selector"; return failure();
             }
         }

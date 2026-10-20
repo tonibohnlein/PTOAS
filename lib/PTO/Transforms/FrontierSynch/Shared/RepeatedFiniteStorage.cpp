@@ -9,10 +9,12 @@
 #include "RepeatedReadOnlyStorage.h"
 #include "RegionalSelectorPartition.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Debug.h"
 #include <iterator>
+#define DEBUG_TYPE "frontier-representation"
 namespace mlir::pto::frontiersynch {
 namespace {
-std::optional<SmallVector<SyncStorageCell>> support(RegionalAnalysis& body)
+std::optional<SmallVector<SyncStorageCell>> support(RegionalAnalysis& body, scf::ForOp loop)
 {
     std::vector<SyncStorageCell> ranges;
     if (body.accessModel->hasMaterializedCellPartition(body.symbolicStorageEffects)) {
@@ -21,9 +23,35 @@ std::optional<SmallVector<SyncStorageCell>> support(RegionalAnalysis& body)
             ranges.insert(ranges.end(), supplied.begin(), supplied.end());
         }
     } else {
-        auto supplied = selectorSupportRanges(body, body.cost.selectorPartitionVisits);
-        if (!supplied) { return std::nullopt; }
-        ranges = std::move(*supplied);
+        // Only domains with a cross-visit conflict need finite boundary atoms.
+        // Read-only/disjoint domains keep their original exact query or refusal;
+        // they are never assumed empty or discharged by a writer's certificate.
+        std::vector<std::pair<AddressSpace, Value>> domains;
+        const auto effects = body.accessModel->effects();
+        for (auto id : body.symbolicStorageEffects) {
+            if (id >= effects.size() || !effects[id].memory) { return std::nullopt; }
+            const bool conflicting = llvm::any_of(effects, [&](const auto& other) {
+                return other.phase && other.phase->elementOp && loop->isProperAncestor(other.phase->elementOp) &&
+                    body.accessModel->mayConflict(id, static_cast<std::size_t>(&other - effects.data()));
+            });
+            if (!conflicting) { continue; }
+            const auto& effect = effects[id];
+            if (effect.regions.empty()) { return std::nullopt; }
+            for (const auto& piece : effect.regions) {
+                const auto domain = std::make_pair(effect.memory->scope, piece.base);
+                if (!llvm::is_contained(domains, domain)) { domains.push_back(domain); }
+            }
+        }
+        for (const auto& domain : domains) {
+            auto supplied = selectorDomainSupportRanges(body, domain.first, domain.second,
+                                                        body.cost.selectorPartitionVisits);
+            if (!supplied) {
+                LLVM_DEBUG(llvm::dbgs() << "repeated selector domain support unavailable: space="
+                    << static_cast<unsigned>(domain.first) << " types=" << body.anchors.size() << "\n");
+                return std::nullopt;
+            }
+            ranges.insert(ranges.end(), supplied->begin(), supplied->end());
+        }
     }
     SmallVector<SyncStorageCell> bytes, domains;
     for (const auto& boundary : body.storageBoundary) { domains.push_back(boundary.cell); }
@@ -33,7 +61,11 @@ std::optional<SmallVector<SyncStorageCell>> support(RegionalAnalysis& body)
         // Complete support may include holes. Partition evidence establishes
         // uniform selectors, and the existing exact query determines membership.
         auto cuts = finiteSelectorCuts(body, range, body.cost.selectorPartitionVisits);
-        if (!cuts) { return std::nullopt; }
+        if (!cuts) {
+            LLVM_DEBUG(llvm::dbgs() << "repeated selector partition unavailable: space="
+                << static_cast<unsigned>(range.space) << " begin=" << range.begin << " end=" << range.end << "\n");
+            return std::nullopt;
+        }
         for (std::size_t cut = 1; cut < cuts->size(); ++cut) {
             bytes.push_back({range.space, (*cuts)[cut - 1], (*cuts)[cut], range.base});
         }
@@ -80,7 +112,7 @@ std::string materializeRepeatedSymbolicStorage(
             return "repeated symbolic conflict has no exported or deferred effect extrema";
         }
     }
-    auto bytes = support(body);
+    auto bytes = support(body, loop);
     if (!bytes) {
         return "symbolic repeated crossings need complete finite selector support within the regional expansion limit";
     }

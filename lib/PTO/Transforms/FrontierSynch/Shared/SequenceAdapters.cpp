@@ -314,34 +314,7 @@ bool projectFiniteCrossings(std::vector<Child>& children,
 std::optional<RegionalStorageSelectors> finiteStorageSelectors(
     const RegionalAnalysis& region, RegionalByteAddress address)
 {
-    if (region.storageSelectors) { return region.storageSelectors(address); }
-    auto& e = *region.expressions;
-    if (address.offset >= e.size() || e.isBoolean(address.offset) || !region.symbolicStorageEffects.empty() ||
-        llvm::any_of(region.accessBoundary, [](const auto& access) { return !access.representedByCells; })) {
-        return std::nullopt;
-    }
-    RegionalStorageSelectors out;
-    auto append = [&](auto& destination, const auto& source, Expr guard) {
-        for (auto value : source) {
-            value.present = e.land(guard, value.present);
-            destination.push_back(std::move(value));
-        }
-    };
-    for (const auto& cell : region.storageBoundary) {
-        if (cell.cell.space != address.space) { continue; }
-        if (cell.cell.base != address.base) {
-            SmallVector<SyncStorageCell> identities{cell.cell, {address.space, 0, 1, address.base}};
-            if (!storageBasesAreComparable(identities, region.gmAliasPolicy)) { return std::nullopt; }
-            continue;
-        }
-        auto active = e.land(e.le(e.constant(cell.cell.begin), address.offset),
-                             e.lt(address.offset, e.constant(cell.cell.end)));
-        append(out.firstWriters, cell.firstWriters, active);
-        append(out.lastWriters, cell.lastWriters, active);
-        for (const auto& [pipe, values] : cell.firstReaders) { append(out.firstReaders[pipe], values, active); }
-        for (const auto& [pipe, values] : cell.lastReaders) { append(out.lastReaders[pipe], values, active); }
-    }
-    return out;
+    return regionalStorageSelectors(region, address);
 }
 std::optional<RegionalStorageSelectors> sequenceStorageSelectors(const SequenceAnalysisState& state,
     ArrayRef<uint32_t> starts, RegionalByteAddress address)
@@ -877,6 +850,16 @@ RegionalAnalysis sequenceRegionalResult(const SequenceAnalysis& analysis)
             std::vector<SyncStorageCell> ranges;
             for (const auto& child : state->children) {
                 auto local = selectorSupportRanges(child.regional, visits);
+                if (!local) { return std::nullopt; }
+                ranges.insert(ranges.end(), local->begin(), local->end());
+            }
+            return ranges;
+        };
+        certificate->selectorDomainSupport = [state](AddressSpace space, Value base, uint64_t& visits)
+            -> std::optional<std::vector<SyncStorageCell>> {
+            std::vector<SyncStorageCell> ranges;
+            for (const auto& child : state->children) {
+                auto local = selectorDomainSupportRanges(child.regional, space, base, visits);
                 if (!local) { return std::nullopt; }
                 ranges.insert(ranges.end(), local->begin(), local->end());
             }

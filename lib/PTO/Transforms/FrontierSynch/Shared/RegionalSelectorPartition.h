@@ -11,6 +11,8 @@
 namespace mlir::pto::frontiersynch {
 std::optional<std::vector<SyncStorageCell>> selectorSupportRanges(
     const RegionalAnalysis& region, uint64_t& visits);
+std::optional<std::vector<SyncStorageCell>> selectorDomainSupportRanges(
+    const RegionalAnalysis& region, AddressSpace space, Value base, uint64_t& visits);
 // Uniformity evidence only; unavailable is distinct from an absent footprint.
 std::optional<std::vector<uint64_t>> uniformSelectorCuts(
     const RegionalAnalysis& region, SyncStorageCell range, uint64_t& visits);

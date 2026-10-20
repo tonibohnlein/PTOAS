@@ -100,6 +100,26 @@ bool check(const fs::RegionalAnalysis& body, scf::ForOp loop, func::FuncOp funct
     auto repeated = fs::repeatEvolvingRegion(function, certificate.storage);
     if (!repeated.error.empty() || repeated.regional.symbolicStorageEffects.size() != 4 ||
         repeated.regional.accessBoundary.size() != 4) { return false; }
+    auto geometry = certificate.storage->certificate();
+    uint64_t visits = 0;
+    if (!geometry->selectorDomainSupport || !geometry->selectorCuts) { return false; }
+    auto support = geometry->selectorDomainSupport(pto::AddressSpace::GM, function.getArgument(0), visits);
+    if (!support || support->size() != unsigned(trips != 0)) { return false; }
+    if (trips && (support->front().begin != 0 || support->front().end != 16 * (trips - 1) + 4)) {
+        return false;
+    }
+    pto::SyncStorageCell requested{pto::AddressSpace::GM, 0, 16 * (trips + 1), function.getArgument(0)};
+    auto cuts = geometry->selectorCuts(requested, visits);
+    if (!cuts || cuts->front() != requested.begin || cuts->back() != requested.end) { return false; }
+    for (std::size_t interval = 1; interval < cuts->size(); ++interval) {
+        const auto begin = (*cuts)[interval - 1], end = (*cuts)[interval];
+        // Independent scalar footprint: [16*t,16*t+4). Every returned atom
+        // must keep both the owner occurrence and actual membership constant.
+        const auto member = [&](uint64_t byte) { return byte / 16 < trips && byte % 16 < 4; };
+        for (auto byte = begin; byte < end; ++byte) {
+            if (member(byte) != member(begin) || (member(byte) && byte / 16 != begin / 16)) { return false; }
+        }
+    }
     for (uint64_t byte = 0; byte < 16 * (trips + 1); ++byte) {
         fs::RegionalByteAddress address{pto::AddressSpace::GM, function.getArgument(0), e.constant(byte)};
         auto result = repeated.regional.storageSelectors(address);

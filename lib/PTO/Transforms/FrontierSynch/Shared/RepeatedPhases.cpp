@@ -168,34 +168,7 @@ RegionalStorageSelectors projectStorage(RegionExpressions& e,
 }
 std::optional<RegionalStorageSelectors> phaseStorage(const RegionalAnalysis& phase, RegionalByteAddress address)
 {
-    if (phase.storageSelectors) { return phase.storageSelectors(address); }
-    // A finite-only phase can answer the same byte query through its exact
-    // partition. Residual effect relationships are not an absence certificate.
-    for (const auto* accesses : {&phase.accessBoundary, &phase.deferredAccessBoundary}) {
-        if (llvm::any_of(*accesses, [](const auto& access) { return !access.representedByCells; })) {
-            return std::nullopt;
-        }
-    }
-    auto& e = *phase.expressions;
-    RegionalStorageSelectors result;
-    for (const auto& cell : phase.storageBoundary) {
-        if (cell.cell.space != address.space) { continue; }
-        if (cell.cell.base != address.base) {
-            SmallVector<SyncStorageCell> domains{cell.cell, {address.space, 0, 1, address.base}};
-            if (!storageBasesAreComparable(domains, phase.gmAliasPolicy)) { return std::nullopt; }
-            continue;
-        }
-        auto active = e.land(e.le(e.constant(cell.cell.begin), address.offset),
-                             e.lt(address.offset, e.constant(cell.cell.end)));
-        auto append = [&](Selectors& target, Selectors source) {
-            restrictSelectors(e, source, active);
-            target.insert(target.end(), source.begin(), source.end());
-        };
-        append(result.firstWriters, cell.firstWriters); append(result.lastWriters, cell.lastWriters);
-        for (const auto& [pipe, values] : cell.firstReaders) { append(result.firstReaders[pipe], values); }
-        for (const auto& [pipe, values] : cell.lastReaders) { append(result.lastReaders[pipe], values); }
-    }
-    return result;
+    return regionalStorageSelectors(phase, address);
 }
 template <typename Callback>
 bool mapStorageSelectors(RegionalStorageSelectors& selected, Callback callback)
@@ -608,6 +581,16 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
                 }
                 return ranges;
             };
+            partition->selectorDomainSupport = [originalPhases](AddressSpace space, Value base, uint64_t& visits)
+                -> std::optional<std::vector<SyncStorageCell>> {
+                std::vector<SyncStorageCell> ranges;
+                for (const auto& phase : *originalPhases) {
+                    auto local = selectorDomainSupportRanges(phase, space, base, visits);
+                    if (!local) { return std::nullopt; }
+                    ranges.insert(ranges.end(), local->begin(), local->end());
+                }
+                return ranges;
+            };
             out.symbolicStorage = std::move(partition);
         }
         if (storage) {
@@ -653,6 +636,38 @@ RepeatedRegionAnalysis repeatPhasedRegions(func::FuncOp function, scf::ForOp loo
                     certificate->families.push_back(std::move(family));
                 }
             }
+            certificate->selectorDomainSupport = [finitePhases, familyCertificates]
+                (AddressSpace space, Value base, uint64_t& visits)
+                -> std::optional<std::vector<SyncStorageCell>> {
+                std::vector<SyncStorageCell> ranges;
+                for (std::size_t phase = 0; phase < finitePhases->size(); ++phase) {
+                    auto local = selectorDomainSupportRanges((*finitePhases)[phase], space, base, visits);
+                    if (!local) { return std::nullopt; }
+                    ranges.insert(ranges.end(), local->begin(), local->end());
+                    const auto& owner = familyCertificates[phase];
+                    if (!owner) { continue; }
+                    if (!owner->selectorDomainSupport) { return std::nullopt; }
+                    auto extra = owner->selectorDomainSupport(space, base, visits);
+                    if (!extra) { return std::nullopt; }
+                    ranges.insert(ranges.end(), extra->begin(), extra->end());
+                }
+                return ranges;
+            };
+            certificate->selectorCuts = [finitePhases, familyCertificates](SyncStorageCell range, uint64_t& visits)
+                -> std::optional<std::vector<uint64_t>> {
+                auto cuts = commonSelectorCuts(*finitePhases, range, visits);
+                if (!cuts) { return std::nullopt; }
+                std::set<uint64_t> points(cuts->begin(), cuts->end());
+                for (const auto& owner : familyCertificates) {
+                    if (!owner) { continue; }
+                    if (!owner->selectorCuts) { return std::nullopt; }
+                    auto local = owner->selectorCuts(range, visits);
+                    if (!local) { return std::nullopt; }
+                    points.insert(local->begin(), local->end());
+                    if (points.size() - 1 > maxRegionalSlotVisits) { return std::nullopt; }
+                }
+                return std::vector<uint64_t>(points.begin(), points.end());
+            };
             out.symbolicStorage = std::move(certificate);
         }
     }

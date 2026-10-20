@@ -24,6 +24,21 @@ bool distinctDomain(const State& state, AddressSpace space, Value base, Regional
     SmallVector<SyncStorageCell> domains{{space, 0, 1, base}, {address.space, 0, 1, address.base}};
     return storageBasesAreComparable(domains, state.body.gmAliasPolicy);
 }
+bool unclassifiedDomain(const State& state, RegionalByteAddress address, bool excludePersistent = false)
+{
+    for (const auto& access : state.body.accessBoundary) {
+        if (llvm::is_contained(state.effectIds, access.effect) || access.representedByCells) { continue; }
+        if (excludePersistent && llvm::any_of(state.persistent, [&](const auto& reservation) {
+                return llvm::is_contained(reservation.effects, access.effect);
+            })) { continue; }
+        const auto& effect = state.body.accessModel->effects()[access.effect];
+        if (effect.memory->scope != address.space) { continue; }
+        if (effect.regions.empty() || llvm::any_of(effect.regions, [&](const auto& region) {
+                return !distinctDomain(state, effect.memory->scope, region.base, address);
+            })) { return true; }
+    }
+    return false;
+}
 std::optional<RepeatedStorageOwner> lookupOwner(const State& state, std::size_t id, RegionalByteAddress address)
 {
     if (id >= state.families.size() || !validAddress(state, address)) { return std::nullopt; }
@@ -180,17 +195,9 @@ std::optional<RepeatedStorageOwner> RepeatedStorage::owner(std::size_t family, R
 }
 std::optional<RegionalStorageSelectors> RepeatedStorage::selectors(RegionalByteAddress address) const
 {
-    if (!validAddress(*state, address)) { return std::nullopt; }
+    if (!validAddress(*state, address) || unclassifiedDomain(*state, address)) { return std::nullopt; }
     RegionalStorageSelectors result;
     auto& e = state->expressions();
-    for (const auto& access : state->body.accessBoundary) {
-        if (contains(access.effect) || access.representedByCells) { continue; }
-        const auto& effect = state->body.accessModel->effects()[access.effect];
-        if (effect.memory->scope != address.space) { continue; }
-        if (effect.regions.empty() || llvm::any_of(effect.regions, [&](const auto& region) {
-                return !distinctDomain(*state, effect.memory->scope, region.base, address);
-            })) { return std::nullopt; }
-    }
     for (std::size_t id = 0; id < state->families.size(); ++id) {
         auto owned = lookupOwner(*state, id, address);
         if (!owned) { return std::nullopt; }
@@ -219,7 +226,7 @@ std::optional<RegionalStorageSelectors> RepeatedStorage::selectors(RegionalByteA
 }
 std::optional<RegionalStorageSelectors> RepeatedStorage::projectedSelectors(RegionalByteAddress address) const
 {
-    if (!validAddress(*state, address)) { return std::nullopt; }
+    if (!validAddress(*state, address) || unclassifiedDomain(*state, address, true)) { return std::nullopt; }
     RegionalStorageSelectors result;
     for (std::size_t id = 0; id < state->families.size(); ++id) {
         auto owned = lookupOwner(*state, id, address);
@@ -261,6 +268,7 @@ std::shared_ptr<const RegionalSymbolicStorageCertificate> RepeatedStorage::certi
         };
         result->families.push_back(std::move(family));
     }
+    attachRepeatedStorageSupport(*result, state);
     return result;
 }
 bool RepeatedStorage::contains(std::size_t effect) const { return llvm::is_contained(state->effectIds, effect); }

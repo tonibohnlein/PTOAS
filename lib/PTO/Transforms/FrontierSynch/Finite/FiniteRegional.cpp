@@ -60,6 +60,7 @@ RegionalAnalysis concreteRegional(std::shared_ptr<FiniteAnalysis> owner, std::sh
         }
         out.storageBoundary.push_back(std::move(cell));
     }
+    qualifyRegionalCellCoverage(out);
     out.cost.children = 1;
     out.cost.cells = out.storageBoundary.size();
     out.cost.ports = result.phases.size();

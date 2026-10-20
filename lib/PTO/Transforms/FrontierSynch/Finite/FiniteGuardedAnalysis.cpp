@@ -29,7 +29,9 @@ bool collectEffects(FiniteGuardedState& state, const GuardedRecognition& recogni
         for (auto id : input.accesses().effectsFor(phase)) {
             effectIds.push_back(id);
             const auto& effect = input.accesses().effects()[id];
-            if (input.accesses().independentOfOtherPhases(id)) { continue; }
+            // Inter-phase independence discharges internal conflicts, not the
+            // storage interface. Keep supplied finite cells for later parents
+            // and re-entry; their boundaries still identify real GM accesses.
             state.cost.physicalFragments += effect.ranges.size();
             for (auto cell : effect.cells) {
                 if (cell >= input.accesses().cells().size() || cell > UINT32_MAX) { return false; }
@@ -270,6 +272,7 @@ RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analys
         return state->both(*answer, state->both(
                 state->arena->eq(a.ordinal, zero), state->arena->eq(b.ordinal, zero)));
     };
+    qualifyRegionalCellCoverage(out);
     out.prepare = [state]() { return state->prepare(); };
     out.prepareFiltered = [state](const RegionalDemandFilter& filter) { return state->prepare(filter); };
     return out;

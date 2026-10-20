@@ -61,6 +61,9 @@ struct RegionalStorageBoundary {
 struct RegionalAccessBoundary {
     std::size_t effect = 0;
     RegionalSelector first, last;
+    // Provider certificate: the exported boundary cells represent this effect
+    // completely in this occurrence frame, including selector guards. Geometry
+    // materialization or a discharge within a smaller visit does not imply this.
     bool representedByCells = false;
 };
 struct RegionalByteAddress {
@@ -107,6 +110,10 @@ struct RegionalSymbolicStorageCertificate {
     // interface. They may contain holes: only exact selectors establish access
     // membership. Construct lazily without enumerating banks or invocation visits.
     std::function<std::optional<std::vector<SyncStorageCell>>(uint64_t&)> selectorSupport;
+    // Complete support for ONE queried domain, under this owner's alias context.
+    // Allows composition to retain local/output coverage while unrelated input
+    // domains remain unavailable. Empty proves absence throughout that domain.
+    std::function<std::optional<std::vector<SyncStorageCell>>(AddressSpace, Value, uint64_t&)> selectorDomainSupport;
 };
 struct ArithmeticRegionalRelations;
 struct RegionalRelations;
@@ -220,6 +227,16 @@ bool validRegionalEvent(const RegionalAnalysis& region, const RegionalEvent& eve
 std::optional<RegionExpressions::Id> regionalPresence(const RegionalAnalysis& region, RegionalEvent event);
 std::optional<RegionExpressions::Id> regionalReachability(
     const RegionalAnalysis& region, RegionalEvent source, RegionalEvent target);
+// Optional answers are exact for the queried byte: empty proves absence; nullopt
+// means that at least one possibly overlapping effect lacks selector coverage.
+// A supplied callback is authoritative, including its unavailable answers.
+enum class RegionalCellCoverage { Exact, Absent, Unavailable };
+RegionalCellCoverage regionalCellCoverage(const RegionalAnalysis& region, RegionalByteAddress address);
+std::optional<RegionalStorageSelectors> regionalStorageSelectors(
+    const RegionalAnalysis& region, RegionalByteAddress address);
+// Provider-side qualification of the finite inventory. Never equate materialized
+// modeled ranges with their presence in this region's exported boundary cells.
+void qualifyRegionalCellCoverage(RegionalAnalysis& region);
 // Reuse from WAIT before consumer to SET after producer. Same-pipe command
 // order is sufficient; other directions require completion-before-start order.
 std::optional<RegionExpressions::Id> regionalHandoffReuse(

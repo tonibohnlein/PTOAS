@@ -7,8 +7,10 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // Symbolic reader lifting preserves inner ownership and rejects every write alias.
 #include "PTO/Transforms/FrontierSynch/Shared/RepeatedStorage.h"
+#include "PTO/Transforms/FrontierSynch/Finite/FiniteAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RepeatedPhases.h"
 #include "PTO/Transforms/FrontierSynch/Shared/SequenceAnalysis.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/SequenceAnalysisInternal.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/STLExtras.h"
@@ -402,6 +404,113 @@ bool distinctPhaseScenario(MLIRContext* context, bool finite = false)
     }
     return true;
 }
+// Conflict-free discharge does not provide a selector for the omitted domain.
+bool dischargedSelectorDomains(MLIRContext* context)
+{
+    std::string text(source);
+    const std::string write = "      pto.store %value, %q[%zero] : !pto.ptr<f32, gm>, f32\n";
+    const auto position = text.find(write);
+    if (position == std::string::npos) { return false; }
+    text.erase(position, write.size());
+    for (auto policy : {pto::GMAliasPolicy::MayAlias, pto::GMAliasPolicy::MayNotAlias}) {
+        auto module = parseSourceString<ModuleOp>(text, context);
+        if (!module) { return false; }
+        auto function = module->lookupSymbol<func::FuncOp>("readers");
+        SmallVector<scf::ForOp> loops;
+        function.walk<WalkOrder::PreOrder>([&](scf::ForOp loop) { loops.push_back(loop); });
+        if (loops.size() != 2) { return false; }
+        pto::SyncInput input(policy);
+        if (failed(input.build(function))) { return false; }
+        auto body = makeBody(input, function, loops[0], loops[1]);
+        body.symbolicStorageEffects.clear();
+        body.storageSelectors = {};
+        auto& e = *body.expressions;
+        auto result = fs::buildRepeatedStorage(body, loops[0], e.constant(3), {});
+        if (!result.storage) { llvm::errs() << result.error << "\n"; return false; }
+        for (bool projected : {false, true}) {
+            auto select = [&](pto::AddressSpace space, Value base) {
+                fs::RegionalByteAddress address{space, base, e.constant(0)};
+                return projected ? result.storage->projectedSelectors(address) : result.storage->selectors(address);
+            };
+            if (select(pto::AddressSpace::GM, function.getArgument(0))) { return false; }
+            const auto other = select(pto::AddressSpace::GM, function.getArgument(1));
+            if (other.has_value() != (policy == pto::GMAliasPolicy::MayNotAlias)) { return false; }
+            const auto local = select(pto::AddressSpace::MAT, {});
+            if (!local || !local->firstWriters.empty() || !local->lastWriters.empty() ||
+                !local->firstReaders.empty() || !local->lastReaders.empty()) { return false; }
+        }
+    }
+    return true;
+}
+// Exercise the actual sequence selector fallback with a guarded finite producer,
+// not a checker reconstruction. The sibling supplies an exact callable export.
+bool finiteCoverageComposition(MLIRContext* context, bool omitted = false)
+{
+    constexpr const char* text = R"mlir(module attributes {pto.target_arch = "a3"} {
+      func.func @coverage(%p: !pto.ptr<f32, gm>, %q: !pto.ptr<f32, gm>, %unused: !pto.ptr<f32, gm>) {
+        %z = arith.constant 0 : index
+        %a = pto.load %p[%z] : !pto.ptr<f32, gm> -> f32
+        %b = pto.load %q[%z] : !pto.ptr<f32, gm> -> f32
+        return
+      }
+    })mlir";
+    auto module = parseSourceString<ModuleOp>(text, context);
+    if (!module) { return false; }
+    auto function = module->lookupSymbol<func::FuncOp>("coverage");
+    auto input = std::make_shared<pto::SyncInput>(pto::GMAliasPolicy::MayNotAlias);
+    if (failed(input->build(function))) { return false; }
+    auto index = std::make_shared<fs::PhaseIndex>();
+    if (failed(index->build(function, input->instructions()))) { return false; }
+    auto original = fs::finiteFunctionInput(function, input, index);
+    auto arena = std::make_shared<fs::RegionExpressions>();
+    std::vector<fs::RegionalAnalysis> children;
+    for (const auto* phase : input->instructions()) {
+        if (input->accesses().effectsFor(phase).empty()) { continue; }
+        SmallVector<Operation*> roots{phase->elementOp};
+        auto owner = fs::analyzeFinite(fs::finiteRegionInput(original, roots),
+            children.empty() ? fs::FiniteStrategy::Guarded : fs::FiniteStrategy::Concrete, arena);
+        if (!owner || !owner->error().empty()) { return false; }
+        auto exported = fs::finiteRegionalResult(owner, arena);
+        if (!exported.presence) { return false; }
+        if (children.empty() && omitted) {
+            llvm::erase_if(exported.storageBoundary,
+                [](const auto& boundary) { return boundary.cell.space == pto::AddressSpace::GM; });
+            fs::qualifyRegionalCellCoverage(exported);
+        }
+        if (!children.empty()) {
+            auto finite = exported;
+            exported.storageSelectors = [finite](fs::RegionalByteAddress address) {
+                return fs::regionalStorageSelectors(finite, address);
+            };
+        }
+        children.push_back(std::move(exported));
+    }
+    if (children.size() != 2) { return false; }
+    auto composed = fs::composeRegionalSequence(function, arena, std::move(children), false, false);
+    if (!composed.error.empty()) { llvm::errs() << composed.error << "\n"; return false; }
+    auto region = fs::sequenceRegionalResult(composed);
+    if (!region.storageSelectors) { return false; }
+    auto& e = *arena;
+    // The omitted, nonempty input domain may refuse. If it answers, it must
+    // identify its reader; the previous empty answer fails this invariant.
+    auto present = region.storageSelectors({pto::AddressSpace::GM, function.getArgument(0), e.constant(0)});
+    if (present) {
+        unsigned readers = 0;
+        for (const auto& entry : present->firstReaders) {
+            for (const auto& value : entry.second) {
+                auto active = e.constantValue(value.present);
+                if (!active) { return false; }
+                if (*active) { ++readers; }
+            }
+        }
+        if (readers != 1) { return false; }
+    }
+    auto absent = region.storageSelectors({pto::AddressSpace::GM, function.getArgument(2), e.constant(0)});
+    if (!absent) { return false; }
+    return absent->firstWriters.empty() && absent->lastWriters.empty() &&
+        llvm::all_of(absent->firstReaders, [](const auto& entry) { return entry.second.empty(); }) &&
+        llvm::all_of(absent->lastReaders, [](const auto& entry) { return entry.second.empty(); });
+}
 bool scenario(MLIRContext* context, unsigned kind)
 {
     std::string text(source);
@@ -562,6 +671,37 @@ module attributes {pto.target_arch = "a3"} {
     fs::RegionExpressions::Substitution bindings({{count, arena->constant(1)}});
     return reaches && arena->constantValue(arena->substitute(*reaches, bindings)) == 1;
 }
+bool scalarSiblingQueries(const fs::RegionalAnalysis& region, fs::RegionExpressions::Id count)
+{
+    auto& e = *region.expressions;
+    using Kind = fs::PeriodicEventKind;
+    for (uint64_t trips : {0U, 1U, 5U}) {
+        fs::RegionExpressions::Substitution bind({{count, e.constant(trips)}});
+        for (unsigned a = 0; a < 2; ++a) {
+            for (unsigned b = 0; b < 2; ++b) {
+                for (uint64_t i = 0; i <= trips; ++i) {
+                    for (uint64_t j = 0; j <= trips; ++j) {
+                        for (auto ak : {Kind::Start, Kind::Completion}) {
+                            for (auto bk : {Kind::Start, Kind::Completion}) {
+                                auto query = fs::regionalReachability(region,
+                                    {a, e.constant(i), ak}, {b, e.constant(j), bk});
+                                const bool expected = i < trips && j < trips && a * trips + i <= b * trips + j &&
+                                    (ak != Kind::Completion || bk != Kind::Start);
+                                if (!query || e.constantValue(e.substitute(*query, bind)) != uint64_t(expected)) {
+                                    llvm::errs() << "scalar sibling query mismatch at " << trips << ": "
+                                        << a << "," << i << "," << unsigned(ak) << " -> "
+                                        << b << "," << j << "," << unsigned(bk) << " expected " << expected << "\n";
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
 bool symbolicSequence(MLIRContext* context, unsigned mode)
 {
     // Ordinary scalar memory instructions provide the shared modeled ranges.
@@ -672,9 +812,16 @@ module attributes {pto.target_arch = "a3"} {
     }
     if (children.size() != 2) { return false; }
     auto composed = fs::composeRegionalSequence(function, arena, children, false, false);
-    if (mode == 2) { return !composed.error.empty(); } // Truly parameterized crossing needs a relation adapter.
     if (!composed.error.empty()) { llvm::errs() << composed.error; return false; }
     auto out = fs::sequenceRegionalResult(composed);
+    if (mode == 2) {
+        // Scalar hardware protection already admits this parameterized pair.
+        // It must not obtain a storage edge or invoke relational fallback.
+        if (!composed.state || !composed.state->crossings.empty() || composed.state->relationalResult ||
+            llvm::any_of(children, [](const auto& child) {
+                return child.anchors.front().phase->kPipeValue != pto::PipelineType::PIPE_S;
+            }) || !scalarSiblingQueries(out, count)) { return false; }
+    }
     if (!out.storageSelectors || out.symbolicStorageEffects.size() != (mode == 3 ? 0 : 2) ||
         out.storageBoundary.size() != (mode == 3 ? 1 : 0)) { return false; }
     if (mode == 3) {
@@ -718,8 +865,17 @@ module attributes {pto.target_arch = "a3"} {
                 }
                 return active == unsigned(ordinal < trips);
             };
-            if (mode == 0) {
+            if (mode == 0 || mode == 2) {
                 if (!check(selected->firstWriters, 0) || !check(selected->lastWriters, 0)) { return false; }
+                if (mode == 2) {
+                    const bool noPrefix = llvm::all_of(selected->firstReaders, [&](const auto& entry) {
+                        return llvm::all_of(entry.second, [&](const auto& reader) {
+                            return e.constantValue(e.substitute(reader.present, bind)) == uint64_t(0);
+                        });
+                    });
+                    if (!noPrefix || selected->lastReaders.size() != 1 ||
+                        !check(selected->lastReaders.begin()->second, 1)) { return false; }
+                }
             } else {
                 if (selected->firstReaders.size() != 1 || selected->lastReaders.size() != 1 ||
                     !check(selected->firstReaders.begin()->second, 0) ||
@@ -753,6 +909,11 @@ bool runRepeatedReadOnlyStorageChecks(MLIRContext* context)
             llvm::errs() << "finite symbolic residual-writer scenario " << mode << " failed\n";
             return false;
         }
+    }
+    if (!finiteCoverageComposition(context) || !finiteCoverageComposition(context, true) ||
+        !dischargedSelectorDomains(context)) {
+        llvm::errs() << "discharged storage selector domains failed\n";
+        return false;
     }
     llvm::outs() << "read-only symbolic repetition selectors and rejection checks passed\n";
     return true;

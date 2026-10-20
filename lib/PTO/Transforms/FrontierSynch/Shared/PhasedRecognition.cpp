@@ -20,6 +20,8 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RepeatedPhases.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RepeatedStorage.h"
+#include "llvm/Support/Debug.h"
+#define DEBUG_TYPE "frontier-representation"
 namespace mlir::pto::frontiersynch {
 namespace {
 std::optional<Expr> phaseTripCount(scf::ForOp loop, PhaseNormalization& normalizer,
@@ -50,6 +52,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
 {
     RegionExpressions::Transaction transaction(expressions);
     auto unavailable = [&](const std::string& reason) {
+        LLVM_DEBUG(llvm::dbgs() << "q-phase rejected at " << node.anchor->getLoc() << ": " << reason << "\n");
         if (!repeatedAttempt.empty()) { repeatedAttempt += "; "; }
         repeatedAttempt += "q-phase repeat: " + reason;
         return false;
@@ -66,7 +69,7 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
     const auto& sequence = program->nodes[node.children.front()];
     PhaseNormalization normalizer(outer, index, expressions);
     uint64_t period = 1;
-    bool nested = false, periodFits = true;
+    bool periodFits = true;
     SmallVector<Value> innerBounds;
     auto addPeriod = [&](uint64_t slots) {
         if (!slots) { periodFits = false; return; }
@@ -76,7 +79,6 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
     };
     outer.getBody()->walk([&](Operation* operation) {
         if (auto inner = dyn_cast<scf::ForOp>(operation)) {
-            nested = true;
             innerBounds.append({inner.getLowerBound(), inner.getUpperBound(), inner.getStep()});
         }
         if (operation->getNumResults() == 1 && index.isRelevant(operation->getResult(0)) &&
@@ -84,9 +86,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
             if (auto divisor = PhaseNormalization::modulus(operation->getResult(0))) { addPeriod(*divisor); }
         }
     });
-    if (!nested) {
-        return unavailable("no nested body");
-    }
+    // A finite flat body satisfies the same supplied-phase contract. Nested
+    // loops need the additional bound checks below, not a separate admission.
     // Bound-only remainder values need not participate in a physical address.
     // Discover their periods before checking whole-value domain invariance.
     SmallVector<Value> pending(innerBounds.begin(), innerBounds.end());
@@ -558,6 +559,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
                             parts.push_back(std::move(*explicitPhase));
                             return true;
                         }
+                        LLVM_DEBUG(llvm::dbgs() << "explicit phase export refused at " << child.anchor->getLoc()
+                            << ": " << diagnostic << "\n");
                         for (auto* operation : child.operations) {
                             if (!index.phasesFor(operation).empty() && !appendArithmetic(operation)) {
                                 return unavailable("explicit phase export: " + diagnostic);
@@ -607,6 +610,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
             repeatedAttempt = previousAttempt;
             if (invalidExpression) { return unavailable(compactFailure); }
             if (!selected) {
+                LLVM_DEBUG(llvm::dbgs() << "phase finite expansion at " << outer.getLoc()
+                    << " phase=" << phase << " period=" << period << " because: " << compactFailure << "\n");
                 // A bounded numeric inner body is an explicit word, including
                 // genuine moving subregions. Only proved-periodic geometry may
                 // use a representative phase. Evolving GM origins remain symbolic:
@@ -729,6 +734,8 @@ bool SequenceAnalysisState::phasedChild(const StructureNode& node, Expr trips)
     child.anchors = child.regional.anchors;
     children.push_back(std::move(child));
     transaction.commit();
+    LLVM_DEBUG(llvm::dbgs() << "q-phase retained at " << outer.getLoc()
+        << " period=" << period << " types=" << children.back().regional.anchors.size() << "\n");
     repeatedAttempt.clear();
     return true;
 }

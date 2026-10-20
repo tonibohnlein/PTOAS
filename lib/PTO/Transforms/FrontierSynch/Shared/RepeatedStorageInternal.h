@@ -34,5 +34,7 @@ struct RepeatedStorage::State {
     std::string error;
     RegionExpressions& expressions() const { return *body.expressions; }
 };
+void attachRepeatedStorageSupport(RegionalSymbolicStorageCertificate& certificate,
+    std::shared_ptr<RepeatedStorage::State> state);
 } // namespace mlir::pto::frontiersynch
 #endif

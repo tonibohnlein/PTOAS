@@ -11,6 +11,137 @@
 #include <algorithm>
 #include <set>
 namespace mlir::pto::frontiersynch {
+namespace {
+bool disjointDomain(const RegionalAnalysis& region, AddressSpace space, Value base, RegionalByteAddress address)
+{
+    if (space != address.space) { return true; }
+    if (base == address.base) { return false; }
+    SmallVector<SyncStorageCell> domains{{space, 0, 1, base}, {address.space, 0, 1, address.base}};
+    return storageBasesAreComparable(domains, region.gmAliasPolicy);
+}
+bool effectAbsent(const RegionalAnalysis& region, std::size_t id, RegionalByteAddress address, bool wholeDomain = false)
+{
+    if (!region.accessModel || id >= region.accessModel->effects().size()) { return false; }
+    const auto& effect = region.accessModel->effects()[id];
+    if (!effect.memory) { return false; }
+    if (effect.memory->scope != address.space) { return true; }
+    if (effect.rangesMaterialized) {
+        auto offset = region.expressions->constantValue(address.offset);
+        return llvm::all_of(effect.ranges, [&](const auto& range) {
+            if (disjointDomain(region, range.space, range.base, address)) { return true; }
+            return !wholeDomain && range.base == address.base && offset &&
+                (*offset < range.begin || *offset >= range.end);
+        });
+    }
+    return !effect.regions.empty() && llvm::all_of(effect.regions, [&](const auto& piece) {
+        return disjointDomain(region, effect.memory->scope, piece.base, address);
+    });
+}
+bool finiteDomainCovered(const RegionalAnalysis& region, AddressSpace space, Value base)
+{
+    if (!region.expressions) { return false; }
+    const RegionalByteAddress address{space, base, region.expressions->constant(0)};
+    for (const auto* side : {&region.accessBoundary, &region.deferredAccessBoundary}) {
+        for (const auto& access : *side) {
+            if (!access.representedByCells && !effectAbsent(region, access.effect, address, true)) { return false; }
+        }
+    }
+    return llvm::all_of(region.symbolicStorageEffects,
+        [&](std::size_t id) { return effectAbsent(region, id, address, true); });
+}
+} // namespace
+void qualifyRegionalCellCoverage(RegionalAnalysis& region)
+{
+    if (!region.accessModel) { return; }
+    using Interval = std::pair<uint64_t, uint64_t>;
+    std::map<AddressSpace, llvm::MapVector<Value, std::vector<Interval>>> domains;
+    for (const auto& cell : region.storageBoundary) {
+        if (cell.cell.begin < cell.cell.end) {
+            domains[cell.cell.space][cell.cell.base].push_back({cell.cell.begin, cell.cell.end});
+        }
+    }
+    for (auto& space : domains) {
+        for (auto& entry : space.second) {
+            auto& ranges = entry.second;
+            std::sort(ranges.begin(), ranges.end());
+            std::vector<Interval> merged;
+            for (const auto& range : ranges) {
+                if (!merged.empty() && range.first <= merged.back().second) {
+                    merged.back().second = std::max(merged.back().second, range.second);
+                } else { merged.push_back(range); }
+            }
+            ranges = std::move(merged);
+        }
+    }
+    for (auto& access : region.accessBoundary) {
+        if (!access.representedByCells || access.effect >= region.accessModel->effects().size()) {
+            access.representedByCells = false;
+            continue;
+        }
+        const auto& effect = region.accessModel->effects()[access.effect];
+        access.representedByCells = effect.rangesMaterialized && llvm::all_of(effect.ranges, [&](const auto& range) {
+            if (range.begin == range.end) { return true; }
+            auto space = domains.find(range.space);
+            if (space == domains.end()) { return false; }
+            auto base = space->second.find(range.base);
+            if (base == space->second.end()) { return false; }
+            const auto& ranges = base->second;
+            auto next = std::upper_bound(ranges.begin(), ranges.end(), range.begin,
+                [](uint64_t begin, const Interval& interval) { return begin < interval.first; });
+            return next != ranges.begin() && std::prev(next)->second >= range.end;
+        });
+    }
+}
+
+RegionalCellCoverage regionalCellCoverage(const RegionalAnalysis& region, RegionalByteAddress address)
+{
+    if (!region.expressions || address.offset >= region.expressions->size() ||
+        region.expressions->isBoolean(address.offset)) { return RegionalCellCoverage::Unavailable; }
+    for (const auto* side : {&region.accessBoundary, &region.deferredAccessBoundary}) {
+        for (const auto& access : *side) {
+            if (!access.representedByCells && !effectAbsent(region, access.effect, address)) {
+                return RegionalCellCoverage::Unavailable;
+            }
+        }
+    }
+    for (auto id : region.symbolicStorageEffects) {
+        if (!effectAbsent(region, id, address)) { return RegionalCellCoverage::Unavailable; }
+    }
+    bool domain = false;
+    for (const auto& cell : region.storageBoundary) {
+        if (disjointDomain(region, cell.cell.space, cell.cell.base, address)) { continue; }
+        if (cell.cell.base != address.base) { return RegionalCellCoverage::Unavailable; }
+        domain = true;
+    }
+    return domain ? RegionalCellCoverage::Exact : RegionalCellCoverage::Absent;
+}
+std::optional<RegionalStorageSelectors> regionalStorageSelectors(
+    const RegionalAnalysis& region, RegionalByteAddress address)
+{
+    if (!region.expressions || address.offset >= region.expressions->size() ||
+        region.expressions->isBoolean(address.offset)) { return std::nullopt; }
+    if (region.storageSelectors) { return region.storageSelectors(address); }
+    const auto coverage = regionalCellCoverage(region, address);
+    if (coverage == RegionalCellCoverage::Unavailable) { return std::nullopt; }
+    RegionalStorageSelectors out;
+    if (coverage == RegionalCellCoverage::Absent) { return out; }
+    auto& e = *region.expressions;
+    for (const auto& cell : region.storageBoundary) {
+        if (cell.cell.space != address.space || cell.cell.base != address.base) { continue; }
+        const auto active = e.land(e.le(e.constant(cell.cell.begin), address.offset),
+                                  e.lt(address.offset, e.constant(cell.cell.end)));
+        auto append = [&](auto& destination, const auto& source) {
+            for (auto value : source) {
+                value.present = e.land(active, value.present);
+                destination.push_back(std::move(value));
+            }
+        };
+        append(out.firstWriters, cell.firstWriters); append(out.lastWriters, cell.lastWriters);
+        for (const auto& [pipe, values] : cell.firstReaders) { append(out.firstReaders[pipe], values); }
+        for (const auto& [pipe, values] : cell.lastReaders) { append(out.lastReaders[pipe], values); }
+    }
+    return out;
+}
 std::optional<std::vector<SyncStorageCell>> selectorSupportRanges(
     const RegionalAnalysis& region, uint64_t& visits)
 {
@@ -37,6 +168,44 @@ std::optional<std::vector<SyncStorageCell>> selectorSupportRanges(
     }
     return ranges;
 }
+std::optional<std::vector<SyncStorageCell>> selectorDomainSupportRanges(
+    const RegionalAnalysis& region, AddressSpace space, Value base, uint64_t& visits)
+{
+    if (!region.expressions) { return std::nullopt; }
+    const auto& certificate = region.symbolicStorage;
+    if (certificate && certificate->expressions == region.expressions &&
+        certificate->accessModel == region.accessModel && certificate->gmAliasPolicy == region.gmAliasPolicy &&
+        certificate->selectorDomainSupport) {
+        auto ranges = certificate->selectorDomainSupport(space, base, visits);
+        if (!ranges || llvm::any_of(*ranges, [&](const auto& range) {
+                return range.space != space || range.base != base || range.begin > range.end ||
+                    range.end > uint64_t(INT64_MAX);
+            })) { return std::nullopt; }
+        return ranges;
+    }
+    // A complete global envelope is also sufficient for a requested domain.
+    if (certificate && certificate->selectorSupport) {
+        auto all = selectorSupportRanges(region, visits);
+        if (all) {
+            std::vector<SyncStorageCell> selected;
+            for (const auto& range : *all) {
+                if (disjointDomain(region, range.space, range.base, {space, base, 0})) { continue; }
+                if (range.base != base) { return std::nullopt; }
+                selected.push_back(range);
+            }
+            return selected;
+        }
+    }
+    if (!finiteDomainCovered(region, space, base)) { return std::nullopt; }
+    std::vector<SyncStorageCell> ranges;
+    for (const auto& boundary : region.storageBoundary) {
+        accumulateCost(visits, 1);
+        if (disjointDomain(region, boundary.cell.space, boundary.cell.base, {space, base, 0})) { continue; }
+        if (boundary.cell.base != base) { return std::nullopt; }
+        ranges.push_back(boundary.cell);
+    }
+    return ranges;
+}
 // Consume producer-certified uniform atoms before the per-byte compatibility
 // adapter. Validate shape and ownership; semantic uniformity is the producer's
 // contract and cannot be established from one selector query.
@@ -55,11 +224,7 @@ std::optional<std::vector<uint64_t>> uniformSelectorCuts(
             return cuts;
         }
     }
-    if (!region.symbolicStorageEffects.empty() || !region.deferredAccessBoundary.empty() ||
-        !region.capabilities.completeStorageModel || !region.capabilities.exactSelectors ||
-        llvm::any_of(region.accessBoundary, [](const auto& access) { return !access.representedByCells; })) {
-        return std::nullopt;
-    }
+    if (!finiteDomainCovered(region, range.space, range.base)) { return std::nullopt; }
     std::set<uint64_t> cuts{range.begin, range.end};
     for (const auto& boundary : region.storageBoundary) {
         accumulateCost(visits, 1);

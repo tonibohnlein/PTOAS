@@ -21,6 +21,8 @@
 #include "PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h"
 #include "llvm/ADT/MapVector.h"
 #include "mlir/IR/Diagnostics.h"
+#include "llvm/Support/Debug.h"
+#define DEBUG_TYPE "frontier-representation"
 namespace mlir::pto::frontiersynch {
 std::function<std::shared_ptr<const CompletionInlineChild>()> completionChildExport(
     std::shared_ptr<SequenceAnalysis> sequence)
@@ -480,6 +482,8 @@ bool SequenceAnalysisState::loopChild(const StructureNode& node)
                 wholeInvocationLoop(function, *input, *program, index) == &node) {
                 return fail("whole-invocation arithmetic capability belongs to the outer request");
             }
+            LLVM_DEBUG(llvm::dbgs() << "arithmetic regional export at " << child.loop.getLoc()
+                << " because: " << repeatedAttempt << "\n");
             std::string arithmeticError;
             FailureOr<RegionalAnalysis> regional = failure();
             if (resolveOriginal.exports) {

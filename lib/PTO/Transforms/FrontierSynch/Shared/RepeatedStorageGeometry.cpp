@@ -18,6 +18,9 @@
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/MathExtras.h"
+#include "RecognitionInternal.h"
+#include "llvm/Support/Debug.h"
+#define DEBUG_TYPE "frontier-representation"
 namespace mlir::pto::frontiersynch {
 namespace {
 using State = RepeatedStorage::State;
@@ -394,6 +397,13 @@ bool separateAlternativeFamilies(const State& state, const State::Family& a, con
     }
     return separated(state, a, b);
 }
+bool dischargedReadOnly(const State& state, std::size_t id)
+{
+    const auto& effects = *state.body.accessModel;
+    return id < effects.effects().size() && effects.effects()[id].memory &&
+        effects.effects()[id].memory->scope == AddressSpace::GM &&
+        detail::dischargeGlobalReadOnlyEffect(id, effects);
+}
 bool separateTypeResiduals(const State& owner, const State& other)
 {
     llvm::DenseSet<std::size_t> omitted(other.effectIds.begin(), other.effectIds.end());
@@ -412,7 +422,8 @@ bool separateTypeResiduals(const State& owner, const State& other)
             if (!separated(owner, family, persistent)) { return false; }
         }
         for (const auto& access : other.body.accessBoundary) {
-            if (omitted.count(access.effect) || access.representedByCells) { continue; }
+            if (omitted.count(access.effect) || access.representedByCells ||
+                dischargedReadOnly(other, access.effect)) { continue; }
             for (auto effect : family.spec.effects) {
                 if (owner.body.accessModel->mayOverlap(effect, access.effect)) { return false; }
             }
@@ -466,13 +477,20 @@ bool completeEffects(const State& state, const llvm::DenseSet<std::size_t>& assi
         for (auto id : state.body.accessModel->effectsFor(anchor.phase)) {
             auto found = llvm::find_if(state.body.accessBoundary,
                 [id](const auto& access) { return access.effect == id; });
-            if (found == state.body.accessBoundary.end()) { return false; }
-            if (assigned.count(id) || llvm::any_of(state.persistent, [id](const auto& profile) {
-                    return llvm::is_contained(profile.effects, id);
-                })) { continue; }
+            if (found == state.body.accessBoundary.end()) {
+                LLVM_DEBUG(llvm::dbgs() << "repeated complete effect missing " << id << " at "
+                    << anchor.phase->elementOp->getLoc() << "\n");
+                return false;
+            }
+            const bool classified = assigned.count(id) || llvm::any_of(state.persistent, [id](const auto& profile) {
+                return llvm::is_contained(profile.effects, id);
+            });
+            if (dischargedReadOnly(state, id) || classified) { continue; }
             const auto& effect = state.body.accessModel->effects()[id];
             if (!invariantEffect(effect, state.loop)) {
                 if (!found->representedByCells || !phaseIndex || phasePeriod <= 1 || effect.regions.empty()) {
+                    LLVM_DEBUG(llvm::dbgs() << "repeated residual effect " << id
+                        << " not invariant/cell represented at " << anchor.phase->elementOp->getLoc() << "\n");
                     return false;
                 }
                 PhaseNormalization normalizer(state.loop, *phaseIndex, state.expressions());
@@ -484,7 +502,10 @@ bool completeEffects(const State& state, const llvm::DenseSet<std::size_t>& assi
             if (found->representedByCells) { continue; }
             // The projected selector API exports classified residual families
             // only. An unclassified invariant access cannot silently disappear.
-            if (!state.persistent.empty()) { return false; }
+            if (!state.persistent.empty()) {
+                LLVM_DEBUG(llvm::dbgs() << "repeated residual effect " << id << " missing persistent profile\n");
+                return false;
+            }
             for (auto owned : assigned) {
                 if (state.body.accessModel->mayOverlap(id, owned)) { return false; }
             }
@@ -538,7 +559,7 @@ static RepeatedStorageResult buildStorage(const RegionalAnalysis& body, scf::For
         }
     }
     if (llvm::any_of(body.symbolicStorageEffects, [&](std::size_t id) {
-            return !assigned.count(id) && !persistentIds.count(id);
+            return !assigned.count(id) && !persistentIds.count(id) && !dischargedReadOnly(*state, id);
         }) ||
         !completeEffects(*state, assigned, phaseIndex, phasePeriod)) {
         result.error = "evolving storage has an unexported effect or an unclassified overlapping residual access";
@@ -588,7 +609,8 @@ RepeatedStorageTypesResult recognizeRepeatedStorageTypes(ArrayRef<RegionalAnalys
             state = checked.storage->state;
         }
         if (llvm::any_of(body.accessBoundary, [&](const auto& access) {
-                return !access.representedByCells && !llvm::is_contained(state->effectIds, access.effect);
+                return !access.representedByCells && !llvm::is_contained(state->effectIds, access.effect) &&
+                    !dischargedReadOnly(*state, access.effect);
             })) {
             out.error = "finite visit projection cannot omit an unclassified residual effect";
             return out;
