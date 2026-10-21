@@ -68,7 +68,8 @@ struct FiniteGuardedState {
     Expr negate(Expr a) { return arena->lnot(a); }
     void closeAndReduce();
     void summarize(const SyncInput& input);
-    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(const RegionalDemandFilter& filter = {});
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepare(const RegionalDemandFilter& filter = {},
+        const ArithmeticProgram* expanded = nullptr);
 };
 } // namespace mlir::pto::frontiersynch
 #endif

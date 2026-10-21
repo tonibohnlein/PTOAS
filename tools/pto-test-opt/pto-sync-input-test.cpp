@@ -1154,6 +1154,28 @@ LogicalResult checkArithmeticRequests(func::FuncOp function, pto::GMAliasPolicy 
   llvm::outs() << "arithmetic-requests: demands-only query-only isolated-selector-failure fresh-plans retained-owner\n";
   return success();
 }
+LogicalResult checkExpandedCallbackOwners(const pto::frontiersynch::FiniteGuardedAnalysis& analysis,
+    const pto::SyncInput* input) {
+  using namespace pto::frontiersynch;
+  for (bool filtered : {false, true}) {
+    // Aliasing ownership observes this callback alone, while the session keeps
+    // the same input valid for the rest of the existing mathematical tests.
+    auto token = std::make_shared<uint8_t>(0);
+    std::weak_ptr<uint8_t> lifetime = token;
+    std::shared_ptr<const pto::SyncInput> owner(token, input);
+    auto view = expandedFiniteRegionalQueries(analysis, owner);
+    decltype(view.prepare) extracted;
+    if (filtered) {
+      extracted = [prepare = view.prepareFiltered]() { return prepare({}); };
+    } else { extracted = view.prepare; }
+    view = RegionalAnalysis{};
+    owner.reset(); token.reset();
+    if (lifetime.expired()) { return failure(); }
+    extracted = {};
+    if (!lifetime.expired()) { return failure(); }
+  }
+  return success();
+}
 LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPolicy policy) {
   using namespace pto::frontiersynch;
   FrontierAnalysis session(function);
@@ -1211,6 +1233,9 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
     if (invalidExports) {
       return function.emitError("expanded child advertised unsupported coverage or exports");
     }
+    if (failed(checkExpandedCallbackOwners(*first.mathematical->expandedFiniteDemands, session.input()))) {
+      return function.emitError("extracted expanded preparation lost or leaked its modeled input owner");
+    }
     const auto work = session.constructionCounts().mathematicalAttempts;
     std::shared_ptr<const RegionalAnalysis> queries;
     for (unsigned capability = 0; capability < 3; ++capability) {
@@ -1235,8 +1260,10 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
           (capability != 1 && checksAfter != checksBefore)) {
         return function.emitError("expanded selector request repeated construction or polluted weaker requests");
       }
-      const auto expectedStatus = capability == 0 || (capability == 1 && outcome.available.selectors) ?
-          AnalysisStatus::Ready : AnalysisStatus::UnmetObligation;
+      const bool requestedReady = capability == 0 ||
+          (capability == 1 && outcome.available.selectors) ||
+          (capability == 2 && outcome.available.synchronization);
+      const auto expectedStatus = requestedReady ? AnalysisStatus::Ready : AnalysisStatus::UnmetObligation;
       const bool retained = outcome.status == expectedStatus && outcome.mathematical == first.mathematical &&
           retry.mathematical == first.mathematical && outcome.available.queries &&
           outcome.regionalExports && outcome.regionalExports == retry.regionalExports &&
@@ -1249,8 +1276,8 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
       if (capability == 1 && outcome.available.selectors) {
         const auto& selected = *outcome.regionalExports;
         const bool complete = selected.capabilities.completeStorageModel && selected.capabilities.exactSelectors &&
-            selected.storageSelectors && selected.symbolicStorage && !selected.prepare &&
-            !selected.capabilities.endpointRecipes;
+            selected.storageSelectors && selected.symbolicStorage && selected.prepare &&
+            selected.capabilities.endpointRecipes;
         const auto state = first.mathematical->expandedFiniteDemands->state;
         const bool retainedRelations = selected.relations && selected.relations->data.completeRequiredOrder &&
             selected.relations->data.analysis.period == 1 && selected.relations->data.selectors.period == 1 &&
@@ -1265,10 +1292,11 @@ LogicalResult checkFiniteExpansionSession(func::FuncOp function, pto::GMAliasPol
           return function.emitError("expanded storage export has incomplete support or unexpected recipes");
         }
       }
-      const bool queryOnly = !queries->capabilities.exactSelectors && !queries->capabilities.endpointRecipes &&
-          !queries->capabilities.completeStorageModel && queries->storageBoundary.empty() && !queries->prepare;
+      const bool queryOnly = !queries->capabilities.exactSelectors && queries->capabilities.endpointRecipes &&
+          !queries->capabilities.completeStorageModel && queries->storageBoundary.empty() && queries->prepare;
       if (!queryOnly) {
-        return function.emitError("expanded queries advertised unmapped selector or endpoint exports");
+        return function.emitError(
+            "expanded query snapshot changed storage capability or lost its point recipe callback");
       }
     }
     for (auto [siteID, site] : llvm::enumerate(expanded->sites)) {

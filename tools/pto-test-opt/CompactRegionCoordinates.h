@@ -94,6 +94,27 @@ inline bool decode(const fs::RegionalAnalysis& region, fs::RegionalEvent event, 
         }
         return false;
     }
+    // Generic arithmetic exports retain all enclosing ordinal frames. The
+    // innermost ordinal alone cannot reconstruct a nested original occurrence.
+    if (!region.outerLoops.empty()) {
+        if (event.type >= region.outerLoops.size() ||
+            event.visits.size() != region.outerLoops[event.type].size()) { return false; }
+        for (std::size_t i = 0; i < event.visits.size(); ++i) {
+            const auto loop = region.outerLoops[event.type][i];
+            const auto bounds = domain(loop);
+            const auto ordinal = number(region, event.visits[i]);
+            // Nonunit quotient frames need their provider's phase decoder.
+            if (!region.outerDivisors.empty() &&
+                (event.type >= region.outerDivisors.size() ||
+                 i >= region.outerDivisors[event.type].size() || region.outerDivisors[event.type][i] != 1)) {
+                return false;
+            }
+            if (!bounds || !ordinal || *ordinal > (UINT64_MAX - bounds->first) / bounds->second) {
+                return false;
+            }
+            values[loop] = bounds->first + bounds->second * *ordinal;
+        }
+    }
     const auto& anchor = region.anchors[event.type];
     for (const auto& point : anchor.coordinates) {
         if (point.induction < 0) {

@@ -24,7 +24,11 @@ def invoke(tool, path, policy):
     expanded = next(item for item in documents if "samples" in item or "error" in item)
     assert not expanded["error"], expanded
     form = next(item for item in documents if item.get("region") == "anonymous")
-    assert expanded["exports_blocked"]
+    # The legacy wrapper lacks the original query frame. The new point-recipe
+    # service can qualify independently; its positive and negative command
+    # semantics are checked by check_expanded_endpoint_adapter.py.
+    assert expanded["legacy_queries_blocked"]
+    assert isinstance(expanded["preparation_available"], bool)
     assert expanded["invalid_roots_rejected"]
     assert expanded["foreign_preflight_rejected"]
     assert expanded["foreign_index_rejected"]

@@ -557,8 +557,10 @@ void dumpRegionalArithmetic(func::FuncOp function, const fs::PhaseIndex& index,
                     }
                 }
                 document["samples"] = std::move(samples);
-                document["exports_blocked"] = !fs::finiteGuardedRegionalResult(expanded).capabilities.exactQueries &&
-                    failed(fs::prepareFiniteGuardedLogicalInsertion(expanded));
+                document["legacy_queries_blocked"] =
+                    !fs::finiteGuardedRegionalResult(expanded).capabilities.exactQueries;
+                document["preparation_available"] =
+                    succeeded(fs::prepareFiniteGuardedLogicalInsertion(expanded));
             }
             llvm::outs() << "expanded-json " << llvm::json::Value(std::move(document)) << "\n";
         }

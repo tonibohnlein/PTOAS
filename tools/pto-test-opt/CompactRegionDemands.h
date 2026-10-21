@@ -9,6 +9,7 @@
 #ifndef PTO_TEST_COMPACTREGIONDEMANDS_H
 #define PTO_TEST_COMPACTREGIONDEMANDS_H
 #include "CompactRegionCoordinates.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "llvm/Support/JSON.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInternal.h"
 namespace compact_contract {
@@ -87,6 +88,7 @@ public:
                    selected(sequence->children[x.first].regional, a, b, bindings, &sequence->children[x.first]);
         }
         auto owner = region.retainedMathematics.lock();
+        if (!owner && child) { owner = child->prefixMathematics; }
         const auto* finite = child && child->finite ?
                                  child->finite.get() :
                                  (owner && owner->finiteDemands ? owner->finiteDemands.get() : nullptr);
@@ -95,14 +97,26 @@ public:
             return llvm::any_of(
                 retained, [&](const auto& record) { return record.source == a.type && record.target == b.type; });
         }
-        if (finite && finite->guarded() && finite->guarded()->state) {
-            const auto& state = *finite->guarded()->state;
+        const auto* guarded = finite ? finite->guarded() :
+            (owner && owner->expandedFiniteDemands ? owner->expandedFiniteDemands.get() : nullptr);
+        if (guarded && guarded->state) {
+            const auto& state = *guarded->state;
             if (state.arena != region.expressions) {
                 return fail("guarded record arena mismatch");
             }
             return llvm::any_of(state.retained, [&](const auto& record) {
                 return record.source == a.type && record.target == b.type && truth(region, record.guard, bindings);
             });
+        }
+        if (owner && owner->arithmeticRegionalDemands) {
+            const auto& arithmetic = *owner->arithmeticRegionalDemands;
+            // Empty is established from the retained demand inventory, never
+            // inferred from an unavailable relation or failed query export.
+            if (arithmetic.differenceDemands) {
+                if (arithmetic.differenceDemands->minimumDemands.empty()) { return false; }
+            } else if (arithmetic.analysis.hasRelations(fs::ArithmeticRelationView::Demands) &&
+                       arithmetic.analysis.minimumDemands.empty()) { return false; }
+            return fail("nonempty arithmetic record expansion unavailable in this test adapter");
         }
         if (child && !child->periodic.payloads.empty()) {
             auto from = number(region, a.ordinal), to = number(region, b.ordinal);

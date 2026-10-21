@@ -8,6 +8,7 @@
 // Probe the production-selected mathematics; reference effects live in Python.
 #include "CompactRegionCoordinates.h"
 #include "CompactRegionDemands.h"
+#include "PTO/Transforms/FrontierSynch/Arithmetic/ArithmeticRegional.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/FrontierSynch/FrontierAnalysis.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RetainedInventory.h"
@@ -38,6 +39,76 @@ llvm::json::Array originalStructure(const fs::FrontierAnalysis& session)
             {"enclosing_coordinates", node.loops.size()}, {"static_payloads", node.payloadCount}});
     }
     return rows;
+}
+llvm::json::Object arithmeticSummary(const fs::MathematicalResult& math)
+{
+    auto owner = math.arithmeticRegionalDemands;
+    if (!owner) {
+        return {};
+    }
+    const auto& form = owner->program;
+    uint64_t pieces = 0;
+    if (owner->differenceDemands) {
+        for (const auto& entry : owner->differenceDemands->minimumDemands) {
+            pieces += entry.second.size();
+        }
+    } else {
+        for (const auto& entry : owner->analysis.minimumDemands) {
+            pieces += entry.second.size();
+        }
+    }
+    return llvm::json::Object{
+        {"sites", form.sites.size()},
+        {"parameters", form.parameters.size()},
+        {"primitive_relations", form.primitives.relations.size()},
+        {"retained_pieces", pieces},
+        {"class", fs::recognitionName(form.recognition.arithmeticClass)},
+        {"observed_dimensions", form.recognition.observedDimensions},
+        {"observed_coefficient", form.recognition.observedCoefficient},
+        {"difference_bound_reducer", bool(owner->differenceDemands)}};
+}
+llvm::json::Object expandedPointChecks(const fs::MathematicalResult& math)
+{
+    const auto analysis = math.expandedFiniteDemands;
+    if (!analysis || !analysis->expandedProgram || !analysis->state) {
+        return llvm::json::Object{{"error", "expanded owner missing"}};
+    }
+    const auto program = analysis->expandedProgram;
+    if (program->sites.empty() || program->sites.front().fixedCoordinates.empty()) {
+        return llvm::json::Object{{"error", "fixed occurrence missing"}};
+    }
+    auto& state = *analysis->state;
+    auto valid = state.prepare({}, program.get());
+    auto invalid = *program;
+    invalid.sites.front().fixedCoordinates.clear();
+    const bool missing = failed(state.prepare({}, &invalid));
+    invalid = *program;
+    invalid.sites.front().fixedCoordinates.push_back(invalid.sites.front().fixedCoordinates.front());
+    const bool duplicate = failed(state.prepare({}, &invalid));
+    invalid = *program;
+    invalid.sites.front().fixedCoordinates.front().induction = -1;
+    const bool negative = failed(state.prepare({}, &invalid));
+    auto loop = program->sites.front().fixedCoordinates.front().loop;
+    const auto local = state.arena->eq(state.arena->input(loop.getInductionVar()), state.arena->constant(0));
+    fs::RegionalDemandFilter changing = [local](const auto&, const auto&) {
+        return std::optional<fs::RegionExpressions::Id>(local);
+    };
+    const bool history = state.retained.empty() || failed(state.prepare(changing, program.get()));
+    auto again = state.prepare({}, program.get());
+    const auto no = state.arena->boolean(false);
+    fs::RegionalDemandFilter filter = [no](const auto&, const auto&) {
+        return std::optional<fs::RegionExpressions::Id>(no);
+    };
+    auto empty = state.prepare(filter, program.get());
+    return llvm::json::Object{
+        {"valid", succeeded(valid)},
+        {"missing_frame_refused", missing},
+        {"duplicate_frame_refused", duplicate},
+        {"negative_point_refused", negative},
+        {"changing_activity_refused", history},
+        {"retained_owner_reusable", succeeded(again)},
+        {"false_filter_empty", succeeded(empty) && (*empty)->families.empty()},
+        {"families", succeeded(valid) ? (*valid)->families.size() : 0}};
 }
 std::vector<uint64_t> constructionSnapshot(const fs::FrontierAnalysis& session)
 {
@@ -333,9 +404,16 @@ struct Probe {
                     continue;
                 }
                 auto event = candidate(region, type, coordinates);
-                if (!event || key(region, *event, phases) != requested) {
-                    continue;
+                if (!event) {
+                    error = "original occurrence frame unavailable in test consumer";
+                    return false;
                 }
+                auto original = key(region, *event, phases);
+                if (!original) {
+                    error = "original occurrence coordinate decoding unavailable in test consumer";
+                    return false;
+                }
+                if (*original != requested) { continue; }
                 auto present = fs::regionalPresence(region, *event);
                 if (!present || !number(region, *present)) {
                     error = "nonconstant occurrence presence";
@@ -486,13 +564,39 @@ int runCompactRegionContract(const char* filename)
             if (region.getInt() < 0) { return 1; }
             request.region = static_cast<std::size_t>(region.getInt());
         }
+        if (auto selected = function->getAttrOfType<IntegerAttr>("test.contract_loop")) {
+            SmallVector<scf::ForOp> loops;
+            function.walk<WalkOrder::PreOrder>([&](scf::ForOp loop) { loops.push_back(loop); });
+            if (selected.getInt() < 0 || static_cast<uint64_t>(selected.getInt()) >= loops.size()) { return 1; }
+            const auto* structure = session.result();
+            auto found = llvm::find_if(structure->nodes, [&](const auto& node) {
+                return node.kind == fs::StructureKind::Loop && node.anchor == loops[selected.getInt()];
+            });
+            if (found == structure->nodes.end()) { return 1; }
+            request.region = std::distance(structure->nodes.begin(), found);
+        }
         if (auto needs = function->getAttrOfType<IntegerAttr>("test.contract_exports")) {
             if (needs.getInt() < 0 || needs.getInt() > 7) { return 1; }
             request.needs.queries = needs.getInt() & 1;
             request.needs.selectors = needs.getInt() & 2;
             request.needs.synchronization = needs.getInt() & 4;
         }
-        auto answer = session.analyze(request);
+        // Explicit research comparisons use the existing named requests. They
+        // do not change production selection or silently try another strategy.
+        auto strategy = function->getAttrOfType<StringAttr>("test.contract_strategy");
+        fs::AnalysisOutcome answer;
+        if (!strategy || strategy.getValue() == "production") {
+            answer = session.analyze(request);
+        } else if (strategy.getValue() == "arithmetic") {
+            answer = session.analyzeArithmeticRegional(request);
+        } else if (strategy.getValue() == "numerical") {
+            answer = session.analyzeNumericalRegion(request);
+        } else if (strategy.getValue() == "expanded") {
+            answer = session.analyzeFiniteExpansion(request);
+        } else {
+            function.emitError("unknown compact-class test strategy");
+            return 1;
+        }
         if (answer.status != fs::AnalysisStatus::Ready || !answer.mathematical) {
             llvm::json::Array obligations;
             for (const auto& item : answer.obligations) {
@@ -505,6 +609,7 @@ int runCompactRegionContract(const char* filename)
                                                   "production exact export not ready"},
                                     {"status", static_cast<unsigned>(answer.status)},
                                     {"backend", answer.mathematical ? answer.mathematical->backend : "unavailable"},
+                                    {"retained_mathematics", bool(answer.mathematical)},
                                     {"structure", mathOnly ? originalStructure(session) : llvm::json::Array{}},
                                     {"obligations", std::move(obligations)}})
                          << "\n";
@@ -512,6 +617,17 @@ int runCompactRegionContract(const char* filename)
         }
         if (mathOnly && function->hasAttr("test.contract_completion_parent")) {
             if (failed(runGroupedCompletionParent(function, answer.mathematical))) { return 1; }
+            function->getParentOp()->print(llvm::outs());
+            llvm::outs() << "\n";
+            return 0;
+        }
+        if (mathOnly && function->hasAttr("test.contract_point_checks")) {
+            llvm::outs() << llvm::json::Value(expandedPointChecks(*answer.mathematical)) << "\n";
+            return 0;
+        }
+        if (mathOnly && function->hasAttr("test.contract_emit")) {
+            auto prepared = session.prepareLogical(answer);
+            if (failed(prepared) || failed(fs::insertLogicalSynchronization(function, **prepared))) { return 1; }
             function->getParentOp()->print(llvm::outs());
             llvm::outs() << "\n";
             return 0;
@@ -542,6 +658,10 @@ int runCompactRegionContract(const char* filename)
             llvm::outs() << llvm::json::Value(llvm::json::Object{
                 {"error", ""}, {"request", "mathematics-only-diagnostic"},
                 {"region", request.region}, {"backend", answer.mathematical->backend},
+                {"arithmetic", arithmeticSummary(*answer.mathematical)},
+                {"new_construction", llvm::json::Array{session.constructionCounts().mathematicalAttempts,
+                    session.constructionCounts().arithmeticQueryBuilds,
+                    session.constructionCounts().arithmeticSelectorBuilds}},
                 {"structure", originalStructure(session)},
                 {"inventory", fs::retainedAnalysisInventory(*answer.mathematical)}}) << "\n";
             return 0;
@@ -562,7 +682,9 @@ int runCompactRegionContract(const char* filename)
             math = math->identityComposition->child;
         }
         fs::RegionalAnalysis region;
-        if (math->sequenceDemands) {
+        if (answer.regionalExports) {
+            region = *answer.regionalExports;
+        } else if (math->sequenceDemands) {
             region = fs::sequenceRegionalResult(*math->sequenceDemands);
         } else if (math->finiteDemands) {
             region = fs::finiteRegionalResult(math->finiteDemands);
@@ -572,6 +694,7 @@ int runCompactRegionContract(const char* filename)
             llvm::outs() << "{\"error\":\"selected export unavailable\"}\n";
             return 0;
         }
+        if (region.retainedMathematics.expired()) { region.retainedMathematics = math; }
         auto occurrences = function->getAttrOfType<ArrayAttr>("test.contract_occurrences");
         auto cells = function->getAttrOfType<ArrayAttr>("test.contract_cells");
         if (!occurrences || !cells || !region.expressions) {
@@ -581,6 +704,30 @@ int runCompactRegionContract(const char* filename)
         if (!probe.resolve(occurrences)) {
             llvm::outs() << llvm::json::Value(llvm::json::Object{{"error", probe.error}}) << "\n";
             return 0;
+        }
+        llvm::json::Object decodeChecks;
+        if (function->hasAttr("test.contract_decode_checks")) {
+            // A minimal quotient-frame view deliberately unsupported by this
+            // consumer. No query callback is needed: decoding must refuse first.
+            fs::RegionalAnalysis unsupported;
+            unsupported.expressions = region.expressions;
+            unsupported.anchors = region.anchors;
+            unsupported.occurrenceLoops.resize(region.anchors.size());
+            unsupported.outerLoops.resize(region.anchors.size());
+            unsupported.outerDivisors.resize(region.anchors.size());
+            bool changed = false;
+            for (std::size_t type = 0; type < region.anchors.size(); ++type) {
+                const auto loops = enclosing(region.anchors[type].phase->elementOp);
+                unsupported.outerLoops[type].assign(loops.begin(), loops.end());
+                unsupported.outerDivisors[type].assign(unsupported.outerLoops[type].size(), 2);
+                changed |= !unsupported.outerLoops[type].empty();
+            }
+            if (!changed) { return 1; }
+            Probe incomplete{unsupported, session.input()->instructions(), {}, {}, {}};
+            const bool rejected = !incomplete.resolve(occurrences) &&
+                incomplete.error == "original occurrence coordinate decoding unavailable in test consumer";
+            if (!rejected) { return 1; }
+            decodeChecks["unsupported_frame_unavailable"] = true;
         }
         llvm::json::Array present;
         for (const auto& event : probe.events) {
@@ -593,7 +740,9 @@ int runCompactRegionContract(const char* filename)
                             llvm::json::Object{
                                 {"error", ""},
                                 {"backend", answer.mathematical->backend},
+                                {"arithmetic", arithmeticSummary(*math)},
                                 {"inventory_read_only", true},
+                                {"decode_checks", std::move(decodeChecks)},
                                 {"selector_source",
                                  region.storageSelectors ? "provider-callback" : "shared-cell-coverage"},
                                 {"present", std::move(present)},

@@ -205,6 +205,7 @@ RegionalAnalysis expandedFiniteRegionalQueries(const FiniteGuardedAnalysis& anal
     out.gmAliasPolicy = state->gmAliasPolicy;
     out.cost = state->cost;
     out.capabilities.exactQueries = true;
+    out.capabilities.endpointRecipes = true;
     // Keep the input and expanded occurrence map alive through every callback.
     // One local invocation has no free ordinal or enclosing visit coordinates.
     auto validEvent = [state, program, inputOwner](RegionalEvent event) {
@@ -231,6 +232,18 @@ RegionalAnalysis expandedFiniteRegionalQueries(const FiniteGuardedAnalysis& anal
         if (!pa || !pb) { return std::nullopt; }
         return state->both(state->arena->boolean(a.type < b.type), state->both(*pa, *pb));
     };
+    // Preparation callbacks may be extracted from the regional export. Retain
+    // the supplied input independently of the query/selector callback owners.
+    auto prepare = [state, program, inputOwner](const RegionalDemandFilter& filter)
+        -> FailureOr<std::unique_ptr<PreparedLogicalPlan>> {
+        if (inputOwner && state->accessModel != &inputOwner->accesses()) {
+            state->insertionError = "expanded preparation lost its modeled input binding";
+            return failure();
+        }
+        return state->prepare(filter, program.get());
+    };
+    out.prepare = [prepare]() { return prepare({}); };
+    out.prepareFiltered = std::move(prepare);
     return out;
 }
 RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analysis)
@@ -279,12 +292,12 @@ RegionalAnalysis finiteGuardedRegionalResult(const FiniteGuardedAnalysis& analys
 }
 FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedLogicalInsertion(FiniteGuardedAnalysis& analysis)
 {
-    const bool unavailable = !analysis.error.empty() || !analysis.state || analysis.expandedProgram;
+    const bool unavailable = !analysis.error.empty() || !analysis.state;
     if (unavailable) {
-        analysis.insertionError = "expanded original-coordinate endpoint adapter not implemented yet";
+        analysis.insertionError = "finite endpoint preparation requires valid retained mathematics";
         return failure();
     }
-    auto result = analysis.state->prepare();
+    auto result = analysis.state->prepare({}, analysis.expandedProgram.get());
     analysis.insertionError = analysis.state->insertionError;
     return result;
 }
@@ -294,7 +307,8 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> prepareFiniteGuardedInsertion(Fi
     if (succeeded(result)) {
         prepareAllocationSupport(**result);
         (*result)->allocationCertificate =
-            regionalAllocationCertificate(finiteGuardedRegionalResult(analysis), **result);
+            regionalAllocationCertificate(analysis.expandedProgram ?
+                expandedFiniteRegionalQueries(analysis) : finiteGuardedRegionalResult(analysis), **result);
         if (!(*result)->allocationCertificate) {
             (*result)->allocationCertificate = finiteRegionalAllocationCertificate(
                 finiteGuardedRegionalResult(analysis), **result);

@@ -9,6 +9,7 @@
 #ifndef PTO_FRONTIER_GENERALARITHMETICENDPOINTRECIPE_H
 #define PTO_FRONTIER_GENERALARITHMETICENDPOINTRECIPE_H
 #include "ArithmeticEndpointExpressions.h"
+#include "../Shared/OccurrenceBinding.h"
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "llvm/ADT/STLExtras.h"
 namespace mlir::pto::frontiersynch::detail {
@@ -84,6 +85,12 @@ private:
             family.sourceCut = {from->getBlock(), from}; family.targetCut = {to->getBlock(), to};
             family.members.push_back({family.id, static_cast<uint32_t>(pair.first),
                 static_cast<uint32_t>(pair.second), {}, {}});
+            for (auto point : source.fixedCoordinates) {
+                family.members.front().sourceCoordinates.push_back({point.loop, point.induction});
+            }
+            for (auto point : target.fixedCoordinates) {
+                family.members.front().targetCoordinates.push_back({point.loop, point.induction});
+            }
             plan.families.push_back(std::move(family));
             auto entry = namespaces.try_emplace({p, q}, static_cast<uint32_t>(record)).first;
             entry->second = std::min(entry->second, static_cast<uint32_t>(record));
@@ -130,6 +137,10 @@ private:
         if (forward && local) { return success(); }
         auto* before = forward ? site.phase->elementOp->getNextNode() : site.phase->elementOp;
         if (!before) { return failure(); }
+        SmallVector<TemplateCoordinate> coordinates;
+        for (auto point : site.fixedCoordinates) { coordinates.push_back({point.loop, point.induction}); }
+        auto atCut = originalFixedPointGuard(*arena, coordinates, before, error);
+        if (failed(atCut)) { return failure(); }
         SmallVector<Id> inputs;
         for (auto loop : site.loops) { inputs.push_back(arena->input(loop.getInductionVar())); }
         for (auto parameter : program.parameters) {
@@ -167,8 +178,8 @@ private:
             piece.targetPipe = forward ? selector.outputPipe : pipe;
             piece.namespaceId = namespaces.at({piece.sourcePipe, piece.targetPipe});
             piece.cut = {before->getBlock(), before}; piece.order = endpoints.size();
-            piece.members.push_back({static_cast<uint32_t>(record->second), {}});
-            endpoint.activity = partner.guard; endpoint.ordinal = arena->constant(0);
+            piece.members.push_back({static_cast<uint32_t>(record->second), coordinates});
+            endpoint.activity = arena->land(partner.guard, *atCut); endpoint.ordinal = arena->constant(0);
             if (selectedPartner != RegionExpressions::invalid) {
                 endpoint.residueCoordinate = selectedPartner;
                 endpoint.modulus = partners.size(); endpoint.residue = position;

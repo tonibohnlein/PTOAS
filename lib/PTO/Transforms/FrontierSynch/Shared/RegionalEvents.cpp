@@ -9,6 +9,7 @@
 #include "RegionalCapabilitiesInternal.h"
 #include "OccurrenceBinding.h"
 #include "OriginalCutFacts.h"
+#include "llvm/ADT/DenseSet.h"
 #include <set>
 #include "mlir/IR/Matchers.h"
 namespace mlir::pto::frontiersynch {
@@ -165,6 +166,22 @@ std::optional<RegionExpressions::Id> originalLoopOrdinal(
                          e.constant(step.getSExtValue()));
     ordinal = e.div(ordinal, e.constant(divisor));
     return ordinal == RegionExpressions::invalid ? std::nullopt : std::optional(ordinal);
+}
+FailureOr<RegionExpressions::Id> originalFixedPointGuard(RegionExpressions& expressions,
+    ArrayRef<TemplateCoordinate> coordinates, Operation* cut, std::string& error)
+{
+    llvm::DenseSet<Operation*> seen;
+    for (auto point : coordinates) {
+        if (!cut || !point.loop || !point.loop->isProperAncestor(cut) || !seen.insert(point.loop).second) {
+            error = "fixed endpoint coordinates do not belong to the original cut"; return failure();
+        }
+    }
+    auto selected = expressions.boolean(true);
+    for (auto point : coordinates) {
+        selected = expressions.land(selected, expressions.eq(expressions.input(point.loop.getInductionVar()),
+            expressions.constant(static_cast<uint64_t>(point.induction))));
+    }
+    return selected;
 }
 FailureOr<SmallVector<RegionExpressions::Id>> regionalOccurrenceConstraints(
     const RegionalAnalysis& region, const RegionalEvent& event, std::string& error)

@@ -14,6 +14,10 @@
 #include "PTO/Transforms/FrontierSynch/Shared/RegionalAnalysis.h"
 #include <map>
 namespace mlir::pto::frontiersynch {
+// Exact own-side fixed-coordinate mask at one original cut. This does not
+// provide guard availability, matching history or an invocation identity.
+FailureOr<RegionExpressions::Id> originalFixedPointGuard(RegionExpressions& expressions,
+    ArrayRef<TemplateCoordinate> coordinates, Operation* cut, std::string& error);
 std::optional<RegionExpressions::Id> originalLoopOrdinal(
     RegionExpressions& expressions, scf::ForOp loop, uint64_t divisor = 1);
 // Event predicate, leaf ordinal, outer quotient coordinates, then fixed anchor
