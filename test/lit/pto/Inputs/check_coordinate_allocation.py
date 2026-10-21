@@ -306,6 +306,38 @@ def normalized_tuple_checks(optimizer, interpreter, path):
     print("normalized complete tuple maps:", observed)
 
 
+def scalar_nested_checks(optimizer, interpreter, path):
+    # A nested inventory can contain a genuinely scalar cyclic map. Its
+    # coordinate zero is the source ordinal, never the selected record label.
+    source, _ = fixture(8)
+    records = [(4 * row + column) ** 2 + 13 for row in range(8) for column in range(4)]
+    values = ', '.join(map(str, records))
+    ones = ', '.join('1' for _ in records)
+    zeros = ', '.join('0' for _ in records)
+    certificate = ('pto.finite_allocation = {version = 2 : i64, plan = 0 : i64, kind = "finite", '
+                   'strategy = "regional-palettes", groups = [{source = 4 : i64, target = 3 : i64, '
+                   'budget = 2 : i64, records = array<i64: ' + values +
+                   '>, strides = array<i64: ' + ones + '>, phases = array<i64: ' + zeros +
+                   '>, conflicts = array<i64>}]},\n    ')
+    start = source.index('pto.cyclic_allocation =')
+    end = source.index('pto.endpoint_families =', start)
+    source = (source[:start] + certificate + source[end:]).replace(
+        'pto.endpoint_families = {version = 3', 'pto.endpoint_families = {version = 4')
+    source = source.replace('ordinal %zero', 'ordinal %row')
+    flags = ['--pto-frontier-allocate=eligible-ids=1,5']
+    path.write_text(source)
+    physical = opt(optimizer, path, flags).stdout
+    path.write_text(physical)
+    expected = [[kind, [1, 5][row % 2]] for row in range(8) for _ in range(4) for kind in ('set', 'wait')]
+    assert commands(interpreter, path) == expected
+    # A second matching coordinate is not licensed by the scalar certificate.
+    # Constant mappings retain their established wider-tuple behavior, but a
+    # nonconstant map needs explicit arity evidence in that case.
+    path.write_text(source.replace('members(%label)', 'members(%label, %j)'))
+    failed = opt(optimizer, path, flags, success=False)
+    assert 'matching source-tuple arity' in failed.stderr
+
+
 def main():
     optimizer, interpreter = map(shutil.which, sys.argv[1:3])
     scratch = Path(sys.argv[3])
@@ -313,6 +345,7 @@ def main():
     observed = []
     with tempfile.TemporaryDirectory(dir=scratch) as directory:
         path = Path(directory) / "case.pto"
+        scalar_nested_checks(optimizer, interpreter, path)
         candidate_checks(optimizer, interpreter, path)
         sharing_checks(optimizer, interpreter, path)
         common_tuple_checks(optimizer, interpreter, path)

@@ -694,12 +694,16 @@ FailureOr<SmallVector<Endpoint>> preflightPieces(func::FuncOp function, const Ph
                 return WalkResult::interrupt();
             }
             if (nested) {
+                // A scalar cyclic certificate uses coordinate zero (the source
+                // ordinal), even in a nested family inventory. It needs no
+                // tuple rule when this is the entire physical tuple. Wider
+                // nonconstant maps still require an explicit tuple certificate.
                 const auto count = op->getNumOperands() - 1;
                 auto [entry, added] = coordinateCounts.emplace(record, count);
                 if ((!added && entry->second != count) ||
                     (member->tupleRule ? member->tupleRule->coordinateCount != count ||
                         !validPhysicalTupleRule(*member->tupleRule, member->ids.size()) :
-                        member->stride % member->ids.size() != 0)) {
+                        (count != 1 && member->stride % member->ids.size() != 0))) {
                     op->emitError("nested allocation requires a certified rule with matching source-tuple arity");
                     return WalkResult::interrupt();
                 }
@@ -1564,7 +1568,7 @@ FailureOr<std::shared_ptr<const PhysicalEndpointMap>> planPhysicalEndpointMap(
         }
         if (record.tupleRule ? record.tupleRule->coordinateCount != tupleArity ||
                                   !validPhysicalTupleRule(*record.tupleRule, record.ids.size()) :
-                              nested && record.stride % record.ids.size() != 0) {
+                              nested && tupleArity != 1 && record.stride % record.ids.size() != 0) {
             refuse("matching tuple is incompatible with allocation rule") << " (record=" << record.record
                 << ", arity=" << tupleArity << ", rule arity="
                 << (record.tupleRule ? record.tupleRule->coordinateCount : 0)
