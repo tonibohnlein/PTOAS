@@ -1,0 +1,248 @@
+{
+  "base_revision": "147cb72edd014a0cc7950ae50e1d870a370a0253",
+  "branch": "codex/frontier-shared-input",
+  "source_pins": {
+    "test/lit/pto/Inputs/check_compact_arithmetic_coverage.py": "b7854d6808a8acd6c6633af38670a83c42ce13b08af9ec3a9b8d8ac163cc62d3",
+    "test/lit/pto/Inputs/check_expanded_endpoint_adapter.py": "e7dad8f2dd464db5ef97de9dfabd4b48128b9aa2c76f713f7bfc2f71551d0958",
+    "test/lit/pto/Inputs/check_expanded_production_adapter.py": "61f4047a9a829575bc793b6bfe446f7e693f173a315cb214a82acd92e0372837",
+    "test/lit/pto/Inputs/check_expanded_production_order.py": "7e78a01796317e022d7cfcb427825cdf0a57c77f8c92a576f1a4815ee3ec4eff",
+    "test/lit/pto/Inputs/check_group_norm_allocation.py": "fe5c0f8bcfca1f5a132d8e117dca3961c46071d2a035cd2b084314b920f03486",
+    "test/lit/pto/Inputs/check_parameter_phase_contracts.py": "0f9b558fb53b733f7fab5157af7ff66a9158d5f47249f234692514d6d080c2c3",
+    "test/lit/pto/Inputs/check_reaching_access_research.py": "10cb16edac783e1891c4f8dae6be06cec3fb100edc3cdc5b84b13a3bb31f6a3c",
+    "test/lit/pto/Inputs/finite_indexed_reference.py": "0995a2fdbca930bafb3c5f10ce8314baac4fde533994ffcf376d446bc147fb52",
+    "test/lit/pto/Inputs/prefill_boundary_reference.py": "7ed53e085b72b7895187491acd39ddf06e47043ff6435e70a7be59938a9aae53",
+    "test/lit/pto/Inputs/qualify_production_kernel_access.py": "afb5aaa14c2f68b2dca3546df1c0998a5674b8c1ccc77cc818a30f430b48d80a",
+    "test/lit/pto/Inputs/reaching_access_research.py": "f3a7953f26958c0d53c79f179ebc81aa45e37c87e9b55d8413f3b50fde60a434",
+    "test/lit/pto/sync_compact_arithmetic_coverage.pto": "f23be9484ff029b19b8bc6dfc50216617389876ddc382ae23827cfc7f9b7c9bd",
+    "test/lit/pto/sync_expanded_endpoint_adapter.pto": "ae86890ed83923e5e360e393eb898b33f84aa57c06e181731cbeeb5cf53f4f74",
+    "test/lit/pto/sync_group_norm_production.pto": "4fd61f3a22bd3f46d37a6ddbc124ef505458fbae84e594f3ba7f85d29bf3ae32",
+    "test/lit/pto/sync_parameter_phase_contracts.pto": "b764b73ee2cfd06498b14debd654586d1c4ad079e15e47d1bb561190f2cc07c8",
+    "test/lit/pto/sync_reaching_access_research.pto": "7a5889e153d8e718093a3fb8880c3d2ce0e836a05986ae584426a67a2ed0aee0",
+    "tools/pto-test-opt/CompletionDataflowInput.h": "1f951eec62d5d0b03693c92e67ab8d9c65eb488d6f51f032e116c5943c936c9c",
+    "include/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h": "3a990856584e9e7bc2cc785adeb1320d13820ed660e19b5718022a0d56470fcc",
+    "lib/PTO/IR/PTOInterfaces/PTOMatrixAccessEffects.cpp": "ab68f5ce712b62564037551ea75a7d73d2f1c7dc5e25e5ced3b8f4f3f37c6ba5",
+    "lib/PTO/Transforms/FrontierSynch/Arithmetic/GeneralArithmeticEndpointRecipe.h": "5ccd02409cb68ddcc467b8414ee769810c941626280b40737d891bb5dfab0674",
+    "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.cpp": "86d4b51cac088e2ce892bd30000fd6e183ccbb28d581046216b8b73fbb01ff78",
+    "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInsertion.cpp": "e1a393ed3e2e3e0b47166432d27d6001ff43c631a343cb3777e9e580c0c683e2",
+    "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInternal.h": "3bafe7131df353c6e021cd520ce6b085d5b5786fb9855715fb120f833bdfd015",
+    "lib/PTO/Transforms/FrontierSynch/Shared/OccurrenceBinding.h": "c00c5795871ccc332fa7ba97a6e059675e8b9de2292320f2b72660ec1c602fc1",
+    "lib/PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.cpp": "a9ced5b22f01db6ac15a178488c39175b21eef1fcdfb0c4c18880faa5fec3c45",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RegionalEvents.cpp": "5daafd793a2ce26ae420d36de1de4d746b36f849ef5816b6dcf229a45b4eba52",
+    "test/lit/pto/Inputs/check_coordinate_allocation.py": "3c690d4ca6eddcb77db8f0969ae36c979a17c92bbf5b85ab44a853cbad92701c",
+    "test/lit/pto/Inputs/check_finite_expansion.py": "2c16c4e92a9116416607599ea801f41b0a00ff4bb0ef7fb9fdf72031559dc4f2",
+    "test/lit/pto/Inputs/check_matrix_access_routes.py": "4dd304dadf17aac2527d74898e251429c2e312127f8c699001e0f59a0e8997fe",
+    "tools/pto-test-opt/ArithmeticProgramDump.cpp": "d3f6ae7b355d0fe63ea785641015e61eda4a717be745cba1a9eb1f3e619e5797",
+    "tools/pto-test-opt/CompactRegionContractChecks.cpp": "946a2be8b52d56d9af23ec8fd9abbb7dab17c9ddd3e1fa17d43f03b0098c0b00",
+    "tools/pto-test-opt/CompactRegionCoordinates.h": "7e5c211395fdaf588b548e0a45da04f867fc5cb4e116ad28b72240b726f45a82",
+    "tools/pto-test-opt/CompactRegionDemands.h": "cc8c134916eb9555e3e6a69cc94517804431ae3e7c9e143de8cf3e1fe32ee9cc",
+    "tools/pto-test-opt/SyncStep0Audit.cpp": "89001c48e77d7a77a084c850f31752ec414486d9294231094cc785b9c9216e4e",
+    "tools/pto-test-opt/pto-sync-input-test.cpp": "809a1505d16045b459e5ebe813a6a44b9d0e1904f20ee3ed3e0f12abe870280a"
+  },
+  "tools": {
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt": "acc5367b56699931e1226e9907780d8a92d70a5507b4c17f2273713e0d2815b2",
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test": "c33ca8fa335e7ded20ef92a9847a043f6cee0a463b67d536e692eaa2ba4923b7",
+    ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas": "89fa0f69d6af6db6673954389763ae2f6e57613ea7946ef6f32234d6daef7a85",
+    ".venv/bin/python": "9544d2a29138833e6177d45dbc57468d37710b5080c901fbb579d53f251cdd6f",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/_core.cpython-312-x86_64-linux-gnu.so": "8937210969cbb8a5d91fb184b7fb7c7c794969c3999c4baa6f4af6945a27853c",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_mlirDialectsLLVM.cpython-312-x86_64-linux-gnu.so": "81812065ca68d8f57e4cb99a7425825623b2df00e0201f81fc564a0faf09b5e4",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_mlir.cpython-312-x86_64-linux-gnu.so": "ee060cbb5a9f882a1376a3a5dab11b2224bd906fa096b709f90a21e7e20d9ff2",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_site_initialize_0.cpython-312-x86_64-linux-gnu.so": "4764f1967c3e5acf5361e559aa3b2f33ec0a606e0122c524552d8a6e96f80082",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/libPTOASCompiler.so": "a2a9f8350428f1e24947e0e6b233599c793d49573a036e7e57ea1babf93a5f29"
+  },
+  "preserved_starting_changes": [
+    {
+      "path": "docs/designs/frontier-production-coverage-20261020.json",
+      "starting_sha256": "cc2213c161d6125c21c8c49ce5c029b67336ab1a0984a81de539c5d616c13953",
+      "final_sha256": "cc2213c161d6125c21c8c49ce5c029b67336ab1a0984a81de539c5d616c13953",
+      "unchanged": true
+    },
+    {
+      "path": "docs/designs/frontier-production-coverage-20261020.md",
+      "starting_sha256": "f45ab240fe1f5a92831658a97e46861f1a61eac1ef535296e5728a079b9d2a59",
+      "final_sha256": "f45ab240fe1f5a92831658a97e46861f1a61eac1ef535296e5728a079b9d2a59",
+      "unchanged": true
+    },
+    {
+      "path": "test/lit/pto/Inputs/check_group_norm_allocation.py",
+      "starting_sha256": "fe5c0f8bcfca1f5a132d8e117dca3961c46071d2a035cd2b084314b920f03486",
+      "final_sha256": "fe5c0f8bcfca1f5a132d8e117dca3961c46071d2a035cd2b084314b920f03486",
+      "unchanged": true
+    },
+    {
+      "path": "test/lit/pto/Inputs/qualify_production_kernel_access.py",
+      "starting_sha256": "afb5aaa14c2f68b2dca3546df1c0998a5674b8c1ccc77cc818a30f430b48d80a",
+      "final_sha256": "afb5aaa14c2f68b2dca3546df1c0998a5674b8c1ccc77cc818a30f430b48d80a",
+      "unchanged": true
+    },
+    {
+      "path": "test/lit/pto/sync_group_norm_production.pto",
+      "starting_sha256": "4fd61f3a22bd3f46d37a6ddbc124ef505458fbae84e594f3ba7f85d29bf3ae32",
+      "final_sha256": "4fd61f3a22bd3f46d37a6ddbc124ef505458fbae84e594f3ba7f85d29bf3ae32",
+      "unchanged": true
+    },
+    {
+      "path": "lib/PTO/IR/PTOInterfaces/PTOMatrixAccessEffects.cpp",
+      "starting_sha256": "ab68f5ce712b62564037551ea75a7d73d2f1c7dc5e25e5ced3b8f4f3f37c6ba5",
+      "final_sha256": "ab68f5ce712b62564037551ea75a7d73d2f1c7dc5e25e5ced3b8f4f3f37c6ba5",
+      "unchanged": true
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.cpp",
+      "starting_sha256": "a9ced5b22f01db6ac15a178488c39175b21eef1fcdfb0c4c18880faa5fec3c45",
+      "final_sha256": "a9ced5b22f01db6ac15a178488c39175b21eef1fcdfb0c4c18880faa5fec3c45",
+      "unchanged": true
+    },
+    {
+      "path": "test/lit/pto/Inputs/check_coordinate_allocation.py",
+      "starting_sha256": "3c690d4ca6eddcb77db8f0969ae36c979a17c92bbf5b85ab44a853cbad92701c",
+      "final_sha256": "3c690d4ca6eddcb77db8f0969ae36c979a17c92bbf5b85ab44a853cbad92701c",
+      "unchanged": true
+    },
+    {
+      "path": "test/lit/pto/Inputs/check_matrix_access_routes.py",
+      "starting_sha256": "4dd304dadf17aac2527d74898e251429c2e312127f8c699001e0f59a0e8997fe",
+      "final_sha256": "4dd304dadf17aac2527d74898e251429c2e312127f8c699001e0f59a0e8997fe",
+      "unchanged": true
+    }
+  ],
+  "raw_artifacts": {
+    "release-focused-gate.json": {
+      "path": ".local/compact-class-checkpoints/release-focused-gate.json",
+      "sha256": "0ea65a7047bdc272505a8d02b6fb6f2b435ef1d825bd08e28ab4f0c033479a80"
+    },
+    "release-focused-gate.log": {
+      "path": ".local/compact-class-checkpoints/release-focused-gate.log",
+      "sha256": "0e777bd7f676b97dd67dfbb0fd6ac01a14301b9b9f307547e0a54a1f2508d90e"
+    },
+    "stage1/post-repair/receipt.json": {
+      "path": ".local/compact-class-checkpoints/stage1/post-repair/receipt.json",
+      "sha256": "3c526c9dafbf56c767a3ba64957ba28b8186087f262c798d0ce8059dca6bb780"
+    },
+    "stage2/post-repair/receipt.json": {
+      "path": ".local/compact-class-checkpoints/stage2/post-repair/receipt.json",
+      "sha256": "8eeb8aabecb0802c8beecf453417a17014ad46460773c8dd006aeca1692534ef"
+    },
+    "stage3/post-repair/bounded.json": {
+      "path": ".local/compact-class-checkpoints/stage3/post-repair/bounded.json",
+      "sha256": "55630e133f463781030bc8946f332c2f8fba03204e20ae3d905bf8819a6b49f0"
+    },
+    "stage4/production-semantics/receipt.json": {
+      "path": ".local/compact-class-checkpoints/stage4/production-semantics/receipt.json",
+      "sha256": "8046c45f65a94969a552a97aa3b70baf8b6b00a41356eb2bc7a56a0569b89175"
+    },
+    "stage4/zero-inner/receipt.json": {
+      "path": ".local/compact-class-checkpoints/stage4/zero-inner/receipt.json",
+      "sha256": "d7c5d544ced9ed2cb72f5202d71614ba88c568cb61a931e0f9fc5e5498867999"
+    },
+    "stage4/production/matrix.json": {
+      "path": ".local/compact-class-checkpoints/stage4/production/matrix.json",
+      "sha256": "62dbe41741a501cd74b84fc9b8536783b90b47989ec9416e4ea624728b2146fa"
+    },
+    "stage4/preservation/matrix.json": {
+      "path": ".local/compact-class-checkpoints/stage4/preservation/matrix.json",
+      "sha256": "d19ee4edd4c52b46a2b7a66f4bb3fb6a5fcd6a82a9618a4033a419f1897902e0"
+    },
+    "compliance-final.log": {
+      "path": ".local/compact-class-checkpoints/compliance-final.log",
+      "sha256": "6d9471d7d4eaa1d6b88546c3fb31dfd66415820308c2ab1bc8704d9372bc1a4e"
+    },
+    "final-format-build.log": {
+      "path": ".local/compact-class-checkpoints/final-format-build.log",
+      "sha256": "cde2833ff205c68ffc899c4f5c92c11422f7e3a9dddf3ea0660394045032d940"
+    },
+    "final/compliance-review.json": {
+      "path": ".local/compact-class-checkpoints/final/compliance-review.json",
+      "sha256": "b7d386c6c8a2eb53082f4f0cb1fd8b85cc9e2b602f4178813ecb95b9883ce63d"
+    }
+  },
+  "final_manifest": ".local/compact-class-checkpoints/final/manifest.json",
+  "stage_reports": [
+    "docs/designs/frontier-compact-classes-stage1-20261020.json",
+    "docs/designs/frontier-conservative-dataflow-prototype-20261020.json",
+    "docs/designs/frontier-parameter-phase-contracts-20261020.json",
+    "docs/designs/frontier-expanded-endpoint-adapter-20261020.json"
+  ],
+  "focused_gate": {
+    "passed": 24,
+    "failed": 0,
+    "workers": 1,
+    "elapsed_seconds": 127.71038579940796
+  },
+  "production_bounded_cases": {
+    "logical_matching_and_coverage": 20,
+    "six_id_reuse_validated": 17,
+    "allocation_export_refusals": [
+      {
+        "kernel": "elementwise_pipeline",
+        "count": 1,
+        "subblock": 0,
+        "alias": "may-not-alias"
+      },
+      {
+        "kernel": "elementwise_pipeline",
+        "count": 1,
+        "subblock": 0,
+        "alias": "may-alias"
+      },
+      {
+        "kernel": "group_norm",
+        "count": 2,
+        "subblock": 0,
+        "alias": "may-alias"
+      }
+    ]
+  },
+  "whole_original_refresh": {
+    "ordinary_success": 7,
+    "ordinary_cases": 8,
+    "explicit_completion_success": 8,
+    "explicit_completion_cases": 8,
+    "remaining_timeout": "Qwen down may-alias ordinary, unchanged 35-second watchdog",
+    "scope": "Four selected existing kernels; not a repeated seven-kernel survey"
+  },
+  "separation": [
+    "modeled effect precision",
+    "minimum modeled demands",
+    "executable coverage versus equality",
+    "physical certificate",
+    "native instruction qualification",
+    "device execution"
+  ],
+  "no_device_validation": true,
+  "allocation_algorithms_changed_by_this_task": false,
+  "pending_obligations": [
+    "Delta dynamic occurrence/guard/publication-cut realization",
+    "prefill relation and export cost",
+    "finalize checked caller ranges and evolving GM/active-prefix exports",
+    "three derivative allocation exports",
+    "Qwen may-alias timeout attribution"
+  ],
+  "compliance": {
+    "ruff_F": "passed",
+    "git_diff_check": "passed",
+    "build": "passed, no new warnings",
+    "prefilter": {
+      "raw_errors": 14,
+      "reviewed_false_positives": 14,
+      "unresolved_findings": 0,
+      "reason": "G.FMT.11 regex is greedy over condition/return parentheses and first lines of multiline conditions; each body is braced."
+    }
+  },
+  "reproduction": {
+    "production_matrix": "qualify_production_kernel_access.py with --kernels elementwise_pipeline, and separately --kernels persistent_gemm group_norm qwen-down; complete argv retained in raw matrices",
+    "independent_production": "check_expanded_production_adapter.py --optimizer <final opt> --trace-tool <final input-test> --baseline-optimizer .local/compact-class-checkpoints/start/tools/pto-test-opt --output <disk directory>",
+    "final_gate": {
+      "executable": ".venv/bin/python",
+      "args": [
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        "--filter",
+        "sync_(expanded_endpoint_adapter|compact_arithmetic_coverage|reaching_access_research|parameter_phase_contracts|finite_expansion|arithmetic_(insertion|composition|export_retention|membership|scalar_ranges)|finite_(family_pipeline|qualification|crossing_recipe)|storage_export_coverage|completion_(inputs|region|children|eventful|compact_child_contract)|qwen_(completion_import|interval_certificate)|compact_(persistent_contract|replay_scaling)|group_norm_production)\\.pto",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit",
+        "-o",
+        ".local/compact-class-checkpoints/release-focused-gate.json"
+      ],
+      "environment": "Prepend workspace .venv/bin to PATH"
+    }
+  }
+}

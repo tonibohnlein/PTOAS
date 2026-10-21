@@ -1,0 +1,238 @@
+{
+  "review_date": "2026-10-21",
+  "base_revision": "147cb72edd014a0cc7950ae50e1d870a370a0253",
+  "acceptance": "accepted after corrections and 26/26 focused tests",
+  "review_type": "Scoped self-review, independent host-model oracles; no new external reviewer or device run",
+  "findings": [
+    {
+      "kind": "callback input ownership",
+      "status": "fixed",
+      "test": "checkExpandedCallbackOwners checks each extracted prepare callback independently with aliasing control-block retention/release"
+    },
+    {
+      "kind": "diagnostic unavailability versus absence",
+      "status": "fixed",
+      "test": "four arithmetic fixtures explicitly reject unsupported quotient-frame decoding; normal false guards/absent bytes remain checked"
+    }
+  ],
+  "checkpoint_manifest": ".local/compact-class-checkpoints/final/manifest.json",
+  "review_corrections": [
+    {
+      "path": "test/lit/pto/Inputs/check_compact_arithmetic_coverage.py",
+      "checkpoint_sha256": "b7854d6808a8acd6c6633af38670a83c42ce13b08af9ec3a9b8d8ac163cc62d3",
+      "review_sha256": "70b28fb5368f41cdd380d7959f9949be2bbcbd1c9ef863432a6daa03d038da3f"
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.cpp",
+      "checkpoint_sha256": "86d4b51cac088e2ce892bd30000fd6e183ccbb28d581046216b8b73fbb01ff78",
+      "review_sha256": "664df5dbd50fe32016fc417f882dcc54d53279c2addc5382c119ace5e906f06e"
+    },
+    {
+      "path": "tools/pto-test-opt/CompactRegionContractChecks.cpp",
+      "checkpoint_sha256": "946a2be8b52d56d9af23ec8fd9abbb7dab17c9ddd3e1fa17d43f03b0098c0b00",
+      "review_sha256": "36e728825d11ed8c340660498a4ee349add4d89360cadb18af94a6e21fd15e55"
+    },
+    {
+      "path": "tools/pto-test-opt/pto-sync-input-test.cpp",
+      "checkpoint_sha256": "809a1505d16045b459e5ebe813a6a44b9d0e1904f20ee3ed3e0f12abe870280a",
+      "review_sha256": "3e4eb9456e66b8cc7e3ebc6bb30b1f30321bf0a39cb874009bcabb6eb9742e4e"
+    }
+  ],
+  "tools": {
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt": "1fc013d516394047e5e1ccc0ffe50fc36c145e39d7dd71227c2be631d478cf94",
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test": "86c7c7534ea06e0fc13b6a3ef2d4dc533ac1dbea9172d89a40f0301e12bfbf98",
+    ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas": "89fa0f69d6af6db6673954389763ae2f6e57613ea7946ef6f32234d6daef7a85",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/_core.cpython-312-x86_64-linux-gnu.so": "8937210969cbb8a5d91fb184b7fb7c7c794969c3999c4baa6f4af6945a27853c",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_mlirDialectsLLVM.cpython-312-x86_64-linux-gnu.so": "81812065ca68d8f57e4cb99a7425825623b2df00e0201f81fc564a0faf09b5e4",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_mlir.cpython-312-x86_64-linux-gnu.so": "ee060cbb5a9f882a1376a3a5dab11b2224bd906fa096b709f90a21e7e20d9ff2",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_site_initialize_0.cpython-312-x86_64-linux-gnu.so": "4764f1967c3e5acf5361e559aa3b2f33ec0a606e0122c524552d8a6e96f80082",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/libPTOASCompiler.so": "a2a9f8350428f1e24947e0e6b233599c793d49573a036e7e57ea1babf93a5f29"
+  },
+  "code_pins": {
+    "lib/PTO/IR/PTOInterfaces/PTOMatrixAccessEffects.cpp": "ab68f5ce712b62564037551ea75a7d73d2f1c7dc5e25e5ced3b8f4f3f37c6ba5",
+    "test/lit/pto/Inputs/check_matrix_access_routes.py": "4dd304dadf17aac2527d74898e251429c2e312127f8c699001e0f59a0e8997fe",
+    "lib/PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.cpp": "a9ced5b22f01db6ac15a178488c39175b21eef1fcdfb0c4c18880faa5fec3c45",
+    "test/lit/pto/Inputs/check_coordinate_allocation.py": "3c690d4ca6eddcb77db8f0969ae36c979a17c92bbf5b85ab44a853cbad92701c",
+    "test/lit/pto/Inputs/check_group_norm_allocation.py": "fe5c0f8bcfca1f5a132d8e117dca3961c46071d2a035cd2b084314b920f03486",
+    "test/lit/pto/Inputs/qualify_production_kernel_access.py": "afb5aaa14c2f68b2dca3546df1c0998a5674b8c1ccc77cc818a30f430b48d80a",
+    "test/lit/pto/sync_group_norm_production.pto": "4fd61f3a22bd3f46d37a6ddbc124ef505458fbae84e594f3ba7f85d29bf3ae32",
+    "tools/pto-test-opt/SyncStep0Audit.cpp": "89001c48e77d7a77a084c850f31752ec414486d9294231094cc785b9c9216e4e",
+    "tools/pto-test-opt/CompletionDataflowInput.h": "1f951eec62d5d0b03693c92e67ab8d9c65eb488d6f51f032e116c5943c936c9c",
+    "test/lit/pto/Inputs/reaching_access_research.py": "f3a7953f26958c0d53c79f179ebc81aa45e37c87e9b55d8413f3b50fde60a434",
+    "test/lit/pto/Inputs/check_reaching_access_research.py": "10cb16edac783e1891c4f8dae6be06cec3fb100edc3cdc5b84b13a3bb31f6a3c",
+    "test/lit/pto/sync_reaching_access_research.pto": "7a5889e153d8e718093a3fb8880c3d2ce0e836a05986ae584426a67a2ed0aee0",
+    "include/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h": "3a990856584e9e7bc2cc785adeb1320d13820ed660e19b5718022a0d56470fcc",
+    "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInternal.h": "3bafe7131df353c6e021cd520ce6b085d5b5786fb9855715fb120f833bdfd015",
+    "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInsertion.cpp": "e1a393ed3e2e3e0b47166432d27d6001ff43c631a343cb3777e9e580c0c683e2",
+    "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.cpp": "664df5dbd50fe32016fc417f882dcc54d53279c2addc5382c119ace5e906f06e",
+    "lib/PTO/Transforms/FrontierSynch/Arithmetic/GeneralArithmeticEndpointRecipe.h": "5ccd02409cb68ddcc467b8414ee769810c941626280b40737d891bb5dfab0674",
+    "lib/PTO/Transforms/FrontierSynch/Shared/OccurrenceBinding.h": "c00c5795871ccc332fa7ba97a6e059675e8b9de2292320f2b72660ec1c602fc1",
+    "lib/PTO/Transforms/FrontierSynch/Shared/RegionalEvents.cpp": "5daafd793a2ce26ae420d36de1de4d746b36f849ef5816b6dcf229a45b4eba52",
+    "tools/pto-test-opt/CompactRegionContractChecks.cpp": "36e728825d11ed8c340660498a4ee349add4d89360cadb18af94a6e21fd15e55",
+    "tools/pto-test-opt/CompactRegionCoordinates.h": "7e5c211395fdaf588b548e0a45da04f867fc5cb4e116ad28b72240b726f45a82",
+    "tools/pto-test-opt/CompactRegionDemands.h": "cc8c134916eb9555e3e6a69cc94517804431ae3e7c9e143de8cf3e1fe32ee9cc",
+    "tools/pto-test-opt/ArithmeticProgramDump.cpp": "d3f6ae7b355d0fe63ea785641015e61eda4a717be745cba1a9eb1f3e619e5797",
+    "tools/pto-test-opt/pto-sync-input-test.cpp": "3e4eb9456e66b8cc7e3ebc6bb30b1f30321bf0a39cb874009bcabb6eb9742e4e",
+    "test/lit/pto/Inputs/check_finite_expansion.py": "2c16c4e92a9116416607599ea801f41b0a00ff4bb0ef7fb9fdf72031559dc4f2",
+    "test/lit/pto/Inputs/check_expanded_endpoint_adapter.py": "e7dad8f2dd464db5ef97de9dfabd4b48128b9aa2c76f713f7bfc2f71551d0958",
+    "test/lit/pto/Inputs/check_expanded_production_adapter.py": "61f4047a9a829575bc793b6bfe446f7e693f173a315cb214a82acd92e0372837",
+    "test/lit/pto/Inputs/check_expanded_production_order.py": "7e78a01796317e022d7cfcb427825cdf0a57c77f8c92a576f1a4815ee3ec4eff",
+    "test/lit/pto/sync_expanded_endpoint_adapter.pto": "ae86890ed83923e5e360e393eb898b33f84aa57c06e181731cbeeb5cf53f4f74",
+    "test/lit/pto/Inputs/finite_indexed_reference.py": "0995a2fdbca930bafb3c5f10ce8314baac4fde533994ffcf376d446bc147fb52",
+    "test/lit/pto/Inputs/check_compact_arithmetic_coverage.py": "70b28fb5368f41cdd380d7959f9949be2bbcbd1c9ef863432a6daa03d038da3f",
+    "test/lit/pto/sync_compact_arithmetic_coverage.pto": "f23be9484ff029b19b8bc6dfc50216617389876ddc382ae23827cfc7f9b7c9bd",
+    "test/lit/pto/Inputs/prefill_boundary_reference.py": "7ed53e085b72b7895187491acd39ddf06e47043ff6435e70a7be59938a9aae53",
+    "test/lit/pto/Inputs/check_parameter_phase_contracts.py": "0f9b558fb53b733f7fab5157af7ff66a9158d5f47249f234692514d6d080c2c3",
+    "test/lit/pto/sync_parameter_phase_contracts.pto": "b764b73ee2cfd06498b14debd654586d1c4ad079e15e47d1bb561190f2cc07c8"
+  },
+  "validation": {
+    "gate": {
+      "path": ".local/production-review-20261021/accepted-gate.json",
+      "sha256": "6adbfb5168001d93095e5b464080b780145646c0a47bdcd514f1f4b1f23ea748",
+      "passed": 26,
+      "failed": 0,
+      "workers": 1,
+      "seconds": 156.00503182411194
+    },
+    "build": {
+      "path": ".local/compact-class-checkpoints/review-owner-build-20261021.log",
+      "status": "passed, no new warnings",
+      "workers": 2
+    },
+    "ruff_F": "passed",
+    "diff_check": "passed",
+    "prefilter": {
+      "raw_matches": 14,
+      "reviewed_false_positives": 14,
+      "unresolved": 0,
+      "raw": ".local/production-review-20261021/compliance.log",
+      "classifications": ".local/production-review-20261021/compliance-review.json"
+    }
+  },
+  "packages": [
+    {
+      "number": 1,
+      "subject": "Recover f32 atomic-store rectangles as read/write effects",
+      "paths": [
+        "lib/PTO/IR/PTOInterfaces/PTOMatrixAccessEffects.cpp",
+        "test/lit/pto/Inputs/check_matrix_access_routes.py"
+      ],
+      "message_file": ".local/production-review-20261021/commit-1.txt",
+      "message": "Recover f32 atomic-store rectangles as read/write effects\n\nQualify the existing full ACC-to-ND f32 AtomicAdd rectangle and retain both destination read and write effects. Unsupported conversion and extent modes keep their conservative descriptions.\n\nValidation: shared access routes, unknown extents and independent noncontiguous byte-rectangle checks.\n"
+    },
+    {
+      "number": 2,
+      "subject": "Accept certified scalar cyclic maps in nested inventories",
+      "paths": [
+        "lib/PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.cpp",
+        "test/lit/pto/Inputs/check_coordinate_allocation.py",
+        "test/lit/pto/Inputs/check_group_norm_allocation.py",
+        "test/lit/pto/Inputs/qualify_production_kernel_access.py",
+        "test/lit/pto/sync_group_norm_production.pto",
+        "docs/designs/frontier-production-coverage-20261020.md",
+        "docs/designs/frontier-production-coverage-20261020.json"
+      ],
+      "message_file": ".local/production-review-20261021/commit-2.txt",
+      "message": "Accept certified scalar cyclic maps in nested inventories\n\nA nested inventory with one physical coordinate can use the existing scalar cyclic certificate. Keep coordinate zero distinct from the logical record label and require explicit tuple evidence for wider nonconstant mappings.\n\nValidation: nondefault ID mappings, malformed tuple arity, GroupNorm matching and causal reuse; production stage receipts remain scoped to host models.\n"
+    },
+    {
+      "number": 3,
+      "subject": "Add a storage-only conservative dataflow experiment",
+      "paths": [
+        "tools/pto-test-opt/SyncStep0Audit.cpp",
+        "tools/pto-test-opt/CompletionDataflowInput.h",
+        "test/lit/pto/Inputs/reaching_access_research.py",
+        "test/lit/pto/Inputs/check_reaching_access_research.py",
+        "test/lit/pto/sync_reaching_access_research.pto",
+        "docs/designs/frontier-conservative-dataflow-prototype-20261020.md",
+        "docs/designs/frontier-conservative-dataflow-prototype-20261020.json"
+      ],
+      "message_file": ".local/production-review-20261021/commit-3.txt",
+      "message": "Add a storage-only conservative dataflow experiment\n\nExport annotated original SCF and existing completion storage classes to a test-only may-access fixed point. Possible writes preserve prior obligations; only separately proved executed full-class refresh may replace facts.\n\nValidation: bounded Delta branch/tail cases, skipped writers, reset cases and publication-cut witness. General guarded-command realization remains unavailable; production dispatch and SCC transfer are unchanged.\n"
+    },
+    {
+      "number": 4,
+      "subject": "Retain original occurrence coordinates in finite endpoint recipes",
+      "paths": [
+        "include/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.h",
+        "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInternal.h",
+        "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedInsertion.cpp",
+        "lib/PTO/Transforms/FrontierSynch/Finite/FiniteGuardedAnalysis.cpp",
+        "lib/PTO/Transforms/FrontierSynch/Arithmetic/GeneralArithmeticEndpointRecipe.h",
+        "lib/PTO/Transforms/FrontierSynch/Shared/OccurrenceBinding.h",
+        "lib/PTO/Transforms/FrontierSynch/Shared/RegionalEvents.cpp",
+        "tools/pto-test-opt/CompactRegionContractChecks.cpp",
+        "tools/pto-test-opt/CompactRegionCoordinates.h",
+        "tools/pto-test-opt/CompactRegionDemands.h",
+        "tools/pto-test-opt/ArithmeticProgramDump.cpp",
+        "tools/pto-test-opt/pto-sync-input-test.cpp",
+        "test/lit/pto/Inputs/check_finite_expansion.py",
+        "test/lit/pto/Inputs/check_expanded_endpoint_adapter.py",
+        "test/lit/pto/Inputs/check_expanded_production_adapter.py",
+        "test/lit/pto/Inputs/check_expanded_production_order.py",
+        "test/lit/pto/sync_expanded_endpoint_adapter.pto",
+        "docs/designs/frontier-expanded-endpoint-adapter-20261020.md",
+        "docs/designs/frontier-expanded-endpoint-adapter-20261020.json"
+      ],
+      "message_file": ".local/production-review-20261021/commit-4.txt",
+      "message": "Retain original occurrence coordinates in finite endpoint recipes\n\nPrepare existing expanded finite results at their original source and consumer points. Apply the same own-side fixed-point masks to arithmetic crossing endpoints so a first-visit WAIT is not replayed on every iteration. Retain matching labels, cuts, guards and caller frames.\n\nExtracted preparation callbacks retain the supplied input owner. Unsupported history and frames refuse without discarding mathematics; the test consumer reports undecodable frames as unavailable.\n\nValidation: actual covers, four event queries, malformed frames, callback ownership, twenty production/derivative logical cases, and seventeen independently checked six-ID assignments. Allocation algorithms and existing barriers are unchanged.\n"
+    },
+    {
+      "number": 5,
+      "subject": "Qualify indexed arithmetic and parameterized phase contracts",
+      "paths": [
+        "test/lit/pto/Inputs/finite_indexed_reference.py",
+        "test/lit/pto/Inputs/check_compact_arithmetic_coverage.py",
+        "test/lit/pto/sync_compact_arithmetic_coverage.pto",
+        "docs/designs/frontier-compact-classes-stage1-20261020.md",
+        "docs/designs/frontier-compact-classes-stage1-20261020.json",
+        "test/lit/pto/Inputs/prefill_boundary_reference.py",
+        "test/lit/pto/Inputs/check_parameter_phase_contracts.py",
+        "test/lit/pto/sync_parameter_phase_contracts.pto",
+        "docs/designs/frontier-parameter-phase-contracts-20261020.md",
+        "docs/designs/frontier-parameter-phase-contracts-20261020.json"
+      ],
+      "message_file": ".local/production-review-20261021/commit-5.txt",
+      "message": "Qualify indexed arithmetic and parameterized phase contracts\n\nCompare finite, numerical and restricted-arithmetic regional requests against independent indexed byte effects, actual covers, queries and selectors. Record static-interface scaling without claiming new whole-kernel exactness.\n\nQualify entry-loaded prefill metadata and positive-domain finalize phase identities separately from unsupplied caller ranges and evolving-GM exports. Unsupported quotient decoding remains unavailable; no production dispatch or caller assumptions change.\n"
+    },
+    {
+      "number": 6,
+      "subject": "Record compact-class qualification and acceptance review",
+      "paths": [
+        "docs/designs/frontier-practical-compact-coverage-20261020.md",
+        "docs/designs/frontier-practical-compact-coverage-20261020.json",
+        "docs/designs/frontier-production-review-20261021.md",
+        "docs/designs/frontier-production-review-20261021.json"
+      ],
+      "message_file": ".local/production-review-20261021/commit-6.txt",
+      "message": "Record compact-class qualification and acceptance review\n\nRetain pinned source/tool/dirty-tree identities, scoped stage outcomes and independent semantic evidence. Document the ownership and diagnostic fixes found in review, package boundaries, and unresolved logical/resource/native obligations.\n\nValidation: the accepted focused gate includes finite, arithmetic, access, coordinate allocation, completion, Qwen import and compact-K/replay regressions. No device validation or general speedup is claimed.\n"
+    }
+  ],
+  "scope": [
+    "No allocator/coloring algorithm changes",
+    "No new kernel recognizer/backend",
+    "No unsupplied caller bounds",
+    "Research dataflow has no general command realization",
+    "No push or device validation"
+  ],
+  "next_probe": {
+    "kernels": [
+      "lossless_block_cast",
+      "gated_delta_rule"
+    ],
+    "driver": ".local/production-review-20261021/probe_additional.py",
+    "watchdog_seconds": 35,
+    "eligible_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "policies": [
+      "ordinary production",
+      "explicit conservative completion"
+    ]
+  }
+}
