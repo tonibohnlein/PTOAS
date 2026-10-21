@@ -9,6 +9,7 @@
 // The step1 mode uses production pipe envelopes and stops before recognition.
 // This checks preservation, not native footprint completeness or F* readiness.
 #include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
+#include "CompletionDataflowInput.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "PTO/Transforms/InsertSync/SyncDescriptorState.h"
 #include "PTO/IR/PTOAccessRegion.h"
@@ -266,6 +267,10 @@ struct Audit {
             {"symbolic_accesses", maps}, {"unresolved_accesses", unresolved}
         };
         if (envelopes) { result["access_records"] = effectDescriptions(function, input); }
+        if (envelopes && function->hasAttr("test.reaching_access")) {
+            completion_dataflow::Input dataflow(input.instructions());
+            result["reaching_access"] = dataflow.exportFunction(function);
+        }
         llvm::outs() << llvm::json::Value(std::move(result)) << "\n";
     }
 };
