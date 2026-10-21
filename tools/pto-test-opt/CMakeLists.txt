@@ -94,6 +94,8 @@ add_llvm_executable(pto-sync-input-test
   SharedHandoffAllocationChecks.cpp
   FiniteAllocationQueryChecks.cpp
   NumericalHierarchyChecks.cpp
+  SourcePipeServiceChecks.cpp
+  CurrentCutServiceChecks.cpp
   CompletionTransferChecks.cpp
   CompletionLossChecks.cpp
   CompletionRegionChecks.cpp

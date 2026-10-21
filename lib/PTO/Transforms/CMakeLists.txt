@@ -274,6 +274,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Shared/BoundingSequence.cpp
   FrontierSynch/Shared/CertifiedPartialReduction.cpp
   FrontierSynch/Shared/ChainComposition.cpp
+  FrontierSynch/Shared/SourcePipeServices.cpp
   FrontierSynch/Shared/CompletionTransfer.cpp
   FrontierSynch/Shared/CompletionReadiness.cpp
   FrontierSynch/Shared/CompletionStorage.cpp

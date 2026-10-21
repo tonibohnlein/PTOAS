@@ -43,13 +43,15 @@ def unprotected_conflict(left, right, left_groups, right_groups, same_scope, sam
     return False
 
 
-def native(pipes):
+def native(pipes, native_serial_pipes=()):
     edges = {(2 * i, 2 * i + 1) for i in range(len(pipes))}
     previous = {}
     for i, pipe in enumerate(pipes):
         if pipe in previous:
             edges.add((2 * previous[pipe], 2 * i))
             edges.add((2 * previous[pipe] + 1, 2 * i + 1))
+            if pipe in native_serial_pipes:
+                edges.add((2 * previous[pipe] + 1, 2 * i))
         previous[pipe] = i
     return edges
 

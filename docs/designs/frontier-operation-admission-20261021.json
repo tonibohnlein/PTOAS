@@ -1,0 +1,2014 @@
+{
+  "task": "Contract-based operation admission for experimental current-cut realization",
+  "state": "implemented and host-qualified; experimental and uncommitted",
+  "starting_revision": "29cd96a2af94fd9d9b5c5711561a0222df67b37a",
+  "starting_dirty_pin": ".local/operation-admission-20261021/start.json",
+  "starting_pin_sha256": "d91fd83a444915a57d6a145d31505dfaec72385cf2fef8796128707300551b5f",
+  "starting_source_sha256": {
+    "docs/designs/frontier-conservative-services-prototype-20261021.json": "3ba43c32ae0f7fd01cd25bedfb1378a7ebc050539cc33d882f9c5889fd3aec72",
+    "docs/designs/frontier-conservative-services-prototype-20261021.md": "a511782b57d2d17ac9227608f0bb5641006880947797d415f5836455211966ac",
+    "docs/designs/frontier-scalar-native-order-20261021.json": "1421b9d41e88f9549083e00d1618cda000b0e6d4b15a759b8009da199e6af0ca",
+    "docs/designs/frontier-scalar-native-order-20261021.md": "83d24989fc109badaf6075e985aef365cf440dc917c062b00ea899f6044b7220",
+    "include/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.h": "c17b4df3a9936db51a87ee88b427530fe41cedf94d26196301ba4a6ae7c9bfdc",
+    "lib/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.cpp": "18a39719ea6c7971ccd947bd38836b0c9507a98edcc8768af196240009fb5f82",
+    "test/lit/pto/Inputs/check_current_cut_services.py": "0f6c842dd46d2731a7a3029ebbfa4d702e85d05a326bb8bc45d04d246c173010",
+    "test/lit/pto/Inputs/check_scalar_current_cut_services.py": "4249db87cfac5a7b4abd727f87959e0d2094528a7b7ec6e73f6b4c0b421b5233",
+    "test/lit/pto/Inputs/check_source_pipe_services.py": "f59c6a39b0f896e9d11c187e70b2f421e1a8452567084d649b17fa68fa28c3a8",
+    "test/lit/pto/sync_current_cut_services.pto": "961591b4495fd7c1330cfec96584a9d0fcef84b6281bce02c88f5632529db2d1",
+    "test/lit/pto/sync_scalar_current_cut_services.pto": "2d383f1198576a08c40d2eb860d5301298fbeef5624644fb992c703bdbfb9d02",
+    "test/lit/pto/sync_source_pipe_services.pto": "afb28622cc4990431e84c525f2383b970d1a33c6bd39fd8b2d9ecc1896b57db1",
+    "tools/pto-test-opt/CurrentCutNativeOrder.h": "0485876419650a8b0c61981375e68fddd11fa95cf9f72de847eb2babaf0fd9c2",
+    "tools/pto-test-opt/CurrentCutServiceChecks.cpp": "d47f6d09e4683c794529ed49994093460baa167ff7bfcc7dd202e16c8e7f3449",
+    "tools/pto-test-opt/SourcePipeServiceChecks.cpp": "a5cfb560c823c9221bcf2db654b26aa3e60c8355e99da8b95e35827b6386f91b",
+    "tools/pto-test-opt/SourcePipeServiceChecks.h": "5654bd64946a9fb9557c8e8e256ffc00512924e9aa20526b6d1649868d51652a",
+    "lib/PTO/Transforms/CMakeLists.txt": "c0cf23652ed4026488b0cca05108df545a121e4109b8fdde451383ba5c1c1e31",
+    "test/lit/pto/Inputs/check_finite_allocation.py": "79cf2a4832cafeeb3f7991fdc81525e638e150ce6bc4a14b19ab62d7593574be",
+    "test/lit/pto/Inputs/check_logical_insertion.py": "57038b7b8802e05bdf2fdb404126f717e11e3c0a81078696a371358596aa2c2e",
+    "test/lit/pto/Inputs/check_periodic_demands.py": "f441fd92ad54dc3b2a7a7b11ee983db265d7d617a8e92a9aaa6caadd044fe812",
+    "test/lit/pto/Inputs/compact_vector_oracle.py": "5a65e15c34380e1ccc93dcf75920faa75239340becce43b2a49f336dfc047ee7",
+    "tools/pto-test-opt/CMakeLists.txt": "cf42feb19cd45892bf9f83f4ff6bc79d5307dba2e8a2aba681b0f730feefd53d",
+    "tools/pto-test-opt/CompletionDataflowInput.h": "2a9459c9e0d3d2c610adb9d312050c90a466c40e3fa3b5cdda55f116964805f8",
+    "tools/pto-test-opt/SyncLogicalInsertionChecks.cpp": "cc8d782545d7946a6585d72345511ce11b99bf496dd13caf58b582f9908ff2f2",
+    "tools/pto-test-opt/pto-sync-input-test.cpp": "ec2007f67acd6220d0ba0649a4298124411cef43636aaeb34f6fdfe9fb121881"
+  },
+  "starting_snapshot": ".local/operation-admission-20261021/starting-source",
+  "source_sha256": {
+    "docs/designs/frontier-conservative-services-prototype-20261021.json": "3ba43c32ae0f7fd01cd25bedfb1378a7ebc050539cc33d882f9c5889fd3aec72",
+    "docs/designs/frontier-conservative-services-prototype-20261021.md": "a511782b57d2d17ac9227608f0bb5641006880947797d415f5836455211966ac",
+    "docs/designs/frontier-operation-admission-20261021.md": "f4a29ff84fc5da6e3fb49badc6524387dc2cf034a6464400b96b29886b6600f8",
+    "docs/designs/frontier-scalar-native-order-20261021.json": "1421b9d41e88f9549083e00d1618cda000b0e6d4b15a759b8009da199e6af0ca",
+    "docs/designs/frontier-scalar-native-order-20261021.md": "83d24989fc109badaf6075e985aef365cf440dc917c062b00ea899f6044b7220",
+    "include/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.h": "c17b4df3a9936db51a87ee88b427530fe41cedf94d26196301ba4a6ae7c9bfdc",
+    "lib/PTO/Transforms/CMakeLists.txt": "c0cf23652ed4026488b0cca05108df545a121e4109b8fdde451383ba5c1c1e31",
+    "lib/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.cpp": "18a39719ea6c7971ccd947bd38836b0c9507a98edcc8768af196240009fb5f82",
+    "test/lit/pto/Inputs/check_current_cut_services.py": "6fb943763ec3ff48a59eef6cbfa714d89da0469a8d429e835695f665781adbab",
+    "test/lit/pto/Inputs/check_finite_allocation.py": "79cf2a4832cafeeb3f7991fdc81525e638e150ce6bc4a14b19ab62d7593574be",
+    "test/lit/pto/Inputs/check_logical_insertion.py": "57038b7b8802e05bdf2fdb404126f717e11e3c0a81078696a371358596aa2c2e",
+    "test/lit/pto/Inputs/check_operation_current_cut_services.py": "3579b9b3f88a6c4b1b2b8640a408cf43f15a9f60b7aa4eb4335be45a88e9aff8",
+    "test/lit/pto/Inputs/check_periodic_demands.py": "f441fd92ad54dc3b2a7a7b11ee983db265d7d617a8e92a9aaa6caadd044fe812",
+    "test/lit/pto/Inputs/check_scalar_current_cut_services.py": "4249db87cfac5a7b4abd727f87959e0d2094528a7b7ec6e73f6b4c0b421b5233",
+    "test/lit/pto/Inputs/check_source_pipe_services.py": "f59c6a39b0f896e9d11c187e70b2f421e1a8452567084d649b17fa68fa28c3a8",
+    "test/lit/pto/Inputs/compact_vector_oracle.py": "b79ec970dbf83f48bb152ea0a17819f1b6d8e644264bf95f0ab664ec8991687f",
+    "test/lit/pto/sync_current_cut_services.pto": "961591b4495fd7c1330cfec96584a9d0fcef84b6281bce02c88f5632529db2d1",
+    "test/lit/pto/sync_operation_current_cut_services.pto": "41325d45b51c42aa163649df5247103f8c979110cd00c97d65223e1464668071",
+    "test/lit/pto/sync_scalar_current_cut_services.pto": "2d383f1198576a08c40d2eb860d5301298fbeef5624644fb992c703bdbfb9d02",
+    "test/lit/pto/sync_source_pipe_services.pto": "afb28622cc4990431e84c525f2383b970d1a33c6bd39fd8b2d9ecc1896b57db1",
+    "tools/pto-test-opt/CMakeLists.txt": "cf42feb19cd45892bf9f83f4ff6bc79d5307dba2e8a2aba681b0f730feefd53d",
+    "tools/pto-test-opt/CompletionDataflowInput.h": "2a9459c9e0d3d2c610adb9d312050c90a466c40e3fa3b5cdda55f116964805f8",
+    "tools/pto-test-opt/CurrentCutContracts.h": "a92304757b69e9b366faebcd5fc91b8d85f4a2c1f166de5b7213a25ded8d4bf1",
+    "tools/pto-test-opt/CurrentCutNativeOrder.h": "0bd90d11678b86d1e24edabc402a94490ed34c538a44abbfd1b37e9b7aded652",
+    "tools/pto-test-opt/CurrentCutServiceChecks.cpp": "b12cea18aa54b3a18fb768f9539278aea0e24e4ac85e79a6acbdb77e9134651a",
+    "tools/pto-test-opt/SourcePipeServiceChecks.cpp": "a5cfb560c823c9221bcf2db654b26aa3e60c8355e99da8b95e35827b6386f91b",
+    "tools/pto-test-opt/SourcePipeServiceChecks.h": "5654bd64946a9fb9557c8e8e256ffc00512924e9aa20526b6d1649868d51652a",
+    "tools/pto-test-opt/SyncLogicalInsertionChecks.cpp": "4ba219785275d31a8df153163a137251dc3142b51233212c5f9ab00dd2711ce6",
+    "tools/pto-test-opt/pto-sync-input-test.cpp": "290d93b3c44a271e5301075b90f511a5fe4c5f641dfdc29dca6ed257b6cb20bd"
+  },
+  "final_snapshot": ".local/operation-admission-20261021/final-source",
+  "tracked_patch_sha256": "8457b0eca42d27ef0e2cc0042651717b952d297ce27d049268e8f2dd429b0bef",
+  "final_git_status": " M lib/PTO/Transforms/CMakeLists.txt\n M test/lit/pto/Inputs/check_finite_allocation.py\n M test/lit/pto/Inputs/check_logical_insertion.py\n M test/lit/pto/Inputs/check_periodic_demands.py\n M test/lit/pto/Inputs/compact_vector_oracle.py\n M tools/pto-test-opt/CMakeLists.txt\n M tools/pto-test-opt/CompletionDataflowInput.h\n M tools/pto-test-opt/SyncLogicalInsertionChecks.cpp\n M tools/pto-test-opt/pto-sync-input-test.cpp\n?? docs/designs/frontier-conservative-services-prototype-20261021.json\n?? docs/designs/frontier-conservative-services-prototype-20261021.md\n?? docs/designs/frontier-operation-admission-20261021.md\n?? docs/designs/frontier-scalar-native-order-20261021.json\n?? docs/designs/frontier-scalar-native-order-20261021.md\n?? include/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.h\n?? lib/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.cpp\n?? test/lit/pto/Inputs/check_current_cut_services.py\n?? test/lit/pto/Inputs/check_operation_current_cut_services.py\n?? test/lit/pto/Inputs/check_scalar_current_cut_services.py\n?? test/lit/pto/Inputs/check_source_pipe_services.py\n?? test/lit/pto/sync_current_cut_services.pto\n?? test/lit/pto/sync_operation_current_cut_services.pto\n?? test/lit/pto/sync_scalar_current_cut_services.pto\n?? test/lit/pto/sync_source_pipe_services.pto\n?? tools/pto-test-opt/CurrentCutContracts.h\n?? tools/pto-test-opt/CurrentCutNativeOrder.h\n?? tools/pto-test-opt/CurrentCutServiceChecks.cpp\n?? tools/pto-test-opt/SourcePipeServiceChecks.cpp\n?? tools/pto-test-opt/SourcePipeServiceChecks.h\n",
+  "tools": {
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test": "ce084dc1f25013f46d8b118127f37ccab14718a91efea2aa8307c3f254e92bdc",
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt": "1fc013d516394047e5e1ccc0ffe50fc36c145e39d7dd71227c2be631d478cf94",
+    ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas": "89fa0f69d6af6db6673954389763ae2f6e57613ea7946ef6f32234d6daef7a85",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/_core.cpython-312-x86_64-linux-gnu.so": "8937210969cbb8a5d91fb184b7fb7c7c794969c3999c4baa6f4af6945a27853c",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_mlirDialectsLLVM.cpython-312-x86_64-linux-gnu.so": "81812065ca68d8f57e4cb99a7425825623b2df00e0201f81fc564a0faf09b5e4",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_mlir.cpython-312-x86_64-linux-gnu.so": "ee060cbb5a9f882a1376a3a5dab11b2224bd906fa096b709f90a21e7e20d9ff2",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_site_initialize_0.cpython-312-x86_64-linux-gnu.so": "4764f1967c3e5acf5361e559aa3b2f33ec0a606e0122c524552d8a6e96f80082",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/libPTOASCompiler.so": "a2a9f8350428f1e24947e0e6b233599c793d49573a036e7e57ea1babf93a5f29"
+  },
+  "research_inputs": {
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/contract-based-operation-admission-task-2026-10-21.md": "ffcd2603adf5e01635e474ac7c1bbc6f564a5d9ac448ff1388e397c38f63d4b2",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/five-milestone-results-2026-10-21.md": "137f7418a42638183b63aec58d58c44d713222da59cd13a712ed31591dd0ba74",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/scalar-native-order-prototype-task-2026-10-21.md": "8753f7cbe399d72fc906991c64271399c9f834f0d38b67d38deda0ba7fccd953"
+  },
+  "target": "A3 AIV",
+  "alias_policy": "may-not-alias for accepted original Delta; requires caller disjointness of distinct GM roots",
+  "contract": {
+    "providers": [
+      "MLIR MemoryEffectOpInterface and purity",
+      "SyncInput buffers/contextual effects",
+      "PhaseIndex",
+      "CompletionReadiness",
+      "SyncStorageEffects independence",
+      "native protection",
+      "existing target/preflight/map services"
+    ],
+    "removed": "payload operation-name list and blanket arith-dialect exemption",
+    "scope": "one original noncompound phase, supported SCF for/if, complete represented effects, available synchronous scalar results, ownership and directional target checks",
+    "gm_entry_premise": "coherent initialized input; not proved by this pass",
+    "gm_visibility": "no possible GM writes, or existing alias/effect independence proves scalar GM read invocation-read-only; otherwise unproved and refused",
+    "limitations": [
+      "calls/loop-carried values require additional contracts",
+      "vector loads not synchronous scalar",
+      "no guard-dependent or temporal cache proof",
+      "effect declarations are not native footprint proof"
+    ]
+  },
+  "validation": {
+    "gate": {
+      "passed": 33,
+      "total": 33,
+      "seconds": 223.61978936195374,
+      "receipt": ".local/operation-admission-20261021/gate-final.json",
+      "final_source": true
+    },
+    "operation_receipt": ".local/operation-admission-20261021/load-final-gate-receipt.json",
+    "operation_cases": [
+      {
+        "name": "loads-0-",
+        "counts": [],
+        "input_sha256": "a45ea7f7b4674d75562ec695c0bb6eae644c902bd46979282cc08a45fa8c1c50",
+        "output_sha256": "5fc4acc2fba9ff567d5b1b2021fd3c6ccaad1c26729750ff44aa22daa8ab1f39",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-0-.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06429581111297011,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-0-.physical.pto",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-0-.physical.stderr"
+        },
+        "work": {
+          "access_recovery_seconds": 0.00048247,
+          "cfg_preparation_seconds": 9.039e-06,
+          "class_preparation_seconds": 7.635e-06,
+          "contract_admission_seconds": 1.412e-05,
+          "contract_effect_visits": 7,
+          "contract_operation_visits": 21,
+          "contract_readiness_operation_visits": 57,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 6.6087e-05,
+          "edge_fact_transmissions": 51,
+          "emission_verification_seconds": 0.000105332,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 7,
+          "map_preparation_seconds": 1.0309e-05,
+          "native_discharge_query_seconds": 3.88e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 13,
+          "out_facts": 41,
+          "phase_index_seconds": 5.6569e-05,
+          "physical_map_construction_seconds": 3.135000000000001e-06,
+          "plan_serialization_seconds": 0.00012522,
+          "selected_cross_services": 3,
+          "selected_self_prefixes": 3,
+          "solve_seconds": 2.2854e-05
+        },
+        "scalar_observations": [],
+        "access_coverage": {
+          "intervals": 1,
+          "gm_contract": "whole known GM space; unknown absolute bases are not disjoint",
+          "scope": "declared source layout/access model; native footprint unverified"
+        },
+        "native_discharge_added_event_pairs": [],
+        "native_discharge_removed_event_pairs": [],
+        "payloads": 1,
+        "commands": 1,
+        "matching": "closed",
+        "supplied_command_control_edges": 0,
+        "causal_reuse": {
+          "status": "not_requested"
+        },
+        "extra_pairs": [],
+        "physical_added_event_pairs": [],
+        "physical_removed_event_pairs": [],
+        "ids": []
+      },
+      {
+        "name": "loads-1--1",
+        "counts": [
+          -1
+        ],
+        "input_sha256": "46ca13c5fe08d1845e36d9da9c42369eb2c8cceb98371262684753171db23317",
+        "output_sha256": "4f3cbc8ebd33b1fe83be349a3d9043bc46036e43addf518023695aa8b67d09d5",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-1--1.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06405246490612626,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-1--1.physical.pto",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-1--1.physical.stderr"
+        },
+        "work": {
+          "access_recovery_seconds": 0.000420079,
+          "cfg_preparation_seconds": 9.126e-06,
+          "class_preparation_seconds": 7.926e-06,
+          "contract_admission_seconds": 1.3936e-05,
+          "contract_effect_visits": 7,
+          "contract_operation_visits": 21,
+          "contract_readiness_operation_visits": 57,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 6.7462e-05,
+          "edge_fact_transmissions": 51,
+          "emission_verification_seconds": 0.000109555,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 7,
+          "map_preparation_seconds": 1.0836e-05,
+          "native_discharge_query_seconds": 3.4000000000000003e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 13,
+          "out_facts": 41,
+          "phase_index_seconds": 5.4147e-05,
+          "physical_map_construction_seconds": 3.5050000000000003e-06,
+          "plan_serialization_seconds": 0.000121368,
+          "selected_cross_services": 3,
+          "selected_self_prefixes": 3,
+          "solve_seconds": 2.323e-05
+        },
+        "scalar_observations": [
+          "-1 : i32"
+        ],
+        "access_coverage": {
+          "intervals": 2,
+          "gm_contract": "whole known GM space; unknown absolute bases are not disjoint",
+          "scope": "declared source layout/access model; native footprint unverified"
+        },
+        "native_discharge_added_event_pairs": [],
+        "native_discharge_removed_event_pairs": [],
+        "payloads": 2,
+        "commands": 1,
+        "matching": "closed",
+        "supplied_command_control_edges": 0,
+        "causal_reuse": {
+          "status": "not_requested"
+        },
+        "extra_pairs": [],
+        "physical_added_event_pairs": [],
+        "physical_removed_event_pairs": [],
+        "ids": []
+      },
+      {
+        "name": "loads-1-0",
+        "counts": [
+          0
+        ],
+        "input_sha256": "46ca13c5fe08d1845e36d9da9c42369eb2c8cceb98371262684753171db23317",
+        "output_sha256": "4f3cbc8ebd33b1fe83be349a3d9043bc46036e43addf518023695aa8b67d09d5",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-1-0.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06409669807180762,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-1-0.physical.pto",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-1-0.physical.stderr"
+        },
+        "work": {
+          "access_recovery_seconds": 0.000490049,
+          "cfg_preparation_seconds": 9.003e-06,
+          "class_preparation_seconds": 7.51e-06,
+          "contract_admission_seconds": 1.3366e-05,
+          "contract_effect_visits": 7,
+          "contract_operation_visits": 21,
+          "contract_readiness_operation_visits": 57,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 6.4266e-05,
+          "edge_fact_transmissions": 51,
+          "emission_verification_seconds": 0.000102433,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 7,
+          "map_preparation_seconds": 1.0013e-05,
+          "native_discharge_query_seconds": 3.6200000000000004e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 13,
+          "out_facts": 41,
+          "phase_index_seconds": 5.2974e-05,
+          "physical_map_construction_seconds": 3.1530000000000006e-06,
+          "plan_serialization_seconds": 0.00011869,
+          "selected_cross_services": 3,
+          "selected_self_prefixes": 3,
+          "solve_seconds": 2.2161e-05
+        },
+        "scalar_observations": [
+          "0 : i32"
+        ],
+        "access_coverage": {
+          "intervals": 2,
+          "gm_contract": "whole known GM space; unknown absolute bases are not disjoint",
+          "scope": "declared source layout/access model; native footprint unverified"
+        },
+        "native_discharge_added_event_pairs": [],
+        "native_discharge_removed_event_pairs": [],
+        "payloads": 2,
+        "commands": 1,
+        "matching": "closed",
+        "supplied_command_control_edges": 0,
+        "causal_reuse": {
+          "status": "not_requested"
+        },
+        "extra_pairs": [],
+        "physical_added_event_pairs": [],
+        "physical_removed_event_pairs": [],
+        "ids": []
+      },
+      {
+        "name": "loads-1-1",
+        "counts": [
+          1
+        ],
+        "input_sha256": "46ca13c5fe08d1845e36d9da9c42369eb2c8cceb98371262684753171db23317",
+        "output_sha256": "4f3cbc8ebd33b1fe83be349a3d9043bc46036e43addf518023695aa8b67d09d5",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-1-1.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.0639588269405067,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-1-1.physical.pto",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-1-1.physical.stderr"
+        },
+        "work": {
+          "access_recovery_seconds": 0.000401729,
+          "cfg_preparation_seconds": 9.411e-06,
+          "class_preparation_seconds": 7.788e-06,
+          "contract_admission_seconds": 1.304e-05,
+          "contract_effect_visits": 7,
+          "contract_operation_visits": 21,
+          "contract_readiness_operation_visits": 57,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 7.4411e-05,
+          "edge_fact_transmissions": 51,
+          "emission_verification_seconds": 0.00010252,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 7,
+          "map_preparation_seconds": 1.0281e-05,
+          "native_discharge_query_seconds": 3.99e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 13,
+          "out_facts": 41,
+          "phase_index_seconds": 5.0542e-05,
+          "physical_map_construction_seconds": 3.1690000000000005e-06,
+          "plan_serialization_seconds": 0.000119323,
+          "selected_cross_services": 3,
+          "selected_self_prefixes": 3,
+          "solve_seconds": 2.5437e-05
+        },
+        "scalar_observations": [
+          "1 : i32",
+          "1.0 : f32"
+        ],
+        "access_coverage": {
+          "intervals": 7,
+          "gm_contract": "whole known GM space; unknown absolute bases are not disjoint",
+          "scope": "declared source layout/access model; native footprint unverified"
+        },
+        "native_discharge_added_event_pairs": [],
+        "native_discharge_removed_event_pairs": [],
+        "payloads": 5,
+        "commands": 14,
+        "matching": "closed",
+        "supplied_command_control_edges": 13,
+        "causal_reuse": {
+          "status": "passed"
+        },
+        "extra_pairs": [],
+        "physical_added_event_pairs": [],
+        "physical_removed_event_pairs": [],
+        "ids": [
+          [
+            0,
+            1,
+            3
+          ],
+          [
+            0,
+            1,
+            5
+          ],
+          [
+            1,
+            0,
+            3
+          ],
+          [
+            1,
+            0,
+            5
+          ]
+        ]
+      },
+      {
+        "name": "loads-1-3",
+        "counts": [
+          3
+        ],
+        "input_sha256": "46ca13c5fe08d1845e36d9da9c42369eb2c8cceb98371262684753171db23317",
+        "output_sha256": "4f3cbc8ebd33b1fe83be349a3d9043bc46036e43addf518023695aa8b67d09d5",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-1-3.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.0639810860157013,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-1-3.physical.pto",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-1-3.physical.stderr"
+        },
+        "work": {
+          "access_recovery_seconds": 0.000395339,
+          "cfg_preparation_seconds": 8.909e-06,
+          "class_preparation_seconds": 7.273e-06,
+          "contract_admission_seconds": 1.3143e-05,
+          "contract_effect_visits": 7,
+          "contract_operation_visits": 21,
+          "contract_readiness_operation_visits": 57,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 6.4621e-05,
+          "edge_fact_transmissions": 51,
+          "emission_verification_seconds": 0.000107194,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 7,
+          "map_preparation_seconds": 1.1721e-05,
+          "native_discharge_query_seconds": 3.8399999999999994e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 13,
+          "out_facts": 41,
+          "phase_index_seconds": 4.9181e-05,
+          "physical_map_construction_seconds": 3.64e-06,
+          "plan_serialization_seconds": 0.000118765,
+          "selected_cross_services": 3,
+          "selected_self_prefixes": 3,
+          "solve_seconds": 2.165e-05
+        },
+        "scalar_observations": [
+          "3 : i32",
+          "1.0 : f32",
+          "2.0 : f32",
+          "2.0 : f32"
+        ],
+        "access_coverage": {
+          "intervals": 11,
+          "gm_contract": "whole known GM space; unknown absolute bases are not disjoint",
+          "scope": "declared source layout/access model; native footprint unverified"
+        },
+        "native_discharge_added_event_pairs": [],
+        "native_discharge_removed_event_pairs": [],
+        "payloads": 9,
+        "commands": 30,
+        "matching": "closed",
+        "supplied_command_control_edges": 29,
+        "causal_reuse": {
+          "status": "passed"
+        },
+        "extra_pairs": [],
+        "physical_added_event_pairs": [],
+        "physical_removed_event_pairs": [],
+        "ids": [
+          [
+            0,
+            1,
+            3
+          ],
+          [
+            0,
+            1,
+            5
+          ],
+          [
+            1,
+            0,
+            3
+          ],
+          [
+            1,
+            0,
+            5
+          ]
+        ]
+      },
+      {
+        "name": "loads-2-0-2",
+        "counts": [
+          0,
+          2
+        ],
+        "input_sha256": "28667a194a1cd633c81c392adf8cc0dd2e1058e8e26784872e581b3c5044fbac",
+        "output_sha256": "466d2df66cf61f0d57195fa74e206bf93e40b028c6ccf91419321ea3506e1472",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-2-0-2.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06403496908023953,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-2-0-2.physical.pto",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-2-0-2.physical.stderr"
+        },
+        "work": {
+          "access_recovery_seconds": 0.00040216,
+          "cfg_preparation_seconds": 9.163e-06,
+          "class_preparation_seconds": 6.271e-06,
+          "contract_admission_seconds": 1.3809e-05,
+          "contract_effect_visits": 7,
+          "contract_operation_visits": 21,
+          "contract_readiness_operation_visits": 57,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 6.7242e-05,
+          "edge_fact_transmissions": 51,
+          "emission_verification_seconds": 0.000103773,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 7,
+          "map_preparation_seconds": 9.979e-06,
+          "native_discharge_query_seconds": 3.49e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 13,
+          "out_facts": 41,
+          "phase_index_seconds": 5.0712e-05,
+          "physical_map_construction_seconds": 3.0460000000000006e-06,
+          "plan_serialization_seconds": 0.000125013,
+          "selected_cross_services": 3,
+          "selected_self_prefixes": 3,
+          "solve_seconds": 2.2976e-05
+        },
+        "scalar_observations": [
+          "0 : i32",
+          "2 : i32",
+          "1.0 : f32",
+          "2.0 : f32"
+        ],
+        "access_coverage": {
+          "intervals": 10,
+          "gm_contract": "whole known GM space; unknown absolute bases are not disjoint",
+          "scope": "declared source layout/access model; native footprint unverified"
+        },
+        "native_discharge_added_event_pairs": [],
+        "native_discharge_removed_event_pairs": [],
+        "payloads": 8,
+        "commands": 22,
+        "matching": "closed",
+        "supplied_command_control_edges": 21,
+        "causal_reuse": {
+          "status": "passed"
+        },
+        "extra_pairs": [],
+        "physical_added_event_pairs": [],
+        "physical_removed_event_pairs": [],
+        "ids": [
+          [
+            0,
+            1,
+            3
+          ],
+          [
+            0,
+            1,
+            5
+          ],
+          [
+            1,
+            0,
+            3
+          ],
+          [
+            1,
+            0,
+            5
+          ]
+        ]
+      },
+      {
+        "name": "loads-3-2-0-1",
+        "counts": [
+          2,
+          0,
+          1
+        ],
+        "input_sha256": "c80e0714f6fd7b5127bf25ff39b31b510007e63e8f021d70b4040335013893bc",
+        "output_sha256": "d8bde0c603f458a5d4856049d47270137a3da33c859a2b931a71a7e076ec50a1",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-3-2-0-1.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06414424534887075,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-3-2-0-1.physical.pto",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/loads-3-2-0-1.physical.stderr"
+        },
+        "work": {
+          "access_recovery_seconds": 0.000408039,
+          "cfg_preparation_seconds": 9.048e-06,
+          "class_preparation_seconds": 6.175e-06,
+          "contract_admission_seconds": 1.27e-05,
+          "contract_effect_visits": 7,
+          "contract_operation_visits": 21,
+          "contract_readiness_operation_visits": 57,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 6.4577e-05,
+          "edge_fact_transmissions": 51,
+          "emission_verification_seconds": 9.8655e-05,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 7,
+          "map_preparation_seconds": 9.897e-06,
+          "native_discharge_query_seconds": 3.2100000000000003e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 13,
+          "out_facts": 41,
+          "phase_index_seconds": 5.2559e-05,
+          "physical_map_construction_seconds": 3.1120000000000004e-06,
+          "plan_serialization_seconds": 0.000122054,
+          "selected_cross_services": 3,
+          "selected_self_prefixes": 3,
+          "solve_seconds": 2.2322e-05
+        },
+        "scalar_observations": [
+          "2 : i32",
+          "1.0 : f32",
+          "2.0 : f32",
+          "0 : i32",
+          "1 : i32",
+          "2.0 : f32"
+        ],
+        "access_coverage": {
+          "intervals": 16,
+          "gm_contract": "whole known GM space; unknown absolute bases are not disjoint",
+          "scope": "declared source layout/access model; native footprint unverified"
+        },
+        "native_discharge_added_event_pairs": [],
+        "native_discharge_removed_event_pairs": [],
+        "payloads": 12,
+        "commands": 35,
+        "matching": "closed",
+        "supplied_command_control_edges": 34,
+        "causal_reuse": {
+          "status": "passed"
+        },
+        "extra_pairs": [],
+        "physical_added_event_pairs": [],
+        "physical_removed_event_pairs": [],
+        "ids": [
+          [
+            0,
+            1,
+            3
+          ],
+          [
+            0,
+            1,
+            5
+          ],
+          [
+            1,
+            0,
+            3
+          ],
+          [
+            1,
+            0,
+            5
+          ]
+        ]
+      },
+      {
+        "name": "generic-subtraction",
+        "counts": [
+          2,
+          1
+        ],
+        "input_sha256": "a51bfb8c7f34011cdf30974f55cc13ffb6846b8ce518c1b7d314508096d21fac",
+        "output_sha256": "b433410cc312f463fc2d7a7f6eca68aacf94da6e39886bfef6b1b80ba41a7b78",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/generic-subtraction.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06561437575146556,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/generic-subtraction.physical.pto",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/generic-subtraction.physical.stderr"
+        },
+        "work": {
+          "access_recovery_seconds": 0.000419183,
+          "cfg_preparation_seconds": 9.052e-06,
+          "class_preparation_seconds": 7.505e-06,
+          "contract_admission_seconds": 1.3759e-05,
+          "contract_effect_visits": 7,
+          "contract_operation_visits": 21,
+          "contract_readiness_operation_visits": 57,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 6.5859e-05,
+          "edge_fact_transmissions": 51,
+          "emission_verification_seconds": 0.000120079,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 7,
+          "map_preparation_seconds": 1.067e-05,
+          "native_discharge_query_seconds": 4.1899999999999993e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 13,
+          "out_facts": 41,
+          "phase_index_seconds": 4.7098e-05,
+          "physical_map_construction_seconds": 3.636e-06,
+          "plan_serialization_seconds": 0.000124778,
+          "selected_cross_services": 3,
+          "selected_self_prefixes": 3,
+          "solve_seconds": 2.2257e-05
+        },
+        "scalar_observations": [
+          "2 : i32",
+          "1.0 : f32",
+          "0.0 : f32",
+          "1 : i32",
+          "0.0 : f32"
+        ],
+        "access_coverage": {
+          "intervals": 15,
+          "gm_contract": "whole known GM space; unknown absolute bases are not disjoint",
+          "scope": "declared source layout/access model; native footprint unverified"
+        },
+        "native_discharge_added_event_pairs": [],
+        "native_discharge_removed_event_pairs": [],
+        "payloads": 11,
+        "commands": 35,
+        "matching": "closed",
+        "supplied_command_control_edges": 34,
+        "causal_reuse": {
+          "status": "passed"
+        },
+        "extra_pairs": [],
+        "physical_added_event_pairs": [],
+        "physical_removed_event_pairs": [],
+        "ids": [
+          [
+            0,
+            1,
+            3
+          ],
+          [
+            0,
+            1,
+            5
+          ],
+          [
+            1,
+            0,
+            3
+          ],
+          [
+            1,
+            0,
+            5
+          ]
+        ]
+      }
+    ],
+    "negative_cases": [
+      {
+        "name": "vector-load",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-vector-load.pto"
+          ],
+          "status": "failure",
+          "returncode": 1,
+          "seconds": 0.06532701291143894,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-vector-load.physical.pto",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-vector-load.physical.stderr"
+        },
+        "diagnostic": "loc(\"/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-vector-load.pto\":11:12): error: current-cut: pto.load: result-readiness: non-scalar payload results need a qualified value-readiness contract\nloc(\"/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-vector-load.pto\":11:12): error: current-cut: pto.load: native-prefix: scalar phase lacks a synchronous native-prefix contract for this form\n"
+      },
+      {
+        "name": "unknown-effects",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-unknown-effects.pto"
+          ],
+          "status": "failure",
+          "returncode": 1,
+          "seconds": 0.06404617289081216,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-unknown-effects.physical.pto",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-unknown-effects.physical.stderr"
+        },
+        "diagnostic": "loc(\"/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-unknown-effects.pto\":7:13): error: current-cut: pto.alloc_multi_tile: effects-or-phase: operation lacks proved purity/descriptor semantics or a modeled effect phase\n"
+      },
+      {
+        "name": "loop-carried",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-loop-carried.pto"
+          ],
+          "status": "failure",
+          "returncode": 1,
+          "seconds": 0.06427005585283041,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-loop-carried.physical.pto",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-loop-carried.physical.stderr"
+        },
+        "diagnostic": "loc(\"/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-loop-carried.pto\":13:3): error: current-cut: scf.for: structured-control: loop-carried values need an explicit readiness/coordinate contract\n"
+      },
+      {
+        "name": "gm-write-visibility-False",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-gm-write-visibility-False.pto"
+          ],
+          "status": "failure",
+          "returncode": 1,
+          "seconds": 0.06394800404086709,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-gm-write-visibility-False.physical.pto",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-gm-write-visibility-False.physical.stderr"
+        },
+        "diagnostic": "loc(\"/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-gm-write-visibility-False.pto\":18:12): error: current-cut: pto.load: gm-read-visibility: possible GM writer needs an explicit scalar read/cache-visibility contract; event availability alone is insufficient\n"
+      },
+      {
+        "name": "gm-write-visibility-True",
+        "run": {
+          "command": [
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-gm-write-visibility-True.pto"
+          ],
+          "status": "failure",
+          "returncode": 1,
+          "seconds": 0.06402410380542278,
+          "stdout": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-gm-write-visibility-True.physical.pto",
+          "stderr": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-gm-write-visibility-True.physical.stderr"
+        },
+        "diagnostic": "loc(\"/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit/pto/Output/sync_operation_current_cut_services.pto.tmp.operation-services/negative-gm-write-visibility-True.pto\":18:12): error: current-cut: pto.load: gm-read-visibility: possible GM writer needs an explicit scalar read/cache-visibility contract; event availability alone is insufficient\n"
+      }
+    ],
+    "scaling": [
+      {
+        "stages": 1,
+        "runtime_trip_sample": 1,
+        "work": {
+          "access_recovery_seconds": 0.000409374,
+          "cfg_preparation_seconds": 8.764e-06,
+          "class_preparation_seconds": 6.551e-06,
+          "contract_admission_seconds": 1.3432e-05,
+          "contract_effect_visits": 7,
+          "contract_operation_visits": 21,
+          "contract_readiness_operation_visits": 57,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 6.6422e-05,
+          "edge_fact_transmissions": 51,
+          "emission_verification_seconds": 0.000106159,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 7,
+          "map_preparation_seconds": 1.1552e-05,
+          "native_discharge_query_seconds": 3.9100000000000005e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 13,
+          "out_facts": 41,
+          "phase_index_seconds": 4.757e-05,
+          "physical_map_construction_seconds": 3.567e-06,
+          "plan_serialization_seconds": 0.000116049,
+          "selected_cross_services": 3,
+          "selected_self_prefixes": 3,
+          "solve_seconds": 2.2237e-05
+        },
+        "output_sha256": "466d2df66cf61f0d57195fa74e206bf93e40b028c6ccf91419321ea3506e1472",
+        "bytes": 2852
+      },
+      {
+        "stages": 1,
+        "runtime_trip_sample": 256,
+        "work": {
+          "access_recovery_seconds": 0.00041415,
+          "cfg_preparation_seconds": 9.353e-06,
+          "class_preparation_seconds": 8.233e-06,
+          "contract_admission_seconds": 2.0133e-05,
+          "contract_effect_visits": 7,
+          "contract_operation_visits": 21,
+          "contract_readiness_operation_visits": 57,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 6.3048e-05,
+          "edge_fact_transmissions": 51,
+          "emission_verification_seconds": 0.000106966,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 7,
+          "map_preparation_seconds": 1.1862e-05,
+          "native_discharge_query_seconds": 3.65e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 13,
+          "out_facts": 41,
+          "phase_index_seconds": 4.5794e-05,
+          "physical_map_construction_seconds": 3.574e-06,
+          "plan_serialization_seconds": 0.000134233,
+          "selected_cross_services": 3,
+          "selected_self_prefixes": 3,
+          "solve_seconds": 2.5372e-05
+        },
+        "output_sha256": "466d2df66cf61f0d57195fa74e206bf93e40b028c6ccf91419321ea3506e1472",
+        "bytes": 2852
+      },
+      {
+        "stages": 2,
+        "runtime_trip_sample": 1,
+        "work": {
+          "access_recovery_seconds": 0.000480372,
+          "cfg_preparation_seconds": 1.0955e-05,
+          "class_preparation_seconds": 6.03e-06,
+          "contract_admission_seconds": 1.3946e-05,
+          "contract_effect_visits": 10,
+          "contract_operation_visits": 22,
+          "contract_readiness_operation_visits": 60,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 7.7228e-05,
+          "edge_fact_transmissions": 56,
+          "emission_verification_seconds": 0.000110618,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 10,
+          "map_preparation_seconds": 1.3241e-05,
+          "native_discharge_query_seconds": 4.1099999999999996e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 18,
+          "out_facts": 46,
+          "phase_index_seconds": 5.9088e-05,
+          "physical_map_construction_seconds": 3.87e-06,
+          "plan_serialization_seconds": 0.000152485,
+          "selected_cross_services": 4,
+          "selected_self_prefixes": 4,
+          "solve_seconds": 2.2391e-05
+        },
+        "output_sha256": "6bf34bdd47f3cd707235fb3221e3dfe36e1b18b44fc6c0ff9c3cf05a148f43b6",
+        "bytes": 3590
+      },
+      {
+        "stages": 2,
+        "runtime_trip_sample": 256,
+        "work": {
+          "access_recovery_seconds": 0.000440156,
+          "cfg_preparation_seconds": 1.0501e-05,
+          "class_preparation_seconds": 8.37e-06,
+          "contract_admission_seconds": 1.5994e-05,
+          "contract_effect_visits": 10,
+          "contract_operation_visits": 22,
+          "contract_readiness_operation_visits": 60,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 8.513e-05,
+          "edge_fact_transmissions": 56,
+          "emission_verification_seconds": 0.000118014,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 10,
+          "map_preparation_seconds": 1.4337e-05,
+          "native_discharge_query_seconds": 3.85e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 18,
+          "out_facts": 46,
+          "phase_index_seconds": 5.4752e-05,
+          "physical_map_construction_seconds": 4.239999999999998e-06,
+          "plan_serialization_seconds": 0.000156183,
+          "selected_cross_services": 4,
+          "selected_self_prefixes": 4,
+          "solve_seconds": 2.8732e-05
+        },
+        "output_sha256": "6bf34bdd47f3cd707235fb3221e3dfe36e1b18b44fc6c0ff9c3cf05a148f43b6",
+        "bytes": 3590
+      },
+      {
+        "stages": 4,
+        "runtime_trip_sample": 1,
+        "work": {
+          "access_recovery_seconds": 0.000496762,
+          "cfg_preparation_seconds": 9.787e-06,
+          "class_preparation_seconds": 6.076e-06,
+          "contract_admission_seconds": 1.4021e-05,
+          "contract_effect_visits": 16,
+          "contract_operation_visits": 24,
+          "contract_readiness_operation_visits": 66,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 9.792e-05,
+          "edge_fact_transmissions": 66,
+          "emission_verification_seconds": 0.000125994,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 16,
+          "map_preparation_seconds": 1.5094e-05,
+          "native_discharge_query_seconds": 3.62e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 28,
+          "out_facts": 56,
+          "phase_index_seconds": 5.6606e-05,
+          "physical_map_construction_seconds": 5.026000000000001e-06,
+          "plan_serialization_seconds": 0.000188744,
+          "selected_cross_services": 6,
+          "selected_self_prefixes": 6,
+          "solve_seconds": 2.5455e-05
+        },
+        "output_sha256": "dd319a4760d39fa5f5fcd750e4846f4b94bd3271b68e5a11f729468ca720fb22",
+        "bytes": 5066
+      },
+      {
+        "stages": 4,
+        "runtime_trip_sample": 256,
+        "work": {
+          "access_recovery_seconds": 0.000506824,
+          "cfg_preparation_seconds": 9.784e-06,
+          "class_preparation_seconds": 7.23e-06,
+          "contract_admission_seconds": 1.4511e-05,
+          "contract_effect_visits": 16,
+          "contract_operation_visits": 24,
+          "contract_readiness_operation_visits": 66,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 9.9896e-05,
+          "edge_fact_transmissions": 66,
+          "emission_verification_seconds": 0.000131056,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 16,
+          "map_preparation_seconds": 2.3615e-05,
+          "native_discharge_query_seconds": 3.88e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 28,
+          "out_facts": 56,
+          "phase_index_seconds": 5.8322e-05,
+          "physical_map_construction_seconds": 6.842e-06,
+          "plan_serialization_seconds": 0.00019099,
+          "selected_cross_services": 6,
+          "selected_self_prefixes": 6,
+          "solve_seconds": 2.5909e-05
+        },
+        "output_sha256": "dd319a4760d39fa5f5fcd750e4846f4b94bd3271b68e5a11f729468ca720fb22",
+        "bytes": 5066
+      },
+      {
+        "stages": 8,
+        "runtime_trip_sample": 1,
+        "work": {
+          "access_recovery_seconds": 0.000616471,
+          "cfg_preparation_seconds": 1.2222e-05,
+          "class_preparation_seconds": 7.589e-06,
+          "contract_admission_seconds": 1.5501e-05,
+          "contract_effect_visits": 28,
+          "contract_operation_visits": 28,
+          "contract_readiness_operation_visits": 78,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 0.000149635,
+          "edge_fact_transmissions": 86,
+          "emission_verification_seconds": 0.000165384,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 28,
+          "map_preparation_seconds": 2.1551e-05,
+          "native_discharge_query_seconds": 4.7299999999999985e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 48,
+          "out_facts": 76,
+          "phase_index_seconds": 7.8887e-05,
+          "physical_map_construction_seconds": 6.910000000000002e-06,
+          "plan_serialization_seconds": 0.000286734,
+          "selected_cross_services": 10,
+          "selected_self_prefixes": 10,
+          "solve_seconds": 2.9342e-05
+        },
+        "output_sha256": "44ed366c6306a0900667387f754acec5270944e8f80d79b24088458bf3b19234",
+        "bytes": 8018
+      },
+      {
+        "stages": 8,
+        "runtime_trip_sample": 256,
+        "work": {
+          "access_recovery_seconds": 0.000658444,
+          "cfg_preparation_seconds": 1.4042e-05,
+          "class_preparation_seconds": 7.513e-06,
+          "contract_admission_seconds": 1.5997e-05,
+          "contract_effect_visits": 28,
+          "contract_operation_visits": 28,
+          "contract_readiness_operation_visits": 78,
+          "contract_readiness_use_visits": 0,
+          "descriptor_tree_seconds": 0.000154462,
+          "edge_fact_transmissions": 86,
+          "emission_verification_seconds": 0.000166642,
+          "gm_read_independence_queries": 0,
+          "gm_visibility_inventory_visits": 28,
+          "map_preparation_seconds": 2.1831e-05,
+          "native_discharge_query_seconds": 5.479999999999999e-07,
+          "native_self_discharges": 2,
+          "ordered_command_sites": 48,
+          "out_facts": 76,
+          "phase_index_seconds": 7.8797e-05,
+          "physical_map_construction_seconds": 7.308000000000002e-06,
+          "plan_serialization_seconds": 0.000274937,
+          "selected_cross_services": 10,
+          "selected_self_prefixes": 10,
+          "solve_seconds": 3.5039e-05
+        },
+        "output_sha256": "44ed366c6306a0900667387f754acec5270944e8f80d79b24088458bf3b19234",
+        "bytes": 8018
+      }
+    ],
+    "vector_negative": {
+      "removed_commands": 4,
+      "uncovered": [
+        0,
+        2
+      ],
+      "source_sha256": "46ca13c5fe08d1845e36d9da9c42369eb2c8cceb98371262684753171db23317"
+    },
+    "delta_emitted": {
+      "source_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+      "tool_sha256": "ce084dc1f25013f46d8b118127f37ccab14718a91efea2aa8307c3f254e92bdc",
+      "physical_sha256": "6ce81cf50adc04ffdfd4e5c5b1687529ec35204e675ede10ddd62af70951b8b2",
+      "static_sites": 78,
+      "static_commands": 933,
+      "contract_inventory": [
+        {
+          "effect_visits": 152,
+          "error": "",
+          "gm_read_independence_queries": 3,
+          "gm_visibility_inventory_visits": 152,
+          "issues": [],
+          "operation_visits": 259,
+          "phases": 78,
+          "readiness_operation_visits": 771,
+          "readiness_use_visits": 0
+        }
+      ],
+      "cases": [
+        {
+          "original_outer_bound": 2,
+          "control_scope": "structural derivative",
+          "visits": 0,
+          "tokens": 0,
+          "initial": false,
+          "branch_outcomes": [],
+          "payloads": 0,
+          "commands": 1,
+          "reservation_conflict_checks": 0,
+          "original_scalar_payload_edges": 0,
+          "original_scalar_command_edges": 0,
+          "reuse": {
+            "status": "not_requested"
+          }
+        },
+        {
+          "original_outer_bound": 2,
+          "control_scope": "structural derivative",
+          "visits": 1,
+          "tokens": 0,
+          "initial": false,
+          "branch_outcomes": [],
+          "payloads": 16,
+          "commands": 172,
+          "reservation_conflict_checks": 51,
+          "original_scalar_payload_edges": 3,
+          "original_scalar_command_edges": 39,
+          "reuse": {
+            "status": "passed"
+          }
+        },
+        {
+          "original_outer_bound": 2,
+          "control_scope": "structural derivative",
+          "visits": 1,
+          "tokens": 1,
+          "initial": false,
+          "branch_outcomes": [
+            false
+          ],
+          "payloads": 72,
+          "commands": 856,
+          "reservation_conflict_checks": 700,
+          "original_scalar_payload_edges": 135,
+          "original_scalar_command_edges": 1649,
+          "reuse": {
+            "status": "passed"
+          }
+        },
+        {
+          "original_outer_bound": 2,
+          "control_scope": "structural derivative",
+          "visits": 1,
+          "tokens": 1,
+          "initial": true,
+          "branch_outcomes": [
+            true
+          ],
+          "payloads": 69,
+          "commands": 823,
+          "reservation_conflict_checks": 652,
+          "original_scalar_payload_edges": 116,
+          "original_scalar_command_edges": 1427,
+          "reuse": {
+            "status": "passed"
+          }
+        },
+        {
+          "original_outer_bound": 2,
+          "control_scope": "configured outer count with supplied data-dependent outcomes",
+          "visits": 2,
+          "tokens": 2,
+          "initial": true,
+          "branch_outcomes": [
+            false,
+            true
+          ],
+          "payloads": 128,
+          "commands": 1546,
+          "reservation_conflict_checks": 2438,
+          "original_scalar_payload_edges": 254,
+          "original_scalar_command_edges": 3115,
+          "reuse": {
+            "status": "passed"
+          }
+        }
+      ],
+      "scope": "Parsed actual emitted command blocks and SCF shape; independent bounded control abstraction and reservation-conflict checker. Not numeric Delta execution, independent native footprint validation, or device validation."
+    },
+    "delta_contracts": {
+      "may-alias": {
+        "effect_visits": 152,
+        "error": "",
+        "gm_read_independence_queries": 3,
+        "gm_visibility_inventory_visits": 152,
+        "issues": [
+          {
+            "contract": "gm-read-visibility",
+            "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":100:16)",
+            "operation": "pto.load",
+            "reason": "possible GM writer needs an explicit scalar read/cache-visibility contract; event availability alone is insufficient"
+          },
+          {
+            "contract": "gm-read-visibility",
+            "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":103:16)",
+            "operation": "pto.load",
+            "reason": "possible GM writer needs an explicit scalar read/cache-visibility contract; event availability alone is insufficient"
+          },
+          {
+            "contract": "gm-read-visibility",
+            "location": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":106:16)",
+            "operation": "pto.load",
+            "reason": "possible GM writer needs an explicit scalar read/cache-visibility contract; event availability alone is insufficient"
+          }
+        ],
+        "operation_visits": 259,
+        "phases": 78,
+        "readiness_operation_visits": 771,
+        "readiness_use_visits": 0
+      },
+      "may-not-alias": {
+        "effect_visits": 152,
+        "error": "",
+        "gm_read_independence_queries": 3,
+        "gm_visibility_inventory_visits": 152,
+        "issues": [],
+        "operation_visits": 259,
+        "phases": 78,
+        "readiness_operation_visits": 771,
+        "readiness_use_visits": 0
+      }
+    },
+    "delta_alias_runs": [
+      {
+        "policy": "may-not-alias",
+        "mode": "--current-cut-contracts",
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--gm-alias=may-not-alias",
+          "--current-cut-contracts",
+          "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.21588208712637424,
+        "stdout": ".local/operation-admission-20261021/delta-may-not-alias-current-cut-contracts.out",
+        "stderr": ".local/operation-admission-20261021/delta-may-not-alias-current-cut-contracts.stderr"
+      },
+      {
+        "policy": "may-not-alias",
+        "mode": "--current-cut-output",
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--gm-alias=may-not-alias",
+          "--current-cut-output",
+          "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.11424066685140133,
+        "stdout": ".local/operation-admission-20261021/delta-may-not-alias-current-cut-output.out",
+        "stderr": ".local/operation-admission-20261021/delta-may-not-alias-current-cut-output.stderr"
+      },
+      {
+        "policy": "may-alias",
+        "mode": "--current-cut-contracts",
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--gm-alias=may-alias",
+          "--current-cut-contracts",
+          "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.06510892370715737,
+        "stdout": ".local/operation-admission-20261021/delta-may-alias-current-cut-contracts.out",
+        "stderr": ".local/operation-admission-20261021/delta-may-alias-current-cut-contracts.stderr"
+      },
+      {
+        "policy": "may-alias",
+        "mode": "--current-cut-output",
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--gm-alias=may-alias",
+          "--current-cut-output",
+          "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+        ],
+        "status": "failure",
+        "returncode": 1,
+        "seconds": 0.06413855403661728,
+        "stdout": ".local/operation-admission-20261021/delta-may-alias-current-cut-output.out",
+        "stderr": ".local/operation-admission-20261021/delta-may-alias-current-cut-output.stderr"
+      }
+    ],
+    "cpp": [
+      {
+        "name": "load",
+        "command": [
+          ".venv/bin/python",
+          ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+          "--pto-arch=a3",
+          "--pto-level=level3",
+          "--enable-insert-sync=false",
+          "--enable-plan-memory=false",
+          ".local/operation-admission-20261021/load-tests/loads-3-2-0-1.physical.pto",
+          "-o",
+          ".local/operation-admission-20261021/load.cpp"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.66622219607234,
+        "stdout": ".local/operation-admission-20261021/load-cpp.stdout",
+        "stderr": ".local/operation-admission-20261021/load-cpp.stderr",
+        "output": ".local/operation-admission-20261021/load.cpp",
+        "bytes": 2186,
+        "sha256": "d96d2e12ad92b03548b052e6612850be57be306adf07f1f5d6666c3f9e5e2964"
+      },
+      {
+        "name": "delta",
+        "command": [
+          ".venv/bin/python",
+          ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+          "--pto-arch=a3",
+          "--pto-level=level3",
+          "--enable-insert-sync=false",
+          "--enable-plan-memory=false",
+          ".local/operation-admission-20261021/delta.physical.pto",
+          "-o",
+          ".local/operation-admission-20261021/delta.cpp"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.5156022482551634,
+        "stdout": ".local/operation-admission-20261021/delta-cpp.stdout",
+        "stderr": ".local/operation-admission-20261021/delta-cpp.stderr",
+        "output": ".local/operation-admission-20261021/delta.cpp",
+        "bytes": 77343,
+        "sha256": "91d25a7984a4a9227ffa8060e29b79081d510670336ab3055ee4eb21bbc08805"
+      }
+    ],
+    "delta_scope": "actual emitted command blocks; independent reservation/control/SSA checker, supplied branch outcomes; zero/one outer counts structural derivatives, two configured outer visits; not numerical Delta execution or independent native extraction",
+    "unchanged_selected_fields": [
+      "incoming",
+      "outgoing",
+      "possible",
+      "logical_plan",
+      "physical_plan",
+      "role_ids"
+    ]
+  },
+  "preservation": {
+    "protected": [
+      {
+        "path": "include/PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h",
+        "sha256": "02589ebef04820d1f5d95628ec1ffe50625fbe133fa17cff531cfe3103904e32",
+        "identical_to_HEAD": true
+      },
+      {
+        "path": "lib/PTO/Transforms/FrontierSynch/Shared/HardwareProtection.cpp",
+        "sha256": "c0e4eb288c688a6c700ab246cefdd5de50d1dfd468e807837aa2b65d86b843f0",
+        "identical_to_HEAD": true
+      },
+      {
+        "path": "lib/PTO/Transforms/FrontierSynch/Shared/InvocationProtection.cpp",
+        "sha256": "9c5af2aea112c27ba5dc02773fb289ee6f7f97724fc93dced5344ea30d1cd255",
+        "identical_to_HEAD": true
+      },
+      {
+        "path": "lib/PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.cpp",
+        "sha256": "b686e49a6d8d82964b9bf99994d35c4d28e811ee94a5bbe6de66aaa27c74da7b",
+        "identical_to_HEAD": true
+      },
+      {
+        "path": "lib/PTO/IR/PTOSyncCapabilities.cpp",
+        "sha256": "3ddfdb737be164a2b5c7404f2a5f2122c755902ab496604e34d2f6dc534a2c71",
+        "identical_to_HEAD": true
+      },
+      {
+        "path": "lib/PTO/Transforms/InsertSync/InsertSyncAnalysis.cpp",
+        "sha256": "5526f50cfc41e3c7b7bd65e94406a78ef9fe03b393fa8de8633dbac6cb97feb6",
+        "identical_to_HEAD": true
+      },
+      {
+        "path": "lib/PTO/Transforms/InsertSync/SyncEventIdAllocation.cpp",
+        "sha256": "2c7ed0fe6e9b24e345c88918f0340ae440c2075e8864a68f550f08a15b13142a",
+        "identical_to_HEAD": true
+      }
+    ],
+    "unchanged_from_start": {
+      "include/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.h": "c17b4df3a9936db51a87ee88b427530fe41cedf94d26196301ba4a6ae7c9bfdc",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.cpp": "18a39719ea6c7971ccd947bd38836b0c9507a98edcc8768af196240009fb5f82",
+      "tools/pto-test-opt/SourcePipeServiceChecks.cpp": "a5cfb560c823c9221bcf2db654b26aa3e60c8355e99da8b95e35827b6386f91b",
+      "tools/pto-test-opt/SourcePipeServiceChecks.h": "5654bd64946a9fb9557c8e8e256ffc00512924e9aa20526b6d1649868d51652a",
+      "docs/designs/frontier-conservative-services-prototype-20261021.md": "a511782b57d2d17ac9227608f0bb5641006880947797d415f5836455211966ac",
+      "docs/designs/frontier-conservative-services-prototype-20261021.json": "3ba43c32ae0f7fd01cd25bedfb1378a7ebc050539cc33d882f9c5889fd3aec72",
+      "docs/designs/frontier-scalar-native-order-20261021.md": "83d24989fc109badaf6075e985aef365cf440dc917c062b00ea899f6044b7220",
+      "docs/designs/frontier-scalar-native-order-20261021.json": "1421b9d41e88f9549083e00d1618cda000b0e6d4b15a759b8009da199e6af0ca"
+    },
+    "final_snapshot_matches_build_source": [
+      "include/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.h",
+      "lib/PTO/Transforms/CMakeLists.txt",
+      "lib/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.cpp",
+      "test/lit/pto/Inputs/check_current_cut_services.py",
+      "test/lit/pto/Inputs/check_finite_allocation.py",
+      "test/lit/pto/Inputs/check_logical_insertion.py",
+      "test/lit/pto/Inputs/check_operation_current_cut_services.py",
+      "test/lit/pto/Inputs/check_periodic_demands.py",
+      "test/lit/pto/Inputs/check_scalar_current_cut_services.py",
+      "test/lit/pto/Inputs/check_source_pipe_services.py",
+      "test/lit/pto/Inputs/compact_vector_oracle.py",
+      "test/lit/pto/sync_current_cut_services.pto",
+      "test/lit/pto/sync_operation_current_cut_services.pto",
+      "test/lit/pto/sync_scalar_current_cut_services.pto",
+      "test/lit/pto/sync_source_pipe_services.pto",
+      "tools/pto-test-opt/CMakeLists.txt",
+      "tools/pto-test-opt/CompletionDataflowInput.h",
+      "tools/pto-test-opt/CurrentCutContracts.h",
+      "tools/pto-test-opt/CurrentCutNativeOrder.h",
+      "tools/pto-test-opt/CurrentCutServiceChecks.cpp",
+      "tools/pto-test-opt/SourcePipeServiceChecks.cpp",
+      "tools/pto-test-opt/SourcePipeServiceChecks.h",
+      "tools/pto-test-opt/SyncLogicalInsertionChecks.cpp",
+      "tools/pto-test-opt/pto-sync-input-test.cpp"
+    ],
+    "prior_raw_artifacts_unchanged": 109,
+    "production_cases": 9,
+    "successful_stages": 36,
+    "immediate_raw_identical": 32,
+    "immediate_total": 36,
+    "conjunction_comparison": [
+      {
+        "stage": "logical.pto",
+        "equal_after_non_escaping_and_chain_comparison": true,
+        "groups_before": 261,
+        "groups_after": 261
+      },
+      {
+        "stage": "allocation-support.pto",
+        "equal_after_non_escaping_and_chain_comparison": true,
+        "groups_before": 244,
+        "groups_after": 244
+      },
+      {
+        "stage": "physical.pto",
+        "equal_after_non_escaping_and_chain_comparison": true,
+        "groups_before": 244,
+        "groups_after": 244
+      }
+    ],
+    "cpp_difference": "Persistent GEMM may-not-alias C++ differs; no separate C++ equivalence proof claimed",
+    "algorithms": "production dispatch, source-pipe fixed point/selection, exact reducers and allocation algorithms unchanged"
+  },
+  "costs": {
+    "runtime_trip_count": "loaded original values; named 1/256 samples compile identical IR, not 256-trip executions",
+    "native_map_timers": "subsets of inclusive map preparation; do not sum",
+    "admission": "one shared access/phase preparation and one readiness analysis; no access recovery per operation",
+    "visibility": "one effect inventory scan; conditional cached independence queries may inspect other effects, no general linear complexity claim",
+    "measurements": "single runs descriptive, not speedups"
+  },
+  "commands": {
+    "build": [
+      "cmake",
+      "--build",
+      ".local/section8-refactor/source-pinned/candidate-build",
+      "--target",
+      "pto-sync-input-test",
+      "--parallel",
+      "1"
+    ],
+    "gate": [
+      ".venv/bin/python",
+      "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+      "-j1",
+      "--filter",
+      "(sync_finite_family_pipeline|sync_expanded_endpoint_adapter|sync_coordinate_allocation|sync_compact_replay_scaling|sync_qwen_completion_import|sync_finite_expansion|sync_compact_persistent_contract|sync_compact_arithmetic_coverage|sync_qwen_interval_certificate|sync_group_norm_production|sync_completion_eventful|sync_current_cut_services|sync_scalar_current_cut_services|sync_hardware_protection|sync_scalar_protection|sync_operation_current_cut_services|sync_native_scalar_corpus|sync_reaching_access_research|sync_finite_crossing_recipe|sync_arithmetic_composition|sync_finite_qualification|sync_gemm_access_regions|sync_source_pipe_services|sync_parameter_phase_contracts|sync_arithmetic_insertion|sync_storage_export_coverage|sync_arithmetic_membership|sync_completion_compact_child_contract|sync_completion_children|sync_arithmetic_export_retention|sync_arithmetic_scalar_ranges|sync_completion_inputs|sync_completion_region)\\.pto$",
+      "-o",
+      ".local/operation-admission-reproduction/gate.json",
+      ".local/section8-refactor/source-pinned/candidate-build/test/lit"
+    ],
+    "operation": [
+      ".venv/bin/python",
+      "test/lit/pto/Inputs/check_operation_current_cut_services.py",
+      "--trace-tool",
+      ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+      "--output",
+      ".local/operation-admission-reproduction"
+    ],
+    "delta": [
+      {
+        "policy": "may-not-alias",
+        "mode": "--current-cut-contracts",
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--gm-alias=may-not-alias",
+          "--current-cut-contracts",
+          "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.21588208712637424,
+        "stdout": ".local/operation-admission-20261021/delta-may-not-alias-current-cut-contracts.out",
+        "stderr": ".local/operation-admission-20261021/delta-may-not-alias-current-cut-contracts.stderr"
+      },
+      {
+        "policy": "may-not-alias",
+        "mode": "--current-cut-output",
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--gm-alias=may-not-alias",
+          "--current-cut-output",
+          "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.11424066685140133,
+        "stdout": ".local/operation-admission-20261021/delta-may-not-alias-current-cut-output.out",
+        "stderr": ".local/operation-admission-20261021/delta-may-not-alias-current-cut-output.stderr"
+      },
+      {
+        "policy": "may-alias",
+        "mode": "--current-cut-contracts",
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--gm-alias=may-alias",
+          "--current-cut-contracts",
+          "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.06510892370715737,
+        "stdout": ".local/operation-admission-20261021/delta-may-alias-current-cut-contracts.out",
+        "stderr": ".local/operation-admission-20261021/delta-may-alias-current-cut-contracts.stderr"
+      },
+      {
+        "policy": "may-alias",
+        "mode": "--current-cut-output",
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--gm-alias=may-alias",
+          "--current-cut-output",
+          "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+        ],
+        "status": "failure",
+        "returncode": 1,
+        "seconds": 0.06413855403661728,
+        "stdout": ".local/operation-admission-20261021/delta-may-alias-current-cut-output.out",
+        "stderr": ".local/operation-admission-20261021/delta-may-alias-current-cut-output.stderr"
+      }
+    ],
+    "delta_check": [
+      ".venv/bin/python",
+      ".local/operation-admission-20261021/check_delta_emission.py"
+    ],
+    "cpp": [
+      [
+        ".venv/bin/python",
+        ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+        "--pto-arch=a3",
+        "--pto-level=level3",
+        "--enable-insert-sync=false",
+        "--enable-plan-memory=false",
+        ".local/operation-admission-20261021/load-tests/loads-3-2-0-1.physical.pto",
+        "-o",
+        ".local/operation-admission-20261021/load.cpp"
+      ],
+      [
+        ".venv/bin/python",
+        ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+        "--pto-arch=a3",
+        "--pto-level=level3",
+        "--enable-insert-sync=false",
+        "--enable-plan-memory=false",
+        ".local/operation-admission-20261021/delta.physical.pto",
+        "-o",
+        ".local/operation-admission-20261021/delta.cpp"
+      ]
+    ],
+    "preservation": [
+      ".venv/bin/python",
+      ".local/operation-admission-20261021/check_preservation.py"
+    ],
+    "ruff": [
+      "/home/toni/.local/bin/ruff",
+      "check",
+      "--target-version",
+      "py312",
+      "--select",
+      "F",
+      "test/lit/pto/Inputs/compact_vector_oracle.py",
+      "test/lit/pto/Inputs/check_current_cut_services.py",
+      "test/lit/pto/Inputs/check_operation_current_cut_services.py"
+    ],
+    "prefilter": [
+      ".venv/bin/python",
+      "../../.agents/skills/enforce-ptoas-code-compliance/scripts/check_changed_code.py",
+      "--repo",
+      ".",
+      "--base",
+      "HEAD"
+    ],
+    "diff_check": [
+      "git",
+      "diff",
+      "--check"
+    ]
+  },
+  "environment": {
+    "workers": 1,
+    "aggregate_limit": 2,
+    "storage": "disk-backed workspace",
+    "production_compile_watchdog_seconds": 35,
+    "inherited_trace_watchdog_seconds": 120,
+    "reproduction": "synchronize changed C++/test sources into the pinned candidate-source tree before serial build; use fresh output folders, preserve preceding receipts; PATH prepends workspace .venv/bin"
+  },
+  "compliance": {
+    "ruff": "pass (py312, F); pre-existing config-deprecation warning",
+    "diff_check": "pass",
+    "prefilter": {
+      "exit_code": 1,
+      "raw_regex_errors": 25,
+      "reviewed_false_positives": 25,
+      "unresolved": 0
+    },
+    "review": ".local/operation-admission-20261021/compliance-review.json",
+    "not_claimed": [
+      "full static analyzer",
+      "sanitizer",
+      "device compilation/execution"
+    ]
+  },
+  "paper_consequences": {
+    "model": "standalone selected conservative protocol, not new exact-demand or token theorem",
+    "implementation": "existing semantic contracts now consumed, scoped scalar load-to-control realization",
+    "native": "scalar serialization supplied; GM visibility and entry freshness separately qualified",
+    "device": "none; C++ source generation only"
+  },
+  "artifact_sha256": {
+    ".local/operation-admission-20261021/add_checks.py": "ac064df110337f840f710cde33476f35cc79d766cf802c06b6de966822a52d78",
+    ".local/operation-admission-20261021/add_delta_ssa.py": "391500c8938f1b75949c08117b5a85e1789096b433c7ad48049481285f8fedfc",
+    ".local/operation-admission-20261021/build1.log": "d127872234612882deeb76f91d71a35941737471ab784e9306a74fdd4f1c128a",
+    ".local/operation-admission-20261021/build2.log": "c47e668d633052fa2999a7efe0611e0c5d42360c5ddd331572187a7c0125670c",
+    ".local/operation-admission-20261021/build3.log": "74b68a1fe5838e7632e6bcefcd72f84c0f87ab62c23fb17ebbc83b0362cb7abc",
+    ".local/operation-admission-20261021/build4.log": "8e438d99bd70db4412873aaf4dd6558c662923f19efdaa5da9ebf1c41a131756",
+    ".local/operation-admission-20261021/build5.log": "74b68a1fe5838e7632e6bcefcd72f84c0f87ab62c23fb17ebbc83b0362cb7abc",
+    ".local/operation-admission-20261021/build6.log": "74b68a1fe5838e7632e6bcefcd72f84c0f87ab62c23fb17ebbc83b0362cb7abc",
+    ".local/operation-admission-20261021/build7.log": "74b68a1fe5838e7632e6bcefcd72f84c0f87ab62c23fb17ebbc83b0362cb7abc",
+    ".local/operation-admission-20261021/build8.log": "6a50b7731817a94f72f78f67a8f903e461e76bc1cde102a49bed91ae1cc8a520",
+    ".local/operation-admission-20261021/cache-delta-contracts.json": "6182de433eb42dcc12c66062341426c285de55750fdc66bbd505b21629cbfe85",
+    ".local/operation-admission-20261021/cache-delta-contracts.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/check_delta_emission.py": "895ab304c8fb1da25217b630c16f282e638eb3e6a7f6fb66671f31719768c216",
+    ".local/operation-admission-20261021/check_preservation.py": "2033a7f14de1dce4651b3496f80c6ca7df1b0414e073408d8fa2472d12f42ee8",
+    ".local/operation-admission-20261021/check_preservation_conjunctions.py": "db1061f05a1b4fb764deea2862e9c9a0445800e21494a9cd737f581a86d039e2",
+    ".local/operation-admission-20261021/coherent-model-transfer-only.json": "1e26b913fd5c9b597ed3a2e9ff17d47bb6d39081a6e119b66bb3f7bd213025c9",
+    ".local/operation-admission-20261021/compliance-excerpts.json": "3474669795e5f3624373cc2be6e4484228a3aa9ff76b4bd0d07d948d886af694",
+    ".local/operation-admission-20261021/compliance-review.json": "69204c45e761f7960cc390a0eea7de1588fcc011e8d5357425a9647531cc4531",
+    ".local/operation-admission-20261021/compliance.log": "c5f28f2f855150feb76503ed264c6ce439578ffb3fe966f4822bb558ee57f049",
+    ".local/operation-admission-20261021/cpp-results.json": "5e514dbed3d99cf3dffeeef94261acdd2a84df70232125da0f2021cac83601ed",
+    ".local/operation-admission-20261021/create_test.py": "b63514160db3cc96d04e4caf3c53ec898c8a628174dc9421914d057911243dd2",
+    ".local/operation-admission-20261021/delta-alias-contracts.json": "5e8a283a51ff948c20d3131957916fa5e70e54ac8ee4e24405e4347c8df32c12",
+    ".local/operation-admission-20261021/delta-analysis-preservation.json": "3472d3bd6a0db0b904bdc5b354673f2352a18b49f798d2896b5a1bb624237832",
+    ".local/operation-admission-20261021/delta-check-run.json": "83080b6a11d547875b2aaf832ab92bb346fe6a029a3c770a1403e1229a1d3e33",
+    ".local/operation-admission-20261021/delta-contracts.json": "6182de433eb42dcc12c66062341426c285de55750fdc66bbd505b21629cbfe85",
+    ".local/operation-admission-20261021/delta-contracts.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/delta-cpp.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/delta-cpp.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/delta-emission-checks.json": "346b956577c196d6cf3ff19b8a82ec72298ee4a741f22713d47c8b9b70721a22",
+    ".local/operation-admission-20261021/delta-emission-checks.log": "fae13d38297b5acae201b3a931a47f13b79c037eb9c7cc3969f062728a09b210",
+    ".local/operation-admission-20261021/delta-emission-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/delta-inventory.json": "540cb948c38926e1240704538b1a539aae81c8f0fe99811fd19ccb1390d4b304",
+    ".local/operation-admission-20261021/delta-inventory.pto": "c4802aeac27f2b6eca476c77822cb55d299e128d64bc700c4c2a24efbd6f53c3",
+    ".local/operation-admission-20261021/delta-inventory.stderr": "a431ffbd84911f3d2cec76d96e063e729222970361dabcf02b09efa2e61b342e",
+    ".local/operation-admission-20261021/delta-may-alias-current-cut-contracts.out": "5afd781383e6fcf25511073b27d3278830d459af8ee177297bb3f3825b265d4f",
+    ".local/operation-admission-20261021/delta-may-alias-current-cut-contracts.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/delta-may-alias-current-cut-output.out": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/delta-may-alias-current-cut-output.stderr": "b4c89d160671eb7b109148fbe8bf38c42854ba95432c1a967244e64a6e775dea",
+    ".local/operation-admission-20261021/delta-may-not-alias-current-cut-contracts.out": "6182de433eb42dcc12c66062341426c285de55750fdc66bbd505b21629cbfe85",
+    ".local/operation-admission-20261021/delta-may-not-alias-current-cut-contracts.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/delta-may-not-alias-current-cut-output.out": "6ce81cf50adc04ffdfd4e5c5b1687529ec35204e675ede10ddd62af70951b8b2",
+    ".local/operation-admission-20261021/delta-may-not-alias-current-cut-output.stderr": "cf1437a85a1a8114a4079e2d29af99d3d4ea601532dee3af72d2a823a78989fc",
+    ".local/operation-admission-20261021/delta.cpp": "91d25a7984a4a9227ffa8060e29b79081d510670336ab3055ee4eb21bbc08805",
+    ".local/operation-admission-20261021/delta.physical.pto": "6ce81cf50adc04ffdfd4e5c5b1687529ec35204e675ede10ddd62af70951b8b2",
+    ".local/operation-admission-20261021/delta.physical.stderr": "1b05c7883f595def5afda8710cf8a728041fc102c7bed34e96515bc829989be1",
+    ".local/operation-admission-20261021/delta.stderr": "8664baf447530836f5ee445feb21a7104b1b0fcc4b8e1f1eb2df66d26f1d1dfa",
+    ".local/operation-admission-20261021/design.md": "06fd0af8d52d38129defe030a3739e929339c34a7d7062cea7916e23709eb327",
+    ".local/operation-admission-20261021/edit_contracts.py": "95050e600af47bc3545b4c51289f7adfb6e7436de689c62c0c607f8bf6799bba",
+    ".local/operation-admission-20261021/final-gate.json": "320f0e27f6ebb82c0fe900716df31e7838648769d0f843082d36547a2ffe4fd1",
+    ".local/operation-admission-20261021/final-gate.log": "c2839d7a1a0ee627fd00166719b6b7fdb15327e57ec593c918af9d52ea1ce069",
+    ".local/operation-admission-20261021/fixture-style-equivalence.json": "6b83d3dab3d63dea02261fe3f57e9b2d6cacad31e55729e7581593583a8fecc1",
+    ".local/operation-admission-20261021/gate-final.json": "2ae039efe2ad32e46a8ff9b7a746b452a17a0e2342795ffc3f616fb39ffba2da",
+    ".local/operation-admission-20261021/gate-final.log": "f8493d058a366354375636b6c9a9d2b6b4f2a0b908f1d5d3d7fae773d9b5473e",
+    ".local/operation-admission-20261021/gate.json": "73529c0f07e55cddb8d045f302bd709fab1a4c4a8c4aba87498056d56473b311",
+    ".local/operation-admission-20261021/gate.log": "63902bd84d53d0ca8fc953bf58287b8c639e0574820cf3cda955f5cd030fd30b",
+    ".local/operation-admission-20261021/load-bound.physical.pto": "5f77b87bc6ca9e42a2d25d4483c6d5ea9198f795aee0e0784fbcb0e898b7eb94",
+    ".local/operation-admission-20261021/load-bound.stderr": "9b24e026abd7acd311c8927ae8c35ef305d04e55eb1669cf27fadf8e7916b437",
+    ".local/operation-admission-20261021/load-cpp.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-cpp.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-final-gate-receipt.json": "cd8a6464ee5d941b1ac6aa2b27f7bc93835a52b3264437c13ff96aaa1cbcb911",
+    ".local/operation-admission-20261021/load-tests/cpp.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/cpp.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/generic-subtraction.physical.pto": "b433410cc312f463fc2d7a7f6eca68aacf94da6e39886bfef6b1b80ba41a7b78",
+    ".local/operation-admission-20261021/load-tests/generic-subtraction.physical.stderr": "a3eba31e231230ed1d0459ae776165cc1e779f6e4ff62f65f612494ec83513ad",
+    ".local/operation-admission-20261021/load-tests/generic-subtraction.pto": "a51bfb8c7f34011cdf30974f55cc13ffb6846b8ce518c1b7d314508096d21fac",
+    ".local/operation-admission-20261021/load-tests/generic-subtraction.trace.input.json": "9172da28df9939a88492e1380d615586375fc18971cac214331aedc15e36539e",
+    ".local/operation-admission-20261021/load-tests/generic-subtraction.trace.input.pto": "43d7af9440c1c1c942e8699d60be076722eebc69afb10829cb675b0f1030bda1",
+    ".local/operation-admission-20261021/load-tests/generic-subtraction.trace.input.stderr": "16ba3cea7779956bad26ff66e3b4647d72bdc740317e6313b02d6b07230c4e09",
+    ".local/operation-admission-20261021/load-tests/generic-subtraction.trace.pto": "c40051b7112c46040f0de7c2becf835a718f3c568eaf1d39ada5e6fed72c8972",
+    ".local/operation-admission-20261021/load-tests/generic-subtraction.trace.trace.json": "949cec95f9e0857bdc75cffbe93c4cad39ad3f35ddcd4a79200039a5ca09f8eb",
+    ".local/operation-admission-20261021/load-tests/generic-subtraction.trace.trace.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/load-services.cpp": "d96d2e12ad92b03548b052e6612850be57be306adf07f1f5d6666c3f9e5e2964",
+    ".local/operation-admission-20261021/load-tests/loads-0-.physical.pto": "5fc4acc2fba9ff567d5b1b2021fd3c6ccaad1c26729750ff44aa22daa8ab1f39",
+    ".local/operation-admission-20261021/load-tests/loads-0-.physical.stderr": "e551e4ebaeba03c645e6daf27e598018661785f798d6b3df0b11bf3d262a780f",
+    ".local/operation-admission-20261021/load-tests/loads-0-.pto": "a45ea7f7b4674d75562ec695c0bb6eae644c902bd46979282cc08a45fa8c1c50",
+    ".local/operation-admission-20261021/load-tests/loads-0-.trace.input.json": "d0a8e767da85b081a76812c08a0d561909d6d51f819f6898ccf9243261be9e29",
+    ".local/operation-admission-20261021/load-tests/loads-0-.trace.input.pto": "bb6604985c54c232ed93a796a3797b26e616854e4d4fa6d4f317ce6b95bcbbad",
+    ".local/operation-admission-20261021/load-tests/loads-0-.trace.input.stderr": "0d78408f285bf25f0151f429440ccc1d087f372005e327e33fe776827eeb6550",
+    ".local/operation-admission-20261021/load-tests/loads-0-.trace.pto": "4cb4b322d1b6b302eee65d9646d4f94034d33fb512294047627050748609d3f5",
+    ".local/operation-admission-20261021/load-tests/loads-0-.trace.trace.json": "db13aa2d624aacac5bb14f53210c96446366de5093db3186efeacd966d2809f1",
+    ".local/operation-admission-20261021/load-tests/loads-0-.trace.trace.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/loads-1--1.physical.pto": "4f3cbc8ebd33b1fe83be349a3d9043bc46036e43addf518023695aa8b67d09d5",
+    ".local/operation-admission-20261021/load-tests/loads-1--1.physical.stderr": "3b3631ca4ea2239e4005523fe970bbaa344963990936d5e6bb76a72ab7c5df85",
+    ".local/operation-admission-20261021/load-tests/loads-1--1.pto": "46ca13c5fe08d1845e36d9da9c42369eb2c8cceb98371262684753171db23317",
+    ".local/operation-admission-20261021/load-tests/loads-1--1.trace.input.json": "7a8afec51bdd5342b82d0a49d96c90037a5b820bc3301c46523011840a41ccd4",
+    ".local/operation-admission-20261021/load-tests/loads-1--1.trace.input.pto": "77b525f29db9ebde3954a130c624f2a5ce3aae2498183abcc2f0c98dadcacfa6",
+    ".local/operation-admission-20261021/load-tests/loads-1--1.trace.input.stderr": "2945bcbd906dbfe5ce7413432760543fe8ff89eec988485c6834b87ae4e3b91b",
+    ".local/operation-admission-20261021/load-tests/loads-1--1.trace.pto": "9ecac2528ba096d5604e0b4e8f0e585a25be1806c751e75810d359ee93da32e6",
+    ".local/operation-admission-20261021/load-tests/loads-1--1.trace.trace.json": "720558b886b0022c707b41fe33d1dfa8b6e5b00836864c5cdba513cfa9c3600c",
+    ".local/operation-admission-20261021/load-tests/loads-1--1.trace.trace.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/loads-1-0.physical.pto": "4f3cbc8ebd33b1fe83be349a3d9043bc46036e43addf518023695aa8b67d09d5",
+    ".local/operation-admission-20261021/load-tests/loads-1-0.physical.stderr": "5d1640feef22ecae225da29c3e92e1c24fa4b3dda9463a8b9809334631422c6e",
+    ".local/operation-admission-20261021/load-tests/loads-1-0.pto": "46ca13c5fe08d1845e36d9da9c42369eb2c8cceb98371262684753171db23317",
+    ".local/operation-admission-20261021/load-tests/loads-1-0.trace.input.json": "975f2471f5eb53752b8ca9cb500e0d9c2f2d76be54472e10103eb137c674be5d",
+    ".local/operation-admission-20261021/load-tests/loads-1-0.trace.input.pto": "77b525f29db9ebde3954a130c624f2a5ce3aae2498183abcc2f0c98dadcacfa6",
+    ".local/operation-admission-20261021/load-tests/loads-1-0.trace.input.stderr": "7d9811633ca1137b2b4a85d01d14a97191ccf0eaca79ef165536f65c69482902",
+    ".local/operation-admission-20261021/load-tests/loads-1-0.trace.pto": "b93e9fddd8831d37ee640f86919f053fe527f58698c75dabbaff446d6e5f2702",
+    ".local/operation-admission-20261021/load-tests/loads-1-0.trace.trace.json": "720558b886b0022c707b41fe33d1dfa8b6e5b00836864c5cdba513cfa9c3600c",
+    ".local/operation-admission-20261021/load-tests/loads-1-0.trace.trace.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/loads-1-1.physical.pto": "4f3cbc8ebd33b1fe83be349a3d9043bc46036e43addf518023695aa8b67d09d5",
+    ".local/operation-admission-20261021/load-tests/loads-1-1.physical.stderr": "db8874df0e655029abcec7b234f0109d018ac65fee98a840b7faf1cd75b5447b",
+    ".local/operation-admission-20261021/load-tests/loads-1-1.pto": "46ca13c5fe08d1845e36d9da9c42369eb2c8cceb98371262684753171db23317",
+    ".local/operation-admission-20261021/load-tests/loads-1-1.trace.input.json": "36fc839b7c720a4abf0eeb0b22bd251f33183906174539a4d33691813aafb6d1",
+    ".local/operation-admission-20261021/load-tests/loads-1-1.trace.input.pto": "77b525f29db9ebde3954a130c624f2a5ce3aae2498183abcc2f0c98dadcacfa6",
+    ".local/operation-admission-20261021/load-tests/loads-1-1.trace.input.stderr": "a0a81bf29168b7ebc88d46be854341c1d87c0ed9c8d5be7eb7e835bc28ac133e",
+    ".local/operation-admission-20261021/load-tests/loads-1-1.trace.pto": "784c932cd7ed21b5d280326482f03d59cdf793204086601df6d3adabc9b28493",
+    ".local/operation-admission-20261021/load-tests/loads-1-1.trace.trace.json": "1d54c7d51e8da9e187a277587a328ba8201d9a6f0f4888760d6a95b1ef5b4c09",
+    ".local/operation-admission-20261021/load-tests/loads-1-1.trace.trace.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/loads-1-3.physical.pto": "4f3cbc8ebd33b1fe83be349a3d9043bc46036e43addf518023695aa8b67d09d5",
+    ".local/operation-admission-20261021/load-tests/loads-1-3.physical.stderr": "2d5b47ad242768822202f41eff6bace04a02808ce677f9b939781b81c60397d7",
+    ".local/operation-admission-20261021/load-tests/loads-1-3.pto": "46ca13c5fe08d1845e36d9da9c42369eb2c8cceb98371262684753171db23317",
+    ".local/operation-admission-20261021/load-tests/loads-1-3.trace.input.json": "8e18224ac014d4e1694ba65917f8fba6998872b7a6587243b033f44142f7bb01",
+    ".local/operation-admission-20261021/load-tests/loads-1-3.trace.input.pto": "77b525f29db9ebde3954a130c624f2a5ce3aae2498183abcc2f0c98dadcacfa6",
+    ".local/operation-admission-20261021/load-tests/loads-1-3.trace.input.stderr": "6609d02ee2f63a57646b1af996d4afcfe18871cc49c110648edcc6963c37d635",
+    ".local/operation-admission-20261021/load-tests/loads-1-3.trace.pto": "eb287439b99e0a00920ac1c5b3a932a91b3ddf8ffdaff83265f4064a275f7814",
+    ".local/operation-admission-20261021/load-tests/loads-1-3.trace.trace.json": "c2e701bc2328ea31205ce2dc6ea87ca630ba200d303b47798abd7365869ed816",
+    ".local/operation-admission-20261021/load-tests/loads-1-3.trace.trace.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/loads-2-0-2.physical.pto": "466d2df66cf61f0d57195fa74e206bf93e40b028c6ccf91419321ea3506e1472",
+    ".local/operation-admission-20261021/load-tests/loads-2-0-2.physical.stderr": "3495752edce3aeae0d80cc05ee9782619cbc1bb86f1d52dd47765b9f49965e95",
+    ".local/operation-admission-20261021/load-tests/loads-2-0-2.pto": "28667a194a1cd633c81c392adf8cc0dd2e1058e8e26784872e581b3c5044fbac",
+    ".local/operation-admission-20261021/load-tests/loads-2-0-2.trace.input.json": "729eb3b7d5b528a5a39bf9b53017accd6a991f8b282b6a5582f11b27e16efd84",
+    ".local/operation-admission-20261021/load-tests/loads-2-0-2.trace.input.pto": "aff6397d3f2a7d2695b54bf18850a15c6425763c478c785c2b874645ca1805af",
+    ".local/operation-admission-20261021/load-tests/loads-2-0-2.trace.input.stderr": "627cc23327dee3b98380405b295e420a79f6ac78a1ba0f3ca5a246ddac65d9c9",
+    ".local/operation-admission-20261021/load-tests/loads-2-0-2.trace.pto": "91c1f025d90f62ef878dd32f95b1bf44e31167dd7f2ad18a7d7b7d84fd1b3645",
+    ".local/operation-admission-20261021/load-tests/loads-2-0-2.trace.trace.json": "4e23f10bf840da9ec3bf842ffbd093df1cfc28889b2cd3b25bb01bf2d7c1bbbe",
+    ".local/operation-admission-20261021/load-tests/loads-2-0-2.trace.trace.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/loads-3-2-0-1.physical.pto": "d8bde0c603f458a5d4856049d47270137a3da33c859a2b931a71a7e076ec50a1",
+    ".local/operation-admission-20261021/load-tests/loads-3-2-0-1.physical.stderr": "f692b32f289fa6fa07245d27abb315594c6196eab706a9e15b971bf65b74b0af",
+    ".local/operation-admission-20261021/load-tests/loads-3-2-0-1.pto": "c80e0714f6fd7b5127bf25ff39b31b510007e63e8f021d70b4040335013893bc",
+    ".local/operation-admission-20261021/load-tests/loads-3-2-0-1.trace.input.json": "7bd776d6c4f6319c5a7eb2234f2be1a3f2ab1b877fda4ef205be93da12020650",
+    ".local/operation-admission-20261021/load-tests/loads-3-2-0-1.trace.input.pto": "fa8b117079c9704be51ef1263f7ee86dec44656a79d12e78534dba0730026017",
+    ".local/operation-admission-20261021/load-tests/loads-3-2-0-1.trace.input.stderr": "fb732114c5535346a6ac79dda2423a061a54aba187439cfe6b07770d829b0ef4",
+    ".local/operation-admission-20261021/load-tests/loads-3-2-0-1.trace.pto": "cbe1292c118a5eec19a1fb98e78a051192b988e4f9ba8638de588c7711e421d4",
+    ".local/operation-admission-20261021/load-tests/loads-3-2-0-1.trace.trace.json": "5612939062ced3562f4b84f76a7a23f0ea7144566b2a19d9b37bafafd31206c4",
+    ".local/operation-admission-20261021/load-tests/loads-3-2-0-1.trace.trace.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/negative-gm-write-visibility-False.physical.pto": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/negative-gm-write-visibility-False.physical.stderr": "de72a77049b71fc3a3ba23108b6fa082b4d9fdbb19b7ebfc5682d259d7aa6b41",
+    ".local/operation-admission-20261021/load-tests/negative-gm-write-visibility-False.pto": "623e2bb81fe171e31be7c583a7ef29f6019d95179129102d15ac8fb7108ac7c5",
+    ".local/operation-admission-20261021/load-tests/negative-gm-write-visibility-True.physical.pto": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/negative-gm-write-visibility-True.physical.stderr": "199dcca5685e03d531cfb1828694bba5998643a38b6afcdd15b94637160c67e2",
+    ".local/operation-admission-20261021/load-tests/negative-gm-write-visibility-True.pto": "be2d471dc208547b3b42523efae35586c7f07853915b98ccab06070110dad6c5",
+    ".local/operation-admission-20261021/load-tests/negative-loop-carried.physical.pto": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/negative-loop-carried.physical.stderr": "d296e8a1db24e94f1371b41d842d7569fe21c765d57768804ac23054d2452d21",
+    ".local/operation-admission-20261021/load-tests/negative-loop-carried.pto": "4061ec013c04a174b0fd5157359ff889f97695c6d3070176c4213cf861a91eb5",
+    ".local/operation-admission-20261021/load-tests/negative-unknown-effects.physical.pto": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/negative-unknown-effects.physical.stderr": "89030491faa1c40cd9f81fb4268496dd1c06db0a8ddccaecde614222cf9c4799",
+    ".local/operation-admission-20261021/load-tests/negative-unknown-effects.pto": "bd5f891df0b533a124fab6e90cd55549dffcee438775a7d5214829422bf1b04b",
+    ".local/operation-admission-20261021/load-tests/negative-vector-load.physical.pto": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/negative-vector-load.physical.stderr": "72feedaec7bc025d4024dd582517c0f8c60c0d426f808fb5e43c0adebf69abb6",
+    ".local/operation-admission-20261021/load-tests/negative-vector-load.pto": "7e7b27eb5eddc19efaaef0a6345a45f08fe68c171e8eea55e21ab6d832aa5e98",
+    ".local/operation-admission-20261021/load-tests/receipt.json": "e13d23819fe6ddca8559d2f2c02d725b3c0354a1812d4ada081a22cf75a64e0c",
+    ".local/operation-admission-20261021/load-tests/scale-1-1.physical.pto": "466d2df66cf61f0d57195fa74e206bf93e40b028c6ccf91419321ea3506e1472",
+    ".local/operation-admission-20261021/load-tests/scale-1-1.physical.stderr": "8917dc754b5dc0119212787ad409896e09919a62c7f67582ac6beb34e297a25a",
+    ".local/operation-admission-20261021/load-tests/scale-1-1.pto": "28667a194a1cd633c81c392adf8cc0dd2e1058e8e26784872e581b3c5044fbac",
+    ".local/operation-admission-20261021/load-tests/scale-1-256.physical.pto": "466d2df66cf61f0d57195fa74e206bf93e40b028c6ccf91419321ea3506e1472",
+    ".local/operation-admission-20261021/load-tests/scale-1-256.physical.stderr": "13fa188b969ae5f4069e821b05264300ef15836d7c720f2a37326a460e27af77",
+    ".local/operation-admission-20261021/load-tests/scale-1-256.pto": "28667a194a1cd633c81c392adf8cc0dd2e1058e8e26784872e581b3c5044fbac",
+    ".local/operation-admission-20261021/load-tests/scale-2-1.physical.pto": "6bf34bdd47f3cd707235fb3221e3dfe36e1b18b44fc6c0ff9c3cf05a148f43b6",
+    ".local/operation-admission-20261021/load-tests/scale-2-1.physical.stderr": "3b47131ad6aca928df4af615fff5b65dbf0acf33ecf21ed73cbaf181d7f29688",
+    ".local/operation-admission-20261021/load-tests/scale-2-1.pto": "10481bb1a9aef0fa9cad901d936011faa7dc28d0e995a1fac74fe6bb932dd258",
+    ".local/operation-admission-20261021/load-tests/scale-2-256.physical.pto": "6bf34bdd47f3cd707235fb3221e3dfe36e1b18b44fc6c0ff9c3cf05a148f43b6",
+    ".local/operation-admission-20261021/load-tests/scale-2-256.physical.stderr": "7c844125f4af03adce1469898fa67269d89848aaf127343e56b044f52b65032f",
+    ".local/operation-admission-20261021/load-tests/scale-2-256.pto": "10481bb1a9aef0fa9cad901d936011faa7dc28d0e995a1fac74fe6bb932dd258",
+    ".local/operation-admission-20261021/load-tests/scale-4-1.physical.pto": "dd319a4760d39fa5f5fcd750e4846f4b94bd3271b68e5a11f729468ca720fb22",
+    ".local/operation-admission-20261021/load-tests/scale-4-1.physical.stderr": "3d95bbb9b47c4342292b2521a1b4f84fe14fcf82a74c18b6bf2c85bcde970901",
+    ".local/operation-admission-20261021/load-tests/scale-4-1.pto": "75af3e3a476df61fa075e00a8a918b2347769c6976d6ec7242770db1fac9ccb6",
+    ".local/operation-admission-20261021/load-tests/scale-4-256.physical.pto": "dd319a4760d39fa5f5fcd750e4846f4b94bd3271b68e5a11f729468ca720fb22",
+    ".local/operation-admission-20261021/load-tests/scale-4-256.physical.stderr": "8133a0c2d33564d058edd40a805946b4021f79266092815cd59439c19228f408",
+    ".local/operation-admission-20261021/load-tests/scale-4-256.pto": "75af3e3a476df61fa075e00a8a918b2347769c6976d6ec7242770db1fac9ccb6",
+    ".local/operation-admission-20261021/load-tests/scale-8-1.physical.pto": "44ed366c6306a0900667387f754acec5270944e8f80d79b24088458bf3b19234",
+    ".local/operation-admission-20261021/load-tests/scale-8-1.physical.stderr": "7f976cf65dc99e71758a9cbeb7ca988b7188d2e2272ffe1edbb8be38f4233a49",
+    ".local/operation-admission-20261021/load-tests/scale-8-1.pto": "acc6733c10eebdee4dd8b2b2f108dc6e64f1c7da418e3fbae45ae3651f9bd1d3",
+    ".local/operation-admission-20261021/load-tests/scale-8-256.physical.pto": "44ed366c6306a0900667387f754acec5270944e8f80d79b24088458bf3b19234",
+    ".local/operation-admission-20261021/load-tests/scale-8-256.physical.stderr": "75d2aea76270e63fabd811de20ea9c6d6a1405cc667976ece8228792ac7cbdc8",
+    ".local/operation-admission-20261021/load-tests/scale-8-256.pto": "acc6733c10eebdee4dd8b2b2f108dc6e64f1c7da418e3fbae45ae3651f9bd1d3",
+    ".local/operation-admission-20261021/load-tests/transfer-False.physical.pto": "fd05bb0b96a3e4bd86a9938a47f2a906b4f640598b4bb95eaf4c69f4dfd1ee0e",
+    ".local/operation-admission-20261021/load-tests/transfer-False.physical.stderr": "48b4914416c035e20bdeb3c4c9f61ac3db7317c93c220f4e0fdf212626f26755",
+    ".local/operation-admission-20261021/load-tests/transfer-False.pto": "623e2bb81fe171e31be7c583a7ef29f6019d95179129102d15ac8fb7108ac7c5",
+    ".local/operation-admission-20261021/load-tests/transfer-False.trace.input.json": "5cad2fa6b48da8d5fed3830f597054320b41cc3e3d9cce83b4679fe530e4b300",
+    ".local/operation-admission-20261021/load-tests/transfer-False.trace.input.pto": "cf73c6b0034d3f2a22b484bd42277bc941507c8f3f974238f6b136d01c7e4458",
+    ".local/operation-admission-20261021/load-tests/transfer-False.trace.input.stderr": "88d347765b0a85c070fe823edf92f656349d122ce0b6d3df5f3b3d982e8c496f",
+    ".local/operation-admission-20261021/load-tests/transfer-False.trace.pto": "2035fcc1d082edff2805bfafbfe0fbee39538f4e8f4a24a08973dae636904825",
+    ".local/operation-admission-20261021/load-tests/transfer-False.trace.trace.json": "6bfe6b48018218d283986a6c0d1ca872460f18a044801c5002c0b951f271e6f4",
+    ".local/operation-admission-20261021/load-tests/transfer-False.trace.trace.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/transfer-True.physical.pto": "8cc4b40d7dca3f5d377e12c3a7d70199a42c60085ff14f733cce4c7aa9a1d248",
+    ".local/operation-admission-20261021/load-tests/transfer-True.physical.stderr": "069126b686a3bd5dca0dafaf26781739bb5a600313af6fba8009b1687d8670a9",
+    ".local/operation-admission-20261021/load-tests/transfer-True.pto": "be2d471dc208547b3b42523efae35586c7f07853915b98ccab06070110dad6c5",
+    ".local/operation-admission-20261021/load-tests/transfer-True.trace.input.json": "e5d463c62b8d3ae110439dd05cb5fe269a74ee2cb256c87d29da3aaa08a60310",
+    ".local/operation-admission-20261021/load-tests/transfer-True.trace.input.pto": "adff320ecfeb3f29ddd1dac9fe4a7b3bdcb2de9f33dcfe71ef69ef459fc5fc7d",
+    ".local/operation-admission-20261021/load-tests/transfer-True.trace.input.stderr": "3a09e13b40ffdfd4e37882ec48bfb30d76e76c38a3769373dc2e9e0f00b0904f",
+    ".local/operation-admission-20261021/load-tests/transfer-True.trace.pto": "573614a2cf2ad54a46c704a521aa047b9d2e958846e034d7d122177150966156",
+    ".local/operation-admission-20261021/load-tests/transfer-True.trace.trace.json": "d5c01a8bfe6377e200c09a8c7e6016fa8a8595bdf29ea5738c09d1b8c337140b",
+    ".local/operation-admission-20261021/load-tests/transfer-True.trace.trace.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/transfer-negative-base.physical.pto": "cc74cc1a1d22e9e16e2c6c54c68653a5ab844d536f3193fd4557dffb556c90dd",
+    ".local/operation-admission-20261021/load-tests/transfer-negative-base.physical.stderr": "6961af84af52b46f126a17b88a8ef796f54573f40cca50d7a36f6e7f82dcd398",
+    ".local/operation-admission-20261021/load-tests/transfer-negative-base.pto": "d96dbd081269624c70a1d89e98369ff7b1206cc836179bf0d3a1fc94725bcffb",
+    ".local/operation-admission-20261021/load-tests/transfer-negative.trace.pto": "891c4d7b4b5b2771cbe478528f526b33a044b947e0f2f2f768fad6b17c75dc3c",
+    ".local/operation-admission-20261021/load-tests/transfer-negative.trace.trace.json": "021bb3945098eb142211b851d168a465c2c03435404bd4859d4f91a9b5d55aea",
+    ".local/operation-admission-20261021/load-tests/transfer-negative.trace.trace.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests/vector-negative-base.physical.pto": "4f3cbc8ebd33b1fe83be349a3d9043bc46036e43addf518023695aa8b67d09d5",
+    ".local/operation-admission-20261021/load-tests/vector-negative-base.physical.stderr": "afde00cbff2a3c17c1c84d3741a443c4ae136c19c2688265f2fef973734a8142",
+    ".local/operation-admission-20261021/load-tests/vector-negative-base.pto": "46ca13c5fe08d1845e36d9da9c42369eb2c8cceb98371262684753171db23317",
+    ".local/operation-admission-20261021/load-tests/vector-negative.trace.pto": "784c932cd7ed21b5d280326482f03d59cdf793204086601df6d3adabc9b28493",
+    ".local/operation-admission-20261021/load-tests/vector-negative.trace.trace.json": "1d54c7d51e8da9e187a277587a328ba8201d9a6f0f4888760d6a95b1ef5b4c09",
+    ".local/operation-admission-20261021/load-tests/vector-negative.trace.trace.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/load-tests.log": "01f37a45aa7db7274102480fcaab44eff3fc89b10641921e908f5a237f042ce7",
+    ".local/operation-admission-20261021/load.cpp": "d96d2e12ad92b03548b052e6612850be57be306adf07f1f5d6666c3f9e5e2964",
+    ".local/operation-admission-20261021/operation-final.json": "7aea3f91e0c1119aed013d017639e7b33f1fca8ffd3212b12e9cc0d15feab4bb",
+    ".local/operation-admission-20261021/operation-final.log": "52b298b3884d528a7cfaa500ebb72fe8248b8b244aa3a4e12839784130f03127",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-alias/allocation-support.pto": "4d79386284a4624db18084e86fd01e421b72dfc7e8862dd79dd1e7e538507a86",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-alias/allocation-support.stderr": "c9b480fc2971ec5c4b70a7ccb57175175ab13b941714dd5af6fcdadcd55c8933",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-alias/allocation-support.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-alias/cpp.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-alias/cpp.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-alias/kernel.cpp": "d9dc815f4e523a4401bb933bac14653cc2718a67443d972b9eabca94a7ef3361",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-alias/logical.pto": "411c6e446dc95409ef4715a993f4d63eb83669f74f09a8aae4f3c5d7182e581f",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-alias/logical.stderr": "56ca166437dbc21f579899cc1c5e71272c75565e7deba8cb7239499918ee0a5b",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-alias/logical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-alias/physical.pto": "5b9bc1bf7d2936eb8a20cbd5d178e13b024cb54a44502dd8b753e69f0bd9dcb4",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-alias/physical.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-alias/physical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-not-alias/allocation-support.pto": "57d3b79f814ae99703e141c68a45f0be61707636e7b49e4ae04c8cd5dcf7028f",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-not-alias/allocation-support.stderr": "54bffba364b8124b82bd31d5754edfe2b66acf0b7a2d92042c90722136685095",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-not-alias/allocation-support.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-not-alias/cpp.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-not-alias/cpp.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-not-alias/kernel.cpp": "80d8a2331f08e58c434d933b87a4f333b91be151a08bf027beb76ceeee970373",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-not-alias/logical.pto": "767a0cd7b2d7f2742295dc55ceefc55e75cfd5bc6308fc422d0105c3fd02803a",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-not-alias/logical.stderr": "1098922644383df4db3e5fca7bf3395b8274a14eaa96f135f96f30a894a5a057",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-not-alias/logical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-not-alias/physical.pto": "d680b1f274d8d30bbf7c2b13e8e68d70d0518fd11116d5ebfbe28cd212badbff",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-not-alias/physical.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/elementwise_pipeline/may-not-alias/physical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/gated_delta_rule/may-alias/allocation-support.pto": "55339654f6fdd88852297c8726da4494d2965d9e8a263ad635ff4d2fa27b0794",
+    ".local/operation-admission-20261021/preservation/gated_delta_rule/may-alias/allocation-support.stderr": "a1266af79531353718a7058833000c08c8ac80516b80a7c29051d7dc0dfb53be",
+    ".local/operation-admission-20261021/preservation/gated_delta_rule/may-alias/allocation-support.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/gated_delta_rule/may-alias/cpp.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/gated_delta_rule/may-alias/cpp.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/gated_delta_rule/may-alias/kernel.cpp": "afc67c0f66e59872a4cd5b62d0f3b0bc2345740e6615156ccf75245940550e5f",
+    ".local/operation-admission-20261021/preservation/gated_delta_rule/may-alias/logical.pto": "d25f784cf8dcbb7cf3f8ad135fd484db648c0ad0dd2777d68bd7c4842dbc4a6b",
+    ".local/operation-admission-20261021/preservation/gated_delta_rule/may-alias/logical.stderr": "78cce85b1df805b2094548613d1e756b3d303751c51e861c29300b7f52f2bbeb",
+    ".local/operation-admission-20261021/preservation/gated_delta_rule/may-alias/logical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/gated_delta_rule/may-alias/physical.pto": "142d05ff6ad9191ec71a676549b358d55043f3dddadeec3360fdb997632694eb",
+    ".local/operation-admission-20261021/preservation/gated_delta_rule/may-alias/physical.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/gated_delta_rule/may-alias/physical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/group_norm/may-alias/allocation-support.pto": "9bcf2c6a9603552dcc6bdd49fb8024f8f1bec0efc0fb9ed1b27e830628c2a861",
+    ".local/operation-admission-20261021/preservation/group_norm/may-alias/allocation-support.stderr": "7acfd756bdbdb9d4dc6c95b1ab5bbddd89304d648ac30579900bcc2c9e27afa6",
+    ".local/operation-admission-20261021/preservation/group_norm/may-alias/allocation-support.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/group_norm/may-alias/cpp.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/group_norm/may-alias/cpp.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/group_norm/may-alias/kernel.cpp": "fa9b4a1c63a3474a4d07e8e8a836ebeeed1d7338fd890b720ad193a9429866d7",
+    ".local/operation-admission-20261021/preservation/group_norm/may-alias/logical.pto": "8fae79a5ffe7d1c2daa489f8620cd5706753474d61f51c3f6810730cae6a2b0b",
+    ".local/operation-admission-20261021/preservation/group_norm/may-alias/logical.stderr": "05f9bd7e953ddfbf3fc365ea5655e8642760e6c96f88910505a9bd77d75e86c9",
+    ".local/operation-admission-20261021/preservation/group_norm/may-alias/logical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/group_norm/may-alias/physical.pto": "5061126b86cd56f86a729a00dd8f2b9829030dd39136f567c78e79c371b19d2d",
+    ".local/operation-admission-20261021/preservation/group_norm/may-alias/physical.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/group_norm/may-alias/physical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/group_norm/may-not-alias/allocation-support.pto": "824eec12ec33f1b238f0616e15394dadf49b1453ea7b4b1325cc1ea7c1cdf814",
+    ".local/operation-admission-20261021/preservation/group_norm/may-not-alias/allocation-support.stderr": "ee2bec67528b4a8ae06d997cac358119e2e1b0424745478bbe97afcf3ba4b2de",
+    ".local/operation-admission-20261021/preservation/group_norm/may-not-alias/allocation-support.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/group_norm/may-not-alias/cpp.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/group_norm/may-not-alias/cpp.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/group_norm/may-not-alias/kernel.cpp": "779d89daa64211169e8331f7107ea5210033d0ecff134e18087a3a0eed0a806c",
+    ".local/operation-admission-20261021/preservation/group_norm/may-not-alias/logical.pto": "8c72e95e79eb5e414de64e10e6330bb05bdf5053a0ac59f067bd338988f3b6c0",
+    ".local/operation-admission-20261021/preservation/group_norm/may-not-alias/logical.stderr": "4ed909d092adafc7a539e917b2bb1e25acc4f4b133888be985bb2e47908d0875",
+    ".local/operation-admission-20261021/preservation/group_norm/may-not-alias/logical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/group_norm/may-not-alias/physical.pto": "e32ae2fe5243ec3cabdfaadca77e450bdde864afadfa5ee18d22f30cba716205",
+    ".local/operation-admission-20261021/preservation/group_norm/may-not-alias/physical.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/group_norm/may-not-alias/physical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-alias/allocation-support.pto": "2f5f74216b95d096c3bfca5188daabd1130bb52643cf4faaa3a939cbe8d34dbf",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-alias/allocation-support.stderr": "b7314ff68607cb0a0b3ff4157b59f865e0752d03ef6d3d9a1a69f7dba089952a",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-alias/allocation-support.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-alias/cpp.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-alias/cpp.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-alias/kernel.cpp": "f47a72a00801d03992a479a1b47e26a7d648481dc1babd4ecafa40158439740c",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-alias/logical.pto": "da5553cc63cd757e4eff863e6c8cf7a16b813709c6edb8ff66631afd226337dc",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-alias/logical.stderr": "fc1dcef0aee5d801e5bf75a3db56b29cd839aa6967d1cedb399489b8921c49a1",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-alias/logical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-alias/physical.pto": "2096f2a146a3dcd4f52690b32c4cd1c3a3dcc228cfb88f414da3d363bc1ab9f5",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-alias/physical.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-alias/physical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-not-alias/allocation-support.pto": "cd28e672d45f32c4530598560bb2a7093b171a5ccbbe949e14fcc4cc7a2180f6",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-not-alias/allocation-support.stderr": "11e47add9c9c302539ee0f5bbedc8e1932bf23fb7291da725b49e72e47d140f6",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-not-alias/allocation-support.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-not-alias/cpp.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-not-alias/cpp.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-not-alias/kernel.cpp": "e62bfe91f7823c4202d02d6dc9155edac4a38a33143f78b4bf1b9b03a9de4495",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-not-alias/logical.pto": "1ad9dabd43efe242bd0ff60d94054d9033c46d7419c2ee6a05ec9f4620087c37",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-not-alias/logical.stderr": "944ba6b0c4b744e387f204a160a219e93a87e09fabd865f8ba13b8c3ee7af97c",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-not-alias/logical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-not-alias/physical.pto": "4d416dad04046a96d3bb03b4794908d510f269790305908d5ff81eaf5d3928f4",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-not-alias/physical.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/lossless_block_cast/may-not-alias/physical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-alias/allocation-support.pto": "d15971a0e32bd5f37763d2cd5d19bd54485555ec91f04253fc81eac36b722b9b",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-alias/allocation-support.stderr": "fa1ac2a0e4616f5fd8a799c801744a19d775e6f73940fd474a359cd31384e04f",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-alias/allocation-support.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-alias/cpp.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-alias/cpp.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-alias/kernel.cpp": "aa9722a7fce7f62380d88f0b33885ce1b8178befc738e1a1d778ebfd04e9a42a",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-alias/logical.pto": "6b76623d4eaab95162007d8a251bc03cb3e56c73b800858c9e8890072e3a6c8f",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-alias/logical.stderr": "cbba19933925c63b05af88f59b4a532de37261fd62a3cc2e5cfb606155b6b639",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-alias/logical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-alias/physical.pto": "d052ea56c8edf041c388579562889868c67511a9933f9299c5055e8302b46f3a",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-alias/physical.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-alias/physical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-not-alias/allocation-support.pto": "9ac75244e154803bfe5fa1129443171a3e71b1fbf293e9d3554920c2b7b803dc",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-not-alias/allocation-support.stderr": "f5bbc07fdb078fa2cd8c6bea8966e7924d66b3b240e26b32909301145d166898",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-not-alias/allocation-support.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-not-alias/cpp.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-not-alias/cpp.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-not-alias/kernel.cpp": "b2d3b639afa17f1b083970a77654becc01c2906f0cf8a8e442083a550753e9bb",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-not-alias/logical.pto": "c20bad2a4f811cb2a9b8012da2adad9b7e48d8166e838bcef217b0c730f60d32",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-not-alias/logical.stderr": "027718dba0ff6477f621ebdb187dd43e39a897c23d847095130e43eac0b61553",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-not-alias/logical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-not-alias/physical.pto": "600c6c5abbd05a350421d360da7afd271613b0243fbe966ef07f404b3e092216",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-not-alias/physical.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/persistent_gemm/may-not-alias/physical.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".local/operation-admission-20261021/preservation/receipt.json": "2cea4bad62e0569bee50fa196c9b24d266809c7c31472b6ee1cd4a49dab165d0",
+    ".local/operation-admission-20261021/preservation-allocation-support.diff": "08b534d015f5e03e8c3674ffbb5a7113deaf36aef4d44dc14604446de5c4b300",
+    ".local/operation-admission-20261021/preservation-before.json": "ddc71c24782c1daeb36953ee56aee935f17a651af2fc56c7e6b34a582c461504",
+    ".local/operation-admission-20261021/preservation-conjunctions.json": "30449114122cf5abacf2de432a5868073f1bd282cf64bf78e6da8fa546933297",
+    ".local/operation-admission-20261021/preservation-cpp.diff": "d443098794a42fffbc8dcee7ab375026c610a8d45ea04e867d51633fdcbb0fb2",
+    ".local/operation-admission-20261021/preservation-immediate.json": "8d008865bcb2c192762906bc429c9cf713cbde6b6e137459fb82bb9c3c6e68d1",
+    ".local/operation-admission-20261021/preservation-logical.diff": "d9fd87596fe291aa8f8d7e884cf8c76df42cf24c6e3d58ca392d5bb6ab1cc174",
+    ".local/operation-admission-20261021/preservation-physical.diff": "70a23997239c1be353018223a1b981f055d116fc21f6e9346a948976d828dd6d",
+    ".local/operation-admission-20261021/preservation.log": "05c512dc592626c6f980ac7afbf494a335cdebbe6de32bd3ada39b7b1d7832f5",
+    ".local/operation-admission-20261021/protection-preservation.json": "d450b301772d162aa27b7e739b13e5c96a201b36296a85c0172ba3d1d9a732e6",
+    ".local/operation-admission-20261021/qualify_cache_tests.py": "311668158b9cdf0e7e7e23abbc4732c3f129aeab0ab4dd1357255f8c36de3155",
+    ".local/operation-admission-20261021/record_checkpoint.py": "b21eb7849f8dabe9a7f6b32bbe2609ab660797795875a37f291fc4cf387d80e3",
+    ".local/operation-admission-20261021/refine_contract_helpers.py": "999f1c9077bf3abd5d3c49d5106ea82761f93bbb314acbe85751e328763bc57b",
+    ".local/operation-admission-20261021/ruff.log": "42cdde5e242c282ba39bfd186d9c5a1912acd80ed58dc56095e37cfb492a5978",
+    ".local/operation-admission-20261021/start.json": "d91fd83a444915a57d6a145d31505dfaec72385cf2fef8796128707300551b5f"
+  }
+}

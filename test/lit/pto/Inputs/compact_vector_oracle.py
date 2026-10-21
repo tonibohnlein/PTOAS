@@ -22,20 +22,21 @@ def variables(s):
     return re.findall(V, s)
 
 
-def model(text, block=0, subblock=0):
+def model(text, block=0, subblock=0, *, scalar_payload=None):
     lines = [
         x.strip()
         for x in text.splitlines()
         if x.strip() and not x.strip().startswith("//")
     ]
-    env = {}
+    env = dict(getattr(scalar_payload, "initial_env", {}))
     deps = {}
     items = []
     phase = 0
     types = {}
     loops = []
+    controls = []
     for i, line in enumerate(lines):
-        if re.search(r"pto\.t\w+ (?:ins|outs)", line):
+        if re.search(r"pto\.t\w+ (?:ins|outs)", line) or re.search(r" = pto\.load ", line):
             types[i] = phase
             phase += 1
 
@@ -59,10 +60,14 @@ def model(text, block=0, subblock=0):
                     for n in range(env[lo], env[hi], env[step]):
                         env[iv] = n
                         loops.append(n)
+                        controls.append(set().union(*(deps.get(v, set()) for v in (lo, hi, step))))
                         evaluate(i + 1, j - 1)
+                        controls.pop()
                         loops.pop()
                 elif env[variables(line)[0]]:
+                    controls.append(deps.get(variables(line)[0], set()))
                     evaluate(i + 1, j - 1)
+                    controls.pop()
                 i = j
                 continue
             if line.startswith(("module ", "func.func ")) or line in ("return", "}"):
@@ -77,8 +82,9 @@ def model(text, block=0, subblock=0):
                 env[lhs] = block
             elif rhs.startswith("pto.get_subblock_idx"):
                 env[lhs] = subblock
-            elif rhs.startswith("arith.index_cast"):
-                env[lhs] = env[args[0]]
+            elif rhs.startswith(("arith.index_cast", "arith.fptosi")):
+                env[lhs] = int(env[args[0]])
+                deps[lhs] = deps.get(args[0], set()).copy()
             elif rhs.startswith("arith."):
                 op = rhs.split()[0][6:]
                 a, b = [env[x] for x in args[:2]]
@@ -94,6 +100,9 @@ def model(text, block=0, subblock=0):
                         "ugt": a > b,
                         "sgt": a > b,
                     }[pred]
+                elif op == "cmpf":
+                    pred = rhs.split()[1].rstrip(",")
+                    env[lhs] = {"ogt": a > b, "oge": a >= b, "olt": a < b, "ole": a <= b, "oeq": a == b}[pred]
                 else:
                     env[lhs] = {
                         "addi": lambda: a + b,
@@ -159,7 +168,7 @@ def model(text, block=0, subblock=0):
                 op = rhs.split()[0]
                 ins = re.search(r"ins\((.*?)\s*:", rhs)
                 outs = re.search(r"outs\((.*?)\s*:", rhs)
-                reads = variables(ins[1]) if ins else []
+                reads = args[:2] if op == "pto.load" else variables(ins[1]) if ins else []
                 writes = variables(outs[1]) if outs else []
                 effects = []
 
@@ -168,7 +177,9 @@ def model(text, block=0, subblock=0):
                     if not isinstance(val, tuple):
                         return
                     ranges = val[4]
-                    if op in ("pto.tgetval", "pto.tsetval"):
+                    if op == "pto.load":
+                        ranges = [(val[3] + 4 * env[reads[1]], val[3] + 4 * env[reads[1]] + 4)]
+                    elif op in ("pto.tgetval", "pto.tsetval"):
                         index = reads[1] if op == "pto.tgetval" else reads[0]
                         ranges = [
                             (val[3] + 4 * env[index], val[3] + 4 * env[index] + 4)
@@ -195,7 +206,8 @@ def model(text, block=0, subblock=0):
                     access(reads[1], True)
                 for value in writes:
                     access(value, True)
-                scalar = set().union(*(deps.get(a, set()) for a in reads))
+                control_deps = set().union(*controls) if scalar_payload is not None else set()
+                scalar = set().union(*(deps.get(a, set()) for a in reads)) | control_deps
                 items.append(
                     {
                         "operation": op,
@@ -204,16 +216,20 @@ def model(text, block=0, subblock=0):
                         else 5
                         if op == "pto.tstore"
                         else 0
-                        if op in ("pto.tgetval", "pto.tsetval")
+                        if op in ("pto.tgetval", "pto.tsetval", "pto.load")
                         else 1,
                         "coordinates": list(loops),
                         "effects": effects,
                         "scalar": scalar,
+                        **({"control": control_deps} if scalar_payload is not None else {}),
                         "type": types[i],
                     }
                 )
+                observed = scalar_payload(op, reads, writes, env) if scalar_payload is not None else 1.0
                 if lhs:
-                    env[lhs] = 1.0
+                    if observed is None:
+                        raise ValueError("missing independent scalar payload value")
+                    env[lhs] = observed
                     deps[lhs] = {len(items) - 1}
             elif rhs not in ("return", "}") and not rhs.startswith(
                 ("module ", "func.func ")
@@ -252,7 +268,9 @@ def required(items):
     return rows, covers, extra
 
 
-def command_order(trace, scalar=(), *, include_commands=False):
+def command_order(
+    trace, scalar=(), *, include_commands=False, native_serial_pipes=(), command_prerequisites=()
+):
     events = trace["events"]
     commands = []
     pending = {}
@@ -295,7 +313,10 @@ def command_order(trace, scalar=(), *, include_commands=False):
         for a, native in e.get("prerequisites", [])
         if native
     ]
-    rows = closure_with_commands(pipes, commands, include_commands=True)
+    rows = closure_with_commands(
+        pipes, commands, include_commands=True, native_serial_pipes=native_serial_pipes,
+        command_prerequisites=command_prerequisites
+    )
     edges = {
         (a, b) for a, row in enumerate(rows) for b in range(len(rows)) if row >> b & 1
     }
@@ -321,6 +342,7 @@ def command_order(trace, scalar=(), *, include_commands=False):
                     "physical": trace,
                 },
                 set(range(6)),
+                native_serial_pipes=native_serial_pipes,
             )
             reuse = {"status": "passed"}
         except AssertionError as error:

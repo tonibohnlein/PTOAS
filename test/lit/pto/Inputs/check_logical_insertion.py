@@ -9,7 +9,9 @@
 from collections import defaultdict, deque
 
 
-def closure_with_commands(pipes, commands, include_commands=False):
+def closure_with_commands(
+    pipes, commands, include_commands=False, native_serial_pipes=(), command_prerequisites=()
+):
     # commands: kind(set/barrier/wait), gap in reference payload order, pipe,
     # and logical identity for SET/WAIT. Gap 0 is before first payload.
     n = len(pipes)
@@ -37,7 +39,7 @@ def closure_with_commands(pipes, commands, include_commands=False):
         raise AssertionError('unmatched endpoints')
     for identity, source in publications.items():
         out[source].add(acquisitions[identity])
-    for row in rows.values():
+    for pipe, row in rows.items():
         previous = None
         prior_commands = []
         prior_blockers = []
@@ -46,6 +48,8 @@ def closure_with_commands(pipes, commands, include_commands=False):
                 if previous is not None:
                     out[2*previous].add(2*ident)
                     out[2*previous+1].add(2*ident+1)
+                    if pipe in native_serial_pipes:
+                        out[2*previous+1].add(2*ident)
                 for blocker in prior_blockers:
                     out[blocker].add(2*ident)
                 previous = ident
@@ -62,6 +66,10 @@ def closure_with_commands(pipes, commands, include_commands=False):
                 prior_commands.append(ident)
                 if kind in ('wait', 'barrier'):
                     prior_blockers.append(ident)
+    for source, command in command_prerequisites:
+        if not 0 <= source < n or not 0 <= command < len(commands):
+            raise ValueError("invalid supplied command-control prerequisite")
+        out[2*source+1].add(2*n+command)
     indegree = [0]*len(out)
     for edges in out:
         for b in edges:

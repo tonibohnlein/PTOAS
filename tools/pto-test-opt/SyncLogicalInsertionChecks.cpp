@@ -72,6 +72,7 @@ private:
     bool loop(scf::WhileOp op, unsigned depth);
     bool branch(scf::IfOp op, unsigned depth);
     bool payload(Operation& op, ArrayRef<uint32_t> candidates);
+    bool observeScalar(Operation& op);
     bool command(Operation& op);
     void folded(Operation& op);
     void bind(ValueRange targets, ArrayRef<Attribute> sources);
@@ -86,6 +87,7 @@ private:
     uint64_t arithmeticVisits = 0, selectVisits = 0, guardVisits = 0;
     uint64_t visitLimit = MaxVisits;
     uint64_t payloads = 0;
+    std::size_t scalarObservation = 0;
     uint64_t outerTrips = 0;
     std::unique_ptr<finite_control_checks::Evaluation> control;
 };
@@ -228,6 +230,22 @@ bool Interpreter::branch(scf::IfOp op, unsigned depth)
     if (control) { control->branchResults(op); }
     return true;
 }
+bool Interpreter::observeScalar(Operation& op)
+{
+    auto function = op.getParentOfType<func::FuncOp>();
+    auto observations = function->getAttrOfType<ArrayAttr>("test.trace_scalar_observations");
+    if (!observations || !isa<pto::TGetValOp, pto::PTOLoadOp>(op)) { return true; }
+    if (op.getNumResults() != 1 || scalarObservation >= observations.size()) {
+        return fail("missing observed scalar access result");
+    }
+    auto value = dyn_cast<TypedAttr>(observations[scalarObservation]);
+    if (!value || (!isa<FloatAttr, IntegerAttr>(value)) || value.getType() != op.getResult(0).getType()) {
+        return fail("observed scalar access result has the wrong type");
+    }
+    values[op.getResult(0)] = value;
+    ++scalarObservation;
+    return true;
+}
 bool Interpreter::payload(Operation& op, ArrayRef<uint32_t> candidates)
 {
     if (!input) {
@@ -250,6 +268,10 @@ bool Interpreter::payload(Operation& op, ArrayRef<uint32_t> candidates)
         for (auto result : op.getResults()) {
             values.erase(result);
         }
+        // Values observed by the independent bounded memory interpreter only
+        // bind executed scalar memory results after insertion; they never qualify a
+        // production guard or replace its original memory operation.
+        if (!observeScalar(op)) { return false; }
         // Observe an original Boolean load only when that payload executes.
         // The annotation affects this interpreter after production insertion;
         // it neither replaces the load nor supplies analysis-time availability.
@@ -438,6 +460,10 @@ llvm::json::Object Interpreter::run(func::FuncOp function)
         block(function.getBody().front(), ignored, 0);
     if (!valid && error.empty()) {
         error = "trace requires a single-block defined function";
+    }
+    auto observations = function->getAttrOfType<ArrayAttr>("test.trace_scalar_observations");
+    if (valid && observations && scalarObservation != observations.size()) {
+        error = "unused observed scalar access results";
     }
     return llvm::json::Object{{"function", function.getSymName()}, {"error", error},
         {"payloads", payloads}, {"outer_trips", outerTrips}, {"visits", visits},

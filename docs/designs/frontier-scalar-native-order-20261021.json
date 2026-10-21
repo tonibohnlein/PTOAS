@@ -1,0 +1,2040 @@
+{
+  "task": "Native scalar discharge in experimental ordered current-cut realization",
+  "starting_revision": "29cd96a2af94fd9d9b5c5711561a0222df67b37a",
+  "starting_dirty_pin": ".local/scalar-native-order-20261021/start.json",
+  "starting_pin_sha256": "ce79ff9f11b70da2074f8722b790a2115f61879a5a8ad588da883faf920c25e0",
+  "starting_snapshot": ".local/scalar-native-order-20261021/starting-source",
+  "source_sha256": {
+    "docs/designs/frontier-conservative-services-prototype-20261021.json": "3ba43c32ae0f7fd01cd25bedfb1378a7ebc050539cc33d882f9c5889fd3aec72",
+    "docs/designs/frontier-conservative-services-prototype-20261021.md": "a511782b57d2d17ac9227608f0bb5641006880947797d415f5836455211966ac",
+    "docs/designs/frontier-scalar-native-order-20261021.md": "83d24989fc109badaf6075e985aef365cf440dc917c062b00ea899f6044b7220",
+    "include/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.h": "c17b4df3a9936db51a87ee88b427530fe41cedf94d26196301ba4a6ae7c9bfdc",
+    "lib/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.cpp": "18a39719ea6c7971ccd947bd38836b0c9507a98edcc8768af196240009fb5f82",
+    "test/lit/pto/Inputs/check_current_cut_services.py": "0f6c842dd46d2731a7a3029ebbfa4d702e85d05a326bb8bc45d04d246c173010",
+    "test/lit/pto/Inputs/check_scalar_current_cut_services.py": "4249db87cfac5a7b4abd727f87959e0d2094528a7b7ec6e73f6b4c0b421b5233",
+    "test/lit/pto/Inputs/check_source_pipe_services.py": "f59c6a39b0f896e9d11c187e70b2f421e1a8452567084d649b17fa68fa28c3a8",
+    "test/lit/pto/sync_current_cut_services.pto": "961591b4495fd7c1330cfec96584a9d0fcef84b6281bce02c88f5632529db2d1",
+    "test/lit/pto/sync_scalar_current_cut_services.pto": "2d383f1198576a08c40d2eb860d5301298fbeef5624644fb992c703bdbfb9d02",
+    "test/lit/pto/sync_source_pipe_services.pto": "afb28622cc4990431e84c525f2383b970d1a33c6bd39fd8b2d9ecc1896b57db1",
+    "tools/pto-test-opt/CurrentCutNativeOrder.h": "0485876419650a8b0c61981375e68fddd11fa95cf9f72de847eb2babaf0fd9c2",
+    "tools/pto-test-opt/CurrentCutServiceChecks.cpp": "d47f6d09e4683c794529ed49994093460baa167ff7bfcc7dd202e16c8e7f3449",
+    "tools/pto-test-opt/SourcePipeServiceChecks.cpp": "a5cfb560c823c9221bcf2db654b26aa3e60c8355e99da8b95e35827b6386f91b",
+    "tools/pto-test-opt/SourcePipeServiceChecks.h": "5654bd64946a9fb9557c8e8e256ffc00512924e9aa20526b6d1649868d51652a",
+    "lib/PTO/Transforms/CMakeLists.txt": "c0cf23652ed4026488b0cca05108df545a121e4109b8fdde451383ba5c1c1e31",
+    "test/lit/pto/Inputs/check_finite_allocation.py": "79cf2a4832cafeeb3f7991fdc81525e638e150ce6bc4a14b19ab62d7593574be",
+    "test/lit/pto/Inputs/check_logical_insertion.py": "57038b7b8802e05bdf2fdb404126f717e11e3c0a81078696a371358596aa2c2e",
+    "test/lit/pto/Inputs/check_periodic_demands.py": "f441fd92ad54dc3b2a7a7b11ee983db265d7d617a8e92a9aaa6caadd044fe812",
+    "test/lit/pto/Inputs/compact_vector_oracle.py": "5a65e15c34380e1ccc93dcf75920faa75239340becce43b2a49f336dfc047ee7",
+    "tools/pto-test-opt/CMakeLists.txt": "cf42feb19cd45892bf9f83f4ff6bc79d5307dba2e8a2aba681b0f730feefd53d",
+    "tools/pto-test-opt/CompletionDataflowInput.h": "2a9459c9e0d3d2c610adb9d312050c90a466c40e3fa3b5cdda55f116964805f8",
+    "tools/pto-test-opt/SyncLogicalInsertionChecks.cpp": "cc8d782545d7946a6585d72345511ce11b99bf496dd13caf58b582f9908ff2f2",
+    "tools/pto-test-opt/pto-sync-input-test.cpp": "ec2007f67acd6220d0ba0649a4298124411cef43636aaeb34f6fdfe9fb121881"
+  },
+  "tracked_patch_sha256": "f707f2d81dac45ce302dde741cd695e6be9e27864d90b34585d302ef0a81ac57",
+  "tools": {
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test": "4b59a623f2d63633bac50b82f228097060922285fdedbc866e9211199e296310",
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt": "1fc013d516394047e5e1ccc0ffe50fc36c145e39d7dd71227c2be631d478cf94",
+    ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas": "89fa0f69d6af6db6673954389763ae2f6e57613ea7946ef6f32234d6daef7a85",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/_core.cpython-312-x86_64-linux-gnu.so": "8937210969cbb8a5d91fb184b7fb7c7c794969c3999c4baa6f4af6945a27853c",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_mlirDialectsLLVM.cpython-312-x86_64-linux-gnu.so": "81812065ca68d8f57e4cb99a7425825623b2df00e0201f81fc564a0faf09b5e4",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_mlir.cpython-312-x86_64-linux-gnu.so": "ee060cbb5a9f882a1376a3a5dab11b2224bd906fa096b709f90a21e7e20d9ff2",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_site_initialize_0.cpython-312-x86_64-linux-gnu.so": "4764f1967c3e5acf5361e559aa3b2f33ec0a606e0122c524552d8a6e96f80082",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/libPTOASCompiler.so": "a2a9f8350428f1e24947e0e6b233599c793d49573a036e7e57ea1babf93a5f29"
+  },
+  "research_inputs": {
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/scalar-native-order-prototype-task-2026-10-21.md": "8753f7cbe399d72fc906991c64271399c9f834f0d38b67d38deda0ba7fccd953",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/section6-runtime-and-realization-proof-2026-10-21.md": "3e8a37c6ca02ad85fc984b1554eac3495a240c5e42553c497215899d3db96a0d"
+  },
+  "contract": {
+    "target": "A3 AIV",
+    "operations": [
+      "pto.tgetval",
+      "pto.tsetval"
+    ],
+    "storage": "vector tile buffer",
+    "scope": "synchronous noncompound original phases; qualified GETVAL synchronous scalar result",
+    "native_edge": "C_previous_executed_scalar -> I_current_scalar",
+    "supplied_premise": "scalar same-pipe synchronization is native",
+    "source_backing": "existing scalar storage protection, result availability, effects, GETVAL/SETVAL lowering, official CANN PipeBarrier restrictions",
+    "exclusions": [
+      "no cross-pipe visibility discharge",
+      "no unknown/compound scalar qualification",
+      "no universal accumulator or FIX prefix serialization"
+    ]
+  },
+  "preserved_hardware_contracts": [
+    {
+      "path": "include/PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h",
+      "sha256": "02589ebef04820d1f5d95628ec1ffe50625fbe133fa17cff531cfe3103904e32",
+      "identical_to_HEAD": true
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/HardwareProtection.cpp",
+      "sha256": "c0e4eb288c688a6c700ab246cefdd5de50d1dfd468e807837aa2b65d86b843f0",
+      "identical_to_HEAD": true
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/InvocationProtection.cpp",
+      "sha256": "9c5af2aea112c27ba5dc02773fb289ee6f7f97724fc93dced5344ea30d1cd255",
+      "identical_to_HEAD": true
+    },
+    {
+      "path": "lib/PTO/Transforms/FrontierSynch/Shared/LogicalInsertion.cpp",
+      "sha256": "b686e49a6d8d82964b9bf99994d35c4d28e811ee94a5bbe6de66aaa27c74da7b",
+      "identical_to_HEAD": true
+    },
+    {
+      "path": "lib/PTO/IR/PTOSyncCapabilities.cpp",
+      "sha256": "3ddfdb737be164a2b5c7404f2a5f2122c755902ab496604e34d2f6dc534a2c71",
+      "identical_to_HEAD": true
+    },
+    {
+      "path": "lib/PTO/Transforms/InsertSync/InsertSyncAnalysis.cpp",
+      "sha256": "5526f50cfc41e3c7b7bd65e94406a78ef9fe03b393fa8de8633dbac6cb97feb6",
+      "identical_to_HEAD": true
+    },
+    {
+      "path": "lib/PTO/Transforms/InsertSync/SyncEventIdAllocation.cpp",
+      "sha256": "2c7ed0fe6e9b24e345c88918f0340ae440c2075e8864a68f550f08a15b13142a",
+      "identical_to_HEAD": true
+    }
+  ],
+  "unchanged_from_task_start": [
+    "include/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.h",
+    "lib/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.cpp",
+    "tools/pto-test-opt/SourcePipeServiceChecks.cpp",
+    "docs/designs/frontier-conservative-services-prototype-20261021.md",
+    "docs/designs/frontier-conservative-services-prototype-20261021.json"
+  ],
+  "delta_unchanged_fields": [
+    "incoming",
+    "outgoing",
+    "possible",
+    "logical_plan",
+    "physical_plan",
+    "role_ids"
+  ],
+  "validation": {
+    "gates": {
+      "gate": {
+        "tests": 32,
+        "results": {
+          "PASS": 32
+        },
+        "elapsed_seconds": 171.12210893630981,
+        "names": [
+          "PTOIR :: pto/sync_finite_family_pipeline.pto",
+          "PTOIR :: pto/sync_expanded_endpoint_adapter.pto",
+          "PTOIR :: pto/sync_coordinate_allocation.pto",
+          "PTOIR :: pto/sync_compact_replay_scaling.pto",
+          "PTOIR :: pto/sync_group_norm_production.pto",
+          "PTOIR :: pto/sync_qwen_completion_import.pto",
+          "PTOIR :: pto/sync_finite_expansion.pto",
+          "PTOIR :: pto/sync_qwen_interval_certificate.pto",
+          "PTOIR :: pto/sync_compact_persistent_contract.pto",
+          "PTOIR :: pto/sync_compact_arithmetic_coverage.pto",
+          "PTOIR :: pto/sync_completion_eventful.pto",
+          "PTOIR :: pto/sync_current_cut_services.pto",
+          "PTOIR :: pto/sync_hardware_protection.pto",
+          "PTOIR :: pto/sync_scalar_protection.pto",
+          "PTOIR :: pto/sync_arithmetic_composition.pto",
+          "PTOIR :: pto/sync_reaching_access_research.pto",
+          "PTOIR :: pto/sync_native_scalar_corpus.pto",
+          "PTOIR :: pto/sync_finite_qualification.pto",
+          "PTOIR :: pto/sync_finite_crossing_recipe.pto",
+          "PTOIR :: pto/sync_gemm_access_regions.pto",
+          "PTOIR :: pto/sync_source_pipe_services.pto",
+          "PTOIR :: pto/sync_storage_export_coverage.pto",
+          "PTOIR :: pto/sync_arithmetic_insertion.pto",
+          "PTOIR :: pto/sync_parameter_phase_contracts.pto",
+          "PTOIR :: pto/sync_completion_compact_child_contract.pto",
+          "PTOIR :: pto/sync_arithmetic_membership.pto",
+          "PTOIR :: pto/sync_completion_children.pto",
+          "PTOIR :: pto/sync_arithmetic_export_retention.pto",
+          "PTOIR :: pto/sync_arithmetic_scalar_ranges.pto",
+          "PTOIR :: pto/sync_completion_inputs.pto",
+          "PTOIR :: pto/sync_completion_region.pto",
+          "PTOIR :: pto/sync_scalar_current_cut_services.pto"
+        ]
+      },
+      "final-gate": {
+        "tests": 6,
+        "results": {
+          "PASS": 6
+        },
+        "elapsed_seconds": 22.049142837524414,
+        "names": [
+          "PTOIR :: pto/sync_current_cut_services.pto",
+          "PTOIR :: pto/sync_scalar_current_cut_services.pto",
+          "PTOIR :: pto/sync_hardware_protection.pto",
+          "PTOIR :: pto/sync_scalar_protection.pto",
+          "PTOIR :: pto/sync_native_scalar_corpus.pto",
+          "PTOIR :: pto/sync_source_pipe_services.pto"
+        ]
+      }
+    },
+    "scalar_cases": {
+      "tool_sha256": "4b59a623f2d63633bac50b82f228097060922285fdedbc866e9211199e296310",
+      "native_scalar_pipe": 0,
+      "contract": "supplied A3 AIV synchronous vec GETVAL/SETVAL serialization; no cross-pipe exemption",
+      "cases": [
+        {
+          "name": "o0-i2-p1-all",
+          "input_sha256": "32f6a580645ca7caf14e7592475723419b7ea72c20dc7fb9eed8ab88a141eeec",
+          "output_sha256": "df8b97fe3f221be31a89275b4b77b120ebf22ad2629238212d41e605bd6aa448",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o0-i2-p1-all.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.0645270780660212,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o0-i2-p1-all.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o0-i2-p1-all.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000330404,
+            "cfg_preparation_seconds": 7.964e-06,
+            "class_preparation_seconds": 5.283e-06,
+            "descriptor_tree_seconds": 7.6858e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.3457e-05,
+            "map_preparation_seconds": 1.4803e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 4.2088e-05,
+            "plan_serialization_seconds": 0.000112107,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.5123e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 1,
+          "commands": 1,
+          "matching": "closed",
+          "supplied_command_control_edges": 0,
+          "causal_reuse": {
+            "status": "not_requested"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": []
+        },
+        {
+          "name": "o0-i2-p1-first",
+          "input_sha256": "068c090f645878d6284b9c03f20f1054406d33f5418389eed6eaf496c3f93235",
+          "output_sha256": "0667d9fe61633c5f1ec59b063befc74658a8744a22fb71ace4a038d47027f28f",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o0-i2-p1-first.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06507931696251035,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o0-i2-p1-first.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o0-i2-p1-first.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.00030683,
+            "cfg_preparation_seconds": 6.973e-06,
+            "class_preparation_seconds": 4.005e-06,
+            "descriptor_tree_seconds": 5.5543e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.2505e-05,
+            "map_preparation_seconds": 1.4093e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.3614e-05,
+            "plan_serialization_seconds": 0.000118437,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.457e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 1,
+          "commands": 1,
+          "matching": "closed",
+          "supplied_command_control_edges": 0,
+          "causal_reuse": {
+            "status": "not_requested"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": []
+        },
+        {
+          "name": "o0-i2-p0-none",
+          "input_sha256": "ed884b36aca7268254413448aa927114802579fc2c6c754ea5c6a2d01b642d27",
+          "output_sha256": "da652799b1e8c032e5be494d24f011470d4243825606259095677e2f14cbf1f5",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o0-i2-p0-none.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06556991674005985,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o0-i2-p0-none.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o0-i2-p0-none.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000291255,
+            "cfg_preparation_seconds": 7.25e-06,
+            "class_preparation_seconds": 4.417e-06,
+            "descriptor_tree_seconds": 5.8593e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.3817e-05,
+            "map_preparation_seconds": 1.4321e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.446e-05,
+            "plan_serialization_seconds": 0.000112218,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.4471e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 1,
+          "commands": 1,
+          "matching": "closed",
+          "supplied_command_control_edges": 0,
+          "causal_reuse": {
+            "status": "not_requested"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": []
+        },
+        {
+          "name": "o1-i0-p1-all",
+          "input_sha256": "277222b1205da6bd15a78e9ca74cfeca106429cacb8a78af3a4b5561f4bab42e",
+          "output_sha256": "4074f066c32289f60c2265fff97a80107dc1378e093cac030786e2592623b989",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o1-i0-p1-all.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06484856503084302,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o1-i0-p1-all.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o1-i0-p1-all.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000321286,
+            "cfg_preparation_seconds": 6.799e-06,
+            "class_preparation_seconds": 4.137e-06,
+            "descriptor_tree_seconds": 5.7926e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.3263e-05,
+            "map_preparation_seconds": 1.471e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.6543e-05,
+            "plan_serialization_seconds": 0.000116104,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.6812e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 1,
+          "commands": 1,
+          "matching": "closed",
+          "supplied_command_control_edges": 0,
+          "causal_reuse": {
+            "status": "not_requested"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": []
+        },
+        {
+          "name": "o1-i0-p1-first",
+          "input_sha256": "a638a048df90056426405943acdbb43e973591c8a12e67ae5c6dfaa924a8b6ef",
+          "output_sha256": "80a2a4464de032b1d4d2af0624e7c25a7719926424e68730188ec35267a2ba16",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o1-i0-p1-first.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.0641592750325799,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o1-i0-p1-first.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o1-i0-p1-first.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000306414,
+            "cfg_preparation_seconds": 8.016e-06,
+            "class_preparation_seconds": 4.407e-06,
+            "descriptor_tree_seconds": 6.4601e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.4833e-05,
+            "map_preparation_seconds": 1.5949e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 4.5556e-05,
+            "plan_serialization_seconds": 0.00012203,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.6998e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 1,
+          "commands": 1,
+          "matching": "closed",
+          "supplied_command_control_edges": 0,
+          "causal_reuse": {
+            "status": "not_requested"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": []
+        },
+        {
+          "name": "o1-i0-p0-none",
+          "input_sha256": "b6acc7082bf31800a4a91e16be30e247d2488ecb3cea0912408f0e7b9fd04154",
+          "output_sha256": "0fda118ee780e25ccfb2a4c7e9b3cda87d278d35f6d3897ba6a9b3af5de32c10",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o1-i0-p0-none.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06392911868169904,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o1-i0-p0-none.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o1-i0-p0-none.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.00030891,
+            "cfg_preparation_seconds": 6.837e-06,
+            "class_preparation_seconds": 6.612e-06,
+            "descriptor_tree_seconds": 5.8233e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.4379e-05,
+            "map_preparation_seconds": 1.3774e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.7622e-05,
+            "plan_serialization_seconds": 0.000111611,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.5404e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 1,
+          "commands": 1,
+          "matching": "closed",
+          "supplied_command_control_edges": 0,
+          "causal_reuse": {
+            "status": "not_requested"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": []
+        },
+        {
+          "name": "o1-i1-p1-all",
+          "input_sha256": "a23b0d4b9e8e97040f081cb1e9421bd0ee51a03c595da4bdfd42be40c6297798",
+          "output_sha256": "ead7e1f6f69f9b43cb68b6443acbaacd0cc05519232108e3555b40cf9a155cc5",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o1-i1-p1-all.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06403895979747176,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o1-i1-p1-all.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o1-i1-p1-all.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000290676,
+            "cfg_preparation_seconds": 6.966e-06,
+            "class_preparation_seconds": 4.454e-06,
+            "descriptor_tree_seconds": 6.1688e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.0825e-05,
+            "map_preparation_seconds": 1.3936e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.3748e-05,
+            "plan_serialization_seconds": 0.000115538,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.5478e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 6,
+          "commands": 23,
+          "matching": "closed",
+          "supplied_command_control_edges": 9,
+          "causal_reuse": {
+            "status": "passed"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": [
+            [
+              0,
+              1,
+              3
+            ],
+            [
+              0,
+              1,
+              5
+            ],
+            [
+              1,
+              0,
+              3
+            ],
+            [
+              1,
+              0,
+              5
+            ]
+          ]
+        },
+        {
+          "name": "o1-i1-p1-first",
+          "input_sha256": "2fc1de996dc724af859dcb2c1fbd6ff64ef1d4b863d9e65d8971dd3846e0f59d",
+          "output_sha256": "a76739b58fbd69d05a24c670b0bc403af6f8b41ddf3a1bc4464f517048de7789",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o1-i1-p1-first.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06424789363518357,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o1-i1-p1-first.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o1-i1-p1-first.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000291832,
+            "cfg_preparation_seconds": 7.116e-06,
+            "class_preparation_seconds": 4.072e-06,
+            "descriptor_tree_seconds": 6.2219e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.2747e-05,
+            "map_preparation_seconds": 1.4438e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.4354e-05,
+            "plan_serialization_seconds": 0.000116289,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.6142e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 6,
+          "commands": 23,
+          "matching": "closed",
+          "supplied_command_control_edges": 9,
+          "causal_reuse": {
+            "status": "passed"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": [
+            [
+              0,
+              1,
+              3
+            ],
+            [
+              0,
+              1,
+              5
+            ],
+            [
+              1,
+              0,
+              3
+            ],
+            [
+              1,
+              0,
+              5
+            ]
+          ]
+        },
+        {
+          "name": "o1-i1-p0-none",
+          "input_sha256": "59e7b5b5c8a476426eaf9bad81ec2379da58347c5b35cd055bc977e7ba754a64",
+          "output_sha256": "c4a7a5628fcbc1ae4a9468323cc5a45c4d19fbb6dac52256fb18d5a09159a97d",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o1-i1-p0-none.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06422921130433679,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o1-i1-p0-none.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o1-i1-p0-none.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000309977,
+            "cfg_preparation_seconds": 7.075e-06,
+            "class_preparation_seconds": 4.297e-06,
+            "descriptor_tree_seconds": 5.6931e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 9.0208e-05,
+            "map_preparation_seconds": 1.4117e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.8881e-05,
+            "plan_serialization_seconds": 0.000114235,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.4337e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 3,
+          "commands": 9,
+          "matching": "closed",
+          "supplied_command_control_edges": 0,
+          "causal_reuse": {
+            "status": "passed"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": [
+            [
+              0,
+              1,
+              5
+            ],
+            [
+              1,
+              0,
+              3
+            ]
+          ]
+        },
+        {
+          "name": "o1-i3-p1-all",
+          "input_sha256": "51db4c8298e481b15249aa8f708fb40358cbdfab94478c1bcd9b146df2d6e5f3",
+          "output_sha256": "613f4e3c9311ca86ba6f7d9fa01810c850f86cb86e2884cb788f788e0f79e30e",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o1-i3-p1-all.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.0641314429230988,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o1-i3-p1-all.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o1-i3-p1-all.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000309638,
+            "cfg_preparation_seconds": 7.243e-06,
+            "class_preparation_seconds": 4.411e-06,
+            "descriptor_tree_seconds": 6.1757e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.3487e-05,
+            "map_preparation_seconds": 1.4426e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.7504e-05,
+            "plan_serialization_seconds": 0.000119267,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.5131e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 16,
+          "commands": 67,
+          "matching": "closed",
+          "supplied_command_control_edges": 27,
+          "causal_reuse": {
+            "status": "passed"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": [
+            [
+              0,
+              1,
+              3
+            ],
+            [
+              0,
+              1,
+              5
+            ],
+            [
+              1,
+              0,
+              3
+            ],
+            [
+              1,
+              0,
+              5
+            ]
+          ]
+        },
+        {
+          "name": "o1-i3-p1-first",
+          "input_sha256": "279517bfdfdb95822b8a6e695d756bc3316a2b02b6e1b3e60653978660d72d42",
+          "output_sha256": "5fd97929c1cdb24238837fcb601ed4377c28be5f4ba853b470c3cc992be3c746",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o1-i3-p1-first.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.0640385770238936,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o1-i3-p1-first.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o1-i3-p1-first.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.00032949,
+            "cfg_preparation_seconds": 7.534e-06,
+            "class_preparation_seconds": 4.879e-06,
+            "descriptor_tree_seconds": 6.8438e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.5088e-05,
+            "map_preparation_seconds": 1.6124e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.8403e-05,
+            "plan_serialization_seconds": 0.000118407,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.5357e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 14,
+          "commands": 57,
+          "matching": "closed",
+          "supplied_command_control_edges": 27,
+          "causal_reuse": {
+            "status": "passed"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": [
+            [
+              0,
+              1,
+              3
+            ],
+            [
+              0,
+              1,
+              5
+            ],
+            [
+              1,
+              0,
+              3
+            ],
+            [
+              1,
+              0,
+              5
+            ]
+          ]
+        },
+        {
+          "name": "o1-i3-p0-none",
+          "input_sha256": "52b152560179cde501cd189f77158f6b57e18fafca849b942e699a65bc2803d0",
+          "output_sha256": "3b9d4a8dbe38f710fdf26a04386e871bdc197d153fc43f99310740e89911e970",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o1-i3-p0-none.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06406786339357495,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o1-i3-p0-none.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o1-i3-p0-none.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000291192,
+            "cfg_preparation_seconds": 7.134e-06,
+            "class_preparation_seconds": 4.727e-06,
+            "descriptor_tree_seconds": 6.1921e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.2649e-05,
+            "map_preparation_seconds": 1.6283e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.6211e-05,
+            "plan_serialization_seconds": 0.000112576,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.7874e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 7,
+          "commands": 25,
+          "matching": "closed",
+          "supplied_command_control_edges": 0,
+          "causal_reuse": {
+            "status": "passed"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": [
+            [
+              0,
+              1,
+              5
+            ],
+            [
+              1,
+              0,
+              3
+            ]
+          ]
+        },
+        {
+          "name": "o2-i2-p1-all",
+          "input_sha256": "67572b9829a333aeac091b1310af215ebbb0abd16bd26c407b83eeb6e01292ba",
+          "output_sha256": "7b31738fdd9514c2cb6520bd2a587fd6698bb0fce4c53b2c8fa6efcf549fee76",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o2-i2-p1-all.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06404932122677565,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o2-i2-p1-all.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o2-i2-p1-all.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000279809,
+            "cfg_preparation_seconds": 7.151e-06,
+            "class_preparation_seconds": 4.089e-06,
+            "descriptor_tree_seconds": 6.1305e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.4977e-05,
+            "map_preparation_seconds": 1.4314e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.5965e-05,
+            "plan_serialization_seconds": 0.000113399,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.6734e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 21,
+          "commands": 89,
+          "matching": "closed",
+          "supplied_command_control_edges": 36,
+          "causal_reuse": {
+            "status": "passed"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": [
+            [
+              0,
+              1,
+              3
+            ],
+            [
+              0,
+              1,
+              5
+            ],
+            [
+              1,
+              0,
+              3
+            ],
+            [
+              1,
+              0,
+              5
+            ]
+          ]
+        },
+        {
+          "name": "o2-i2-p1-first",
+          "input_sha256": "57bb2bd77825af9c216e175ed5611ba8bf68310923711dec6185fa4246a81845",
+          "output_sha256": "f17a3644499d1a4b92006eafd901265fdca7363d6725afce4f4b605624b8d3ac",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o2-i2-p1-first.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06405304418876767,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o2-i2-p1-first.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o2-i2-p1-first.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000290334,
+            "cfg_preparation_seconds": 7.258e-06,
+            "class_preparation_seconds": 4.277e-06,
+            "descriptor_tree_seconds": 5.914e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 9.2593e-05,
+            "map_preparation_seconds": 1.5471e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.3237e-05,
+            "plan_serialization_seconds": 0.000122849,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.4517e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 19,
+          "commands": 79,
+          "matching": "closed",
+          "supplied_command_control_edges": 36,
+          "causal_reuse": {
+            "status": "passed"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": [
+            [
+              0,
+              1,
+              3
+            ],
+            [
+              0,
+              1,
+              5
+            ],
+            [
+              1,
+              0,
+              3
+            ],
+            [
+              1,
+              0,
+              5
+            ]
+          ]
+        },
+        {
+          "name": "o2-i2-p0-none",
+          "input_sha256": "aef3f492dd1d93768bdd1fd5dff696e639f2a76a9c2be30ddc0f5568ad520daf",
+          "output_sha256": "86282b78aebebe801a0f018a84c4c62e5771d9a4edbe436df1bf5b3647ee9ee8",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o2-i2-p0-none.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06414208700880408,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o2-i2-p0-none.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o2-i2-p0-none.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000285223,
+            "cfg_preparation_seconds": 6.919e-06,
+            "class_preparation_seconds": 4.38e-06,
+            "descriptor_tree_seconds": 6.278e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.3539e-05,
+            "map_preparation_seconds": 1.4148e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.46e-05,
+            "plan_serialization_seconds": 0.000112958,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.4491e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 9,
+          "commands": 33,
+          "matching": "closed",
+          "supplied_command_control_edges": 0,
+          "causal_reuse": {
+            "status": "passed"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": [
+            [
+              0,
+              1,
+              5
+            ],
+            [
+              1,
+              0,
+              3
+            ]
+          ]
+        },
+        {
+          "name": "o3-i1-p1-all",
+          "input_sha256": "86300dcd2837521ba2d79ba76c38b55c7b7ce6255c10dee90e29897355d8ebe7",
+          "output_sha256": "6a984c9c45f374e0209da68944fba09aca75fa7da36db115189af53d6da78866",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o3-i1-p1-all.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06409672135487199,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o3-i1-p1-all.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o3-i1-p1-all.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000308446,
+            "cfg_preparation_seconds": 6.962e-06,
+            "class_preparation_seconds": 4.974e-06,
+            "descriptor_tree_seconds": 6.7253e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.3242e-05,
+            "map_preparation_seconds": 1.4195e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.7205e-05,
+            "plan_serialization_seconds": 0.000113617,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.489e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 16,
+          "commands": 67,
+          "matching": "closed",
+          "supplied_command_control_edges": 27,
+          "causal_reuse": {
+            "status": "passed"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": [
+            [
+              0,
+              1,
+              3
+            ],
+            [
+              0,
+              1,
+              5
+            ],
+            [
+              1,
+              0,
+              3
+            ],
+            [
+              1,
+              0,
+              5
+            ]
+          ]
+        },
+        {
+          "name": "o3-i1-p1-first",
+          "input_sha256": "b8efeb2ddd009a3ae028931ecce19fdb88a3b92d1da9fa2726b92d9d44916431",
+          "output_sha256": "5df01be414e23d520d30211733fb4995568747d641251d836b9c67643c99140c",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o3-i1-p1-first.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06408521812409163,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o3-i1-p1-first.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o3-i1-p1-first.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000335129,
+            "cfg_preparation_seconds": 8.01e-06,
+            "class_preparation_seconds": 4.898e-06,
+            "descriptor_tree_seconds": 6.6173e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 0.000105559,
+            "map_preparation_seconds": 1.5193e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.8833e-05,
+            "plan_serialization_seconds": 0.000131462,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.6575e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 16,
+          "commands": 67,
+          "matching": "closed",
+          "supplied_command_control_edges": 27,
+          "causal_reuse": {
+            "status": "passed"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": [
+            [
+              0,
+              1,
+              3
+            ],
+            [
+              0,
+              1,
+              5
+            ],
+            [
+              1,
+              0,
+              3
+            ],
+            [
+              1,
+              0,
+              5
+            ]
+          ]
+        },
+        {
+          "name": "o3-i1-p0-none",
+          "input_sha256": "1b9b9d6d08f02ef9b7803ad93639518b94f4e2f0e3f51564064763e999061520",
+          "output_sha256": "5fbab8b3cedf3342c5291798e440185594da4a22bebafe36f51df2fa6cbcb33b",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/o3-i1-p0-none.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06405469682067633,
+            "stdout": ".local/scalar-native-order-20261021/scalar/o3-i1-p0-none.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/o3-i1-p0-none.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000292198,
+            "cfg_preparation_seconds": 7.374e-06,
+            "class_preparation_seconds": 4.201e-06,
+            "descriptor_tree_seconds": 6.6409e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 9.0646e-05,
+            "map_preparation_seconds": 1.5398e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.4445e-05,
+            "plan_serialization_seconds": 0.000123494,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.582e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 7,
+          "commands": 25,
+          "matching": "closed",
+          "supplied_command_control_edges": 0,
+          "causal_reuse": {
+            "status": "passed"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": [
+            [
+              0,
+              1,
+              5
+            ],
+            [
+              1,
+              0,
+              3
+            ]
+          ]
+        },
+        {
+          "name": "scalar-only-0-2",
+          "input_sha256": "e8e10e86425ec8941bc9148f64c992e02cc3823c29da385fd48392bf56a83b1b",
+          "output_sha256": "a56a9efcb4152bd73ad1549e6b9493f588cbb0e01ff41424deaab118022eae0c",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/scalar-only-0-2.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06418963428586721,
+            "stdout": ".local/scalar-native-order-20261021/scalar/scalar-only-0-2.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/scalar-only-0-2.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000229484,
+            "cfg_preparation_seconds": 6.13e-06,
+            "class_preparation_seconds": 4.492e-06,
+            "descriptor_tree_seconds": 4.2217e-05,
+            "edge_fact_transmissions": 13,
+            "emission_verification_seconds": 1.9376e-05,
+            "map_preparation_seconds": 7.46e-07,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 0,
+            "out_facts": 11,
+            "phase_index_seconds": 3.0186e-05,
+            "plan_serialization_seconds": 3.361e-05,
+            "selected_cross_services": 0,
+            "selected_self_prefixes": 3,
+            "solve_seconds": 9.597e-06
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 1,
+          "commands": 1,
+          "matching": "closed",
+          "supplied_command_control_edges": 0,
+          "causal_reuse": {
+            "status": "not_requested"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": []
+        },
+        {
+          "name": "scalar-only-1-1",
+          "input_sha256": "c852d97d79dea4fe74918d70d25cf52ad4a90207d26e889182d86c17fe75832a",
+          "output_sha256": "866260020aaa42a462c7ada3b1ad90e0ae4f8eb7e5bec3093ffcf6d90a8c31bc",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/scalar-only-1-1.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.0639704279601574,
+            "stdout": ".local/scalar-native-order-20261021/scalar/scalar-only-1-1.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/scalar-only-1-1.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000274413,
+            "cfg_preparation_seconds": 5.966e-06,
+            "class_preparation_seconds": 4.474e-06,
+            "descriptor_tree_seconds": 5.2724e-05,
+            "edge_fact_transmissions": 13,
+            "emission_verification_seconds": 2.1996e-05,
+            "map_preparation_seconds": 7.76e-07,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 0,
+            "out_facts": 11,
+            "phase_index_seconds": 2.7192e-05,
+            "plan_serialization_seconds": 3.2455e-05,
+            "selected_cross_services": 0,
+            "selected_self_prefixes": 3,
+            "solve_seconds": 1.0075e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 4,
+          "commands": 1,
+          "matching": "closed",
+          "supplied_command_control_edges": 0,
+          "causal_reuse": {
+            "status": "not_requested"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": []
+        },
+        {
+          "name": "scalar-only-2-3",
+          "input_sha256": "a28b09cd94d4a5af76e048efc206be16227b9f57b129d3f409ca250b353ac6ba",
+          "output_sha256": "d37fab84ddd183a0c52d5669d210a8ad67c2ec35ee019047456a9b23e606a143",
+          "run": {
+            "command": [
+              ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+              "--current-cut-output",
+              ".local/scalar-native-order-20261021/scalar/scalar-only-2-3.pto"
+            ],
+            "status": "success",
+            "returncode": 0,
+            "seconds": 0.06406660890206695,
+            "stdout": ".local/scalar-native-order-20261021/scalar/scalar-only-2-3.physical.pto",
+            "stderr": ".local/scalar-native-order-20261021/scalar/scalar-only-2-3.physical.stderr"
+          },
+          "work": {
+            "access_recovery_seconds": 0.000262487,
+            "cfg_preparation_seconds": 6.965e-06,
+            "class_preparation_seconds": 5.171e-06,
+            "descriptor_tree_seconds": 4.7517e-05,
+            "edge_fact_transmissions": 13,
+            "emission_verification_seconds": 2.2652e-05,
+            "map_preparation_seconds": 8.34e-07,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 0,
+            "out_facts": 11,
+            "phase_index_seconds": 3.0781e-05,
+            "plan_serialization_seconds": 3.9742e-05,
+            "selected_cross_services": 0,
+            "selected_self_prefixes": 3,
+            "solve_seconds": 1.0652e-05
+          },
+          "native_discharge_added_event_pairs": [],
+          "native_discharge_removed_event_pairs": [],
+          "payloads": 19,
+          "commands": 1,
+          "matching": "closed",
+          "supplied_command_control_edges": 0,
+          "causal_reuse": {
+            "status": "not_requested"
+          },
+          "extra_pairs": [],
+          "physical_added_event_pairs": [],
+          "physical_removed_event_pairs": [],
+          "ids": []
+        }
+      ],
+      "scaling": [
+        {
+          "stages": 1,
+          "trips": 1,
+          "work": {
+            "access_recovery_seconds": 0.000292174,
+            "cfg_preparation_seconds": 6.622e-06,
+            "class_preparation_seconds": 4.704e-06,
+            "descriptor_tree_seconds": 6.2245e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.1919e-05,
+            "map_preparation_seconds": 1.3888e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.6891e-05,
+            "plan_serialization_seconds": 0.00011032,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.5378e-05
+          },
+          "flags": 20,
+          "barriers": 3,
+          "bytes": 4244
+        },
+        {
+          "stages": 1,
+          "trips": 256,
+          "work": {
+            "access_recovery_seconds": 0.000282622,
+            "cfg_preparation_seconds": 6.911e-06,
+            "class_preparation_seconds": 4.089e-06,
+            "descriptor_tree_seconds": 5.7206e-05,
+            "edge_fact_transmissions": 57,
+            "emission_verification_seconds": 8.2561e-05,
+            "map_preparation_seconds": 1.3883e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 22,
+            "out_facts": 45,
+            "phase_index_seconds": 3.2581e-05,
+            "plan_serialization_seconds": 0.000110524,
+            "selected_cross_services": 5,
+            "selected_self_prefixes": 5,
+            "solve_seconds": 1.387e-05
+          },
+          "flags": 20,
+          "barriers": 3,
+          "bytes": 4245
+        },
+        {
+          "stages": 2,
+          "trips": 1,
+          "work": {
+            "access_recovery_seconds": 0.000329389,
+            "cfg_preparation_seconds": 7.18e-06,
+            "class_preparation_seconds": 4.464e-06,
+            "descriptor_tree_seconds": 6.6001e-05,
+            "edge_fact_transmissions": 61,
+            "emission_verification_seconds": 9.3372e-05,
+            "map_preparation_seconds": 1.4023e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 27,
+            "out_facts": 49,
+            "phase_index_seconds": 4.0588e-05,
+            "plan_serialization_seconds": 0.000130723,
+            "selected_cross_services": 6,
+            "selected_self_prefixes": 6,
+            "solve_seconds": 1.5258e-05
+          },
+          "flags": 24,
+          "barriers": 4,
+          "bytes": 4982
+        },
+        {
+          "stages": 2,
+          "trips": 256,
+          "work": {
+            "access_recovery_seconds": 0.000310791,
+            "cfg_preparation_seconds": 6.994e-06,
+            "class_preparation_seconds": 4.408e-06,
+            "descriptor_tree_seconds": 7.4784e-05,
+            "edge_fact_transmissions": 61,
+            "emission_verification_seconds": 9.3144e-05,
+            "map_preparation_seconds": 1.4718e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 27,
+            "out_facts": 49,
+            "phase_index_seconds": 4.0884e-05,
+            "plan_serialization_seconds": 0.000134908,
+            "selected_cross_services": 6,
+            "selected_self_prefixes": 6,
+            "solve_seconds": 1.5636e-05
+          },
+          "flags": 24,
+          "barriers": 4,
+          "bytes": 4983
+        },
+        {
+          "stages": 4,
+          "trips": 1,
+          "work": {
+            "access_recovery_seconds": 0.000367975,
+            "cfg_preparation_seconds": 7.659e-06,
+            "class_preparation_seconds": 4.491e-06,
+            "descriptor_tree_seconds": 9.407e-05,
+            "edge_fact_transmissions": 69,
+            "emission_verification_seconds": 0.000102598,
+            "map_preparation_seconds": 1.5541e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 37,
+            "out_facts": 57,
+            "phase_index_seconds": 4.3068e-05,
+            "plan_serialization_seconds": 0.000168116,
+            "selected_cross_services": 8,
+            "selected_self_prefixes": 8,
+            "solve_seconds": 1.3252e-05
+          },
+          "flags": 32,
+          "barriers": 6,
+          "bytes": 6458
+        },
+        {
+          "stages": 4,
+          "trips": 256,
+          "work": {
+            "access_recovery_seconds": 0.000356655,
+            "cfg_preparation_seconds": 7.836e-06,
+            "class_preparation_seconds": 4.305e-06,
+            "descriptor_tree_seconds": 9.2441e-05,
+            "edge_fact_transmissions": 69,
+            "emission_verification_seconds": 0.000101359,
+            "map_preparation_seconds": 1.5606e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 37,
+            "out_facts": 57,
+            "phase_index_seconds": 4.1145e-05,
+            "plan_serialization_seconds": 0.000180884,
+            "selected_cross_services": 8,
+            "selected_self_prefixes": 8,
+            "solve_seconds": 1.3842e-05
+          },
+          "flags": 32,
+          "barriers": 6,
+          "bytes": 6459
+        },
+        {
+          "stages": 8,
+          "trips": 1,
+          "work": {
+            "access_recovery_seconds": 0.000460603,
+            "cfg_preparation_seconds": 8.753e-06,
+            "class_preparation_seconds": 6.518e-06,
+            "descriptor_tree_seconds": 0.000123757,
+            "edge_fact_transmissions": 85,
+            "emission_verification_seconds": 0.000138473,
+            "map_preparation_seconds": 1.7306e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 57,
+            "out_facts": 73,
+            "phase_index_seconds": 6.1467e-05,
+            "plan_serialization_seconds": 0.000277998,
+            "selected_cross_services": 12,
+            "selected_self_prefixes": 12,
+            "solve_seconds": 1.5904e-05
+          },
+          "flags": 48,
+          "barriers": 10,
+          "bytes": 9410
+        },
+        {
+          "stages": 8,
+          "trips": 256,
+          "work": {
+            "access_recovery_seconds": 0.000427513,
+            "cfg_preparation_seconds": 9.486e-06,
+            "class_preparation_seconds": 4.194e-06,
+            "descriptor_tree_seconds": 0.000126954,
+            "edge_fact_transmissions": 85,
+            "emission_verification_seconds": 0.000133142,
+            "map_preparation_seconds": 1.9103e-05,
+            "native_self_discharges": 3,
+            "ordered_command_sites": 57,
+            "out_facts": 73,
+            "phase_index_seconds": 5.7772e-05,
+            "plan_serialization_seconds": 0.00029721,
+            "selected_cross_services": 12,
+            "selected_self_prefixes": 12,
+            "solve_seconds": 1.8417e-05
+          },
+          "flags": 48,
+          "barriers": 10,
+          "bytes": 9411
+        }
+      ],
+      "negative_controls": [
+        {
+          "name": "vector-barrier",
+          "removed_commands": 1,
+          "uncovered": [
+            1,
+            2
+          ]
+        },
+        {
+          "name": "vector-to-scalar",
+          "removed_commands": 4,
+          "uncovered": [
+            1,
+            2
+          ]
+        },
+        {
+          "name": "omitted-native-scalar-edge",
+          "uncovered_without_premise": [
+            1,
+            2
+          ]
+        }
+      ],
+      "unknown_scalar_negative": {
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--current-cut-output",
+          ".local/scalar-native-order-20261021/scalar/unknown-scalar-domain.pto"
+        ],
+        "status": "failure",
+        "returncode": 1,
+        "seconds": 0.0646656877361238,
+        "stdout": ".local/scalar-native-order-20261021/scalar/unknown-scalar-domain.physical.pto",
+        "stderr": ".local/scalar-native-order-20261021/scalar/unknown-scalar-domain.physical.stderr"
+      },
+      "cpp": {
+        "command": [
+          ".venv/bin/python",
+          ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+          "--pto-arch=a3",
+          "--pto-level=level3",
+          "--enable-insert-sync=false",
+          "--enable-plan-memory=false",
+          ".local/scalar-native-order-20261021/scalar/o2-i2-p1-first.physical.pto",
+          "-o",
+          ".local/scalar-native-order-20261021/scalar/scalar-services.cpp"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.4158570161089301,
+        "stdout": ".local/scalar-native-order-20261021/scalar/cpp.stdout",
+        "stderr": ".local/scalar-native-order-20261021/scalar/cpp.stderr",
+        "output": ".local/scalar-native-order-20261021/scalar/scalar-services.cpp",
+        "sha256": "ceeb5d3bde17d1c6e1283b038a36ef5bbc1a620e15c73bfc2cbd70157b8495b2",
+        "bytes": 2700
+      }
+    },
+    "native_discharge_full_relation_added_pairs": 0,
+    "native_discharge_full_relation_removed_pairs": 0,
+    "prior_non_scalar_cases": 24,
+    "preservation": {
+      "cases": 9,
+      "artifacts": 36,
+      "byte_identical": 32,
+      "same_optimizer_artifacts": 12,
+      "same_optimizer_identical": 12,
+      "differences": [
+        {
+          "kernel": "persistent_gemm",
+          "alias": "may-not-alias",
+          "stages": [
+            "logical",
+            "allocation-support",
+            "physical",
+            "cpp"
+          ]
+        }
+      ],
+      "provenance": "Reused runner refreshed its previous fixed raw directory. Current copy retained here; previous report/source unchanged, previous raw receipt hash historical. Other baseline optimizer versions are identified per artifact."
+    },
+    "compliance": {
+      "findings": [
+        {
+          "path": "lib/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.cpp",
+          "line": 24,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "        if (site.modes.size() != classes) {\n            return \"inconsistent class inventory\";\n        }\n        for (auto mode : site.modes) {",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "lib/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.cpp",
+          "line": 44,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "            if (next >= graph.size() || !edges.insert(next).second) {\n                return \"invalid or repeated CFG edge\";\n            }\n        }",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/CurrentCutNativeOrder.h",
+          "line": 38,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "        if (pto::resultAvailability(phase, get.getDst()) != pto::SyncResultAvailability::SynchronousScalar) {\n            return NativeOrder::Unknown;\n        }\n        memory = get.getSrc();",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/CurrentCutNativeOrder.h",
+          "line": 50,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "    if (!space || space.getAddressSpace() != pto::AddressSpace::VEC ||\n        !pto::frontiersynch::ptoStorageProtection().protectsScalar(scalar, scalar)) {\n        return NativeOrder::Unknown;\n    }",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/CurrentCutServiceChecks.cpp",
+          "line": 76,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "        if (op->getName().getDialectNamespace() == \"pto\" && !allowed.contains(op->getName().getStringRef()) &&\n            !isa<pto::AllocTileOp, pto::MakeTensorViewOp, pto::PartitionViewOp>(op)) {\n            if (!unsupported) {\n                unsupported = op;",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/CurrentCutServiceChecks.cpp",
+          "line": 89,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "        if (isa<func::CallOp, scf::WhileOp>(op) || (isa<scf::ForOp>(op) && op->getNumResults())) {\n            if (!unsupported) {\n                unsupported = op;\n            }",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/CurrentCutServiceChecks.cpp",
+          "line": 124,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "    if (failed(readiness) || readiness->size()) {\n        return function.emitError(\"current-cut: non-storage readiness needs a qualified completion cut\");\n    }\n    for (const auto* phase : input.instructions()) {",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/CurrentCutServiceChecks.cpp",
+          "line": 132,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "        if (index.phasesFor(phase->elementOp).size() != 1) {\n            return function.emitError(\"current-cut: compound phase cut unavailable\");\n        }\n    }",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/CurrentCutServiceChecks.cpp",
+          "line": 177,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "        if (ordinal < 0 || uint64_t(ordinal) >= pool.size()) {\n            return function.emitError(\"current-cut: eligible role reservation unavailable\");\n        }\n        fs::PhysicalRecordAllocation allocation;",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/CurrentCutServiceChecks.cpp",
+          "line": 199,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "        if (id < 0 || uint64_t(id) >= input.instructions().size()) {\n            return function.emitError(\"current-cut: invalid planned occurrence\");\n        }\n        auto* cut = input.instructions()[id]->elementOp;",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/CurrentCutServiceChecks.cpp",
+          "line": 209,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "                if (current_cut::nativeOrder(*input.instructions()[id], architecture, core) ==\n                    current_cut::NativeOrder::Serialized) {\n                    ++nativeDischarges;\n                    continue;",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/CurrentCutServiceChecks.cpp",
+          "line": 240,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "            if (!capability.available.value_or(false) || pipe != (op == \"S\" ? source : target)) {\n                return function.emitError(\"current-cut: direction unavailable or endpoint inconsistent\");\n            }\n            auto mapping = fs::planPhysicalEndpointMap(cut, {allocation}, {{}}, 1, false, dominance);",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/CurrentCutServiceChecks.cpp",
+          "line": 302,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "    if (failed(adapter.prepare()) || failed(adapter.emit())) {\n        return failure();\n    }\n    staging.commit(original);",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/SourcePipeServiceChecks.cpp",
+          "line": 96,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "            if (!pipe || *pipe < 0 || uint64_t(*pipe) > UINT32_MAX || !facts) {\n                error = \"invalid source pipe or facts\";\n                return false;\n            }",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/SyncLogicalInsertionChecks.cpp",
+          "line": 238,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "    if (op.getNumResults() != 1 || scalarObservation >= observations.size()) {\n        return fail(\"missing observed scalar access result\");\n    }\n    auto value = dyn_cast<TypedAttr>(observations[scalarObservation]);",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/SyncLogicalInsertionChecks.cpp",
+          "line": 242,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "    if (!value || (!isa<FloatAttr, IntegerAttr>(value)) || value.getType() != op.getResult(0).getType()) {\n        return fail(\"observed scalar access result has the wrong type\");\n    }\n    values[op.getResult(0)] = value;",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        },
+        {
+          "path": "tools/pto-test-opt/pto-sync-input-test.cpp",
+          "line": 2006,
+          "rule": "G.FMT.11-CPP",
+          "disposition": "false-positive",
+          "evidence": "  if (argc == 3 && StringRef(argv[1]) == \"--source-pipe-json\") { return runSourcePipeServicesJson(argv[2]); }\n  if (argc == 3 && StringRef(argv[1]) == \"--compact-region-contract\") {\n    return runCompactRegionContract(argv[2]);\n  }",
+          "reason": "Nested-call/multiline-condition regex stopped before the full condition; the complete statement has a braced body. Reviewed individually."
+        }
+      ],
+      "unresolved_findings": [],
+      "scope": "C++17 experimental adapter/tests; no release-hardening changes",
+      "quality_limits": "No EChecker/SecK/SecL, sanitizer, or automatic duplication/complexity qualification claimed."
+    },
+    "ruff": "F checks pass with target-version py312; default py37 conflicts with pre-existing walrus syntax"
+  },
+  "scaling": [
+    {
+      "stages": 1,
+      "trips": 1,
+      "added_operation_histogram": {
+        "arith.constant": 40,
+        "pto.barrier": 3,
+        "pto.set_flag": 10,
+        "pto.wait_flag": 10
+      },
+      "flags": 20,
+      "barriers": 3,
+      "bytes": 4244,
+      "out_facts": 45,
+      "native_self_discharges": 3
+    },
+    {
+      "stages": 1,
+      "trips": 256,
+      "added_operation_histogram": {
+        "arith.constant": 40,
+        "pto.barrier": 3,
+        "pto.set_flag": 10,
+        "pto.wait_flag": 10
+      },
+      "flags": 20,
+      "barriers": 3,
+      "bytes": 4245,
+      "out_facts": 45,
+      "native_self_discharges": 3
+    },
+    {
+      "stages": 2,
+      "trips": 1,
+      "added_operation_histogram": {
+        "arith.constant": 48,
+        "pto.barrier": 4,
+        "pto.set_flag": 12,
+        "pto.wait_flag": 12
+      },
+      "flags": 24,
+      "barriers": 4,
+      "bytes": 4982,
+      "out_facts": 49,
+      "native_self_discharges": 3
+    },
+    {
+      "stages": 2,
+      "trips": 256,
+      "added_operation_histogram": {
+        "arith.constant": 48,
+        "pto.barrier": 4,
+        "pto.set_flag": 12,
+        "pto.wait_flag": 12
+      },
+      "flags": 24,
+      "barriers": 4,
+      "bytes": 4983,
+      "out_facts": 49,
+      "native_self_discharges": 3
+    },
+    {
+      "stages": 4,
+      "trips": 1,
+      "added_operation_histogram": {
+        "arith.constant": 64,
+        "pto.barrier": 6,
+        "pto.set_flag": 16,
+        "pto.wait_flag": 16
+      },
+      "flags": 32,
+      "barriers": 6,
+      "bytes": 6458,
+      "out_facts": 57,
+      "native_self_discharges": 3
+    },
+    {
+      "stages": 4,
+      "trips": 256,
+      "added_operation_histogram": {
+        "arith.constant": 64,
+        "pto.barrier": 6,
+        "pto.set_flag": 16,
+        "pto.wait_flag": 16
+      },
+      "flags": 32,
+      "barriers": 6,
+      "bytes": 6459,
+      "out_facts": 57,
+      "native_self_discharges": 3
+    },
+    {
+      "stages": 8,
+      "trips": 1,
+      "added_operation_histogram": {
+        "arith.constant": 96,
+        "pto.barrier": 10,
+        "pto.set_flag": 24,
+        "pto.wait_flag": 24
+      },
+      "flags": 48,
+      "barriers": 10,
+      "bytes": 9410,
+      "out_facts": 73,
+      "native_self_discharges": 3
+    },
+    {
+      "stages": 8,
+      "trips": 256,
+      "added_operation_histogram": {
+        "arith.constant": 96,
+        "pto.barrier": 10,
+        "pto.set_flag": 24,
+        "pto.wait_flag": 24
+      },
+      "flags": 48,
+      "barriers": 10,
+      "bytes": 9411,
+      "out_facts": 73,
+      "native_self_discharges": 3
+    }
+  ],
+  "delta": {
+    "serialized_tgetval_sites": [
+      {
+        "site": 9,
+        "line": 121
+      },
+      {
+        "site": 20,
+        "line": 153
+      }
+    ],
+    "first_refusal": {
+      "site": 0,
+      "line": 100,
+      "operation": "pto.load",
+      "category": "experimental primitive admission/operation contract",
+      "message": "loc(\"test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto\":100:16): error: current-cut: unsupported command/compound/control contract for pto.load"
+    },
+    "minimal_witness": ".local/scalar-native-order-20261021/load-bound.pto",
+    "whole_delta_emission": false
+  },
+  "reproducibility": {
+    "cwd": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input",
+    "commands": [
+      [
+        "cmake",
+        "--build",
+        ".local/section8-refactor/source-pinned/candidate-build",
+        "--target",
+        "pto-sync-input-test",
+        "pto-test-opt",
+        "--parallel",
+        "2"
+      ],
+      [
+        ".venv/bin/python",
+        "test/lit/pto/Inputs/check_scalar_current_cut_services.py",
+        "--trace-tool",
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--output",
+        ".local/scalar-native-order-20261021/scalar",
+        "--cli",
+        ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+        "--python",
+        ".venv/bin/python"
+      ],
+      [
+        ".venv/bin/python",
+        "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+        "-j1",
+        "--filter",
+        "sync_(scalar_current_cut_services|scalar_protection|hardware_protection|native_scalar_corpus|source_pipe_services|current_cut_services)\\.pto",
+        "--output",
+        ".local/scalar-native-order-20261021/final-gate.json",
+        ".local/section8-refactor/source-pinned/candidate-build/test/lit"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--step1-json",
+        "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        "test/npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/scalar-native-order-20261021/load-bound.pto"
+      ]
+    ],
+    "copy_before_build": "Synchronize changed source/test files into .local/section8-refactor/source-pinned/candidate-source before using its preconfigured Linux build",
+    "lit_environment": "PATH starts with workspace .venv/bin",
+    "per_subprocess_watchdog_seconds": 35,
+    "aggregate_intensive_worker_limit": 2,
+    "full_gate_commands": "Exact expanded commands and test names retained in gate.json"
+  },
+  "artifacts_sha256": {
+    ".local/scalar-native-order-20261021/start.json": "ce79ff9f11b70da2074f8722b790a2115f61879a5a8ad588da883faf920c25e0",
+    ".local/scalar-native-order-20261021/gate.json": "024563da71e8b908c9b874ac016d333e1ee3312d9998110f0d9158414e8d9025",
+    ".local/scalar-native-order-20261021/final-gate.json": "3e90e9414c6476e20f5e4b9b59974d1517f7cd455e025bd708411dda0d262551",
+    ".local/scalar-native-order-20261021/scalar/receipt.json": "94fd522ddea66379a7e8f6e2e1fff31a2ce78c72c38d28e66558b988d9dd348a",
+    ".local/scalar-native-order-20261021/scaling-summary.json": "2c7b0507f623c6e17bf21611e316bc12d8702c3dcb8e43591b8a2853992ebc8b",
+    ".local/scalar-native-order-20261021/preservation/receipt.json": "07973b22247b06eead2232f43b8dcd2cd3c02cfbb9a2fb2323841443d2d1cb82",
+    ".local/scalar-native-order-20261021/protection-preservation.json": "d450b301772d162aa27b7e739b13e5c96a201b36296a85c0172ba3d1d9a732e6",
+    ".local/scalar-native-order-20261021/delta-inventory.json": "8a162f38600e9b36fa435f6fc69a9e71d267d37b3cdf2d3499303015016339d5",
+    ".local/scalar-native-order-20261021/delta.stderr": "c5039e0dbb763ff0edfc459266558620656a480bfeb57343ec7513a8706e19c5",
+    ".local/scalar-native-order-20261021/load-bound.pto": "5068fbe44779b868531211b2f5c49a0405fc278ff57407653692aa222a533f78",
+    ".local/scalar-native-order-20261021/load-bound.json": "2c80a1533f5b19975e452c57a89e1e312bae099c4e59052a454308912aa520d1",
+    ".local/scalar-native-order-20261021/load-bound.stderr": "ef698b66123fc09720261c39c7f5628b669af4b129ad6057a4659f58e1f842bf",
+    ".local/scalar-native-order-20261021/compliance-final.log": "a9eda3d0467eb908e4068fd21a367a054ccded4c7227fcd776f40fb61e597eef",
+    ".local/scalar-native-order-20261021/compliance-review.json": "63819263174f2406012fc514afaab43f1a340d2f12493b513eda5df98ed02e3f",
+    ".local/scalar-native-order-20261021/ruff-final.log": "42cdde5e242c282ba39bfd186d9c5a1912acd80ed58dc56095e37cfb492a5978",
+    ".local/scalar-native-order-20261021/build1.log": "74b68a1fe5838e7632e6bcefcd72f84c0f87ab62c23fb17ebbc83b0362cb7abc",
+    ".local/scalar-native-order-20261021/build2.log": "8a50ea461c846cccb47806a28cb4a1ef440b3a8b509b22227de722d3a65d2a0f",
+    ".local/scalar-native-order-20261021/build3.log": "2ca72732d8ccfc695cd2472e0b917db1a255b2bbc4bccf027fa46a8509f5ec5b",
+    ".local/scalar-native-order-20261021/record_checkpoint.py": "edbf6bd1dae9df448c0d2aeba05105711a5c7c29f693b2b4a2e29d28bd387b3e",
+    "docs/designs/frontier-scalar-native-order-20261021.md": "83d24989fc109badaf6075e985aef365cf440dc917c062b00ea899f6044b7220"
+  },
+  "paper_consequences": {
+    "section3": "Distinguish serial pipes from overlapping native pipe chains, with scoped premises.",
+    "section6": "Selected obligations may be discharged by native order; no dataflow change or general token-realization proof.",
+    "section7": "Cross-pipe services still require owned eligible IDs and reuse proofs; scalar barriers consume none.",
+    "section5": "Correct native graph may change exact covers; exact/core-chain algorithms were not modified."
+  },
+  "not_claimed": [
+    "device compilation/execution",
+    "whole-Delta emission",
+    "new production dispatch",
+    "general token realization",
+    "blanket PIPE_FIX or matrix-pipe serialization",
+    "broad speedup",
+    "complete static-analyzer/sanitizer qualification"
+  ],
+  "committed": false
+}

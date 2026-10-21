@@ -1,0 +1,724 @@
+{
+  "task": "Source-pipe analysis and qualified current-cut emission",
+  "starting_revision": "29cd96a2af94fd9d9b5c5711561a0222df67b37a",
+  "starting_status": "",
+  "dirty_source_sha256": {
+    "lib/PTO/Transforms/CMakeLists.txt": "c0cf23652ed4026488b0cca05108df545a121e4109b8fdde451383ba5c1c1e31",
+    "tools/pto-test-opt/CMakeLists.txt": "cf42feb19cd45892bf9f83f4ff6bc79d5307dba2e8a2aba681b0f730feefd53d",
+    "tools/pto-test-opt/CompletionDataflowInput.h": "3f6360d46f4b4c5e83475e1778eb7dd0dc3f84a95f684f608fd10ba5436b076a",
+    "tools/pto-test-opt/pto-sync-input-test.cpp": "ec2007f67acd6220d0ba0649a4298124411cef43636aaeb34f6fdfe9fb121881",
+    "docs/designs/frontier-conservative-services-prototype-20261021.md": "a511782b57d2d17ac9227608f0bb5641006880947797d415f5836455211966ac",
+    "include/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.h": "c17b4df3a9936db51a87ee88b427530fe41cedf94d26196301ba4a6ae7c9bfdc",
+    "lib/PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.cpp": "18a39719ea6c7971ccd947bd38836b0c9507a98edcc8768af196240009fb5f82",
+    "test/lit/pto/Inputs/check_current_cut_services.py": "52c0f52614d0b3872cdf981fa92b3f1edb2efd1884e387e762291e078c5e1a77",
+    "test/lit/pto/Inputs/check_source_pipe_services.py": "f59c6a39b0f896e9d11c187e70b2f421e1a8452567084d649b17fa68fa28c3a8",
+    "test/lit/pto/sync_current_cut_services.pto": "961591b4495fd7c1330cfec96584a9d0fcef84b6281bce02c88f5632529db2d1",
+    "test/lit/pto/sync_source_pipe_services.pto": "afb28622cc4990431e84c525f2383b970d1a33c6bd39fd8b2d9ecc1896b57db1",
+    "tools/pto-test-opt/CurrentCutServiceChecks.cpp": "855a0a261c29e07f0d4f057f1cd6e51a52ad95abb4036239cf2a6cadba33fdbd",
+    "tools/pto-test-opt/SourcePipeServiceChecks.cpp": "a5cfb560c823c9221bcf2db654b26aa3e60c8355e99da8b95e35827b6386f91b",
+    "tools/pto-test-opt/SourcePipeServiceChecks.h": "5654bd64946a9fb9557c8e8e256ffc00512924e9aa20526b6d1649868d51652a"
+  },
+  "tracked_patch_sha256": "b4ff28163939ea1701c4d1ae9f5f1dcddb9327500ed1974b6146d2bdfd0cbea5",
+  "tools": {
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test": "db4d68cd85a06eeec5604208ec428c36ab8413e9784881a89f633a418fb0452c",
+    ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-test-opt": "1fc013d516394047e5e1ccc0ffe50fc36c145e39d7dd71227c2be631d478cf94",
+    ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas": "89fa0f69d6af6db6673954389763ae2f6e57613ea7946ef6f32234d6daef7a85",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/_core.cpython-312-x86_64-linux-gnu.so": "8937210969cbb8a5d91fb184b7fb7c7c794969c3999c4baa6f4af6945a27853c",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_mlirDialectsLLVM.cpython-312-x86_64-linux-gnu.so": "81812065ca68d8f57e4cb99a7425825623b2df00e0201f81fc564a0faf09b5e4",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_mlir.cpython-312-x86_64-linux-gnu.so": "ee060cbb5a9f882a1376a3a5dab11b2224bd906fa096b709f90a21e7e20d9ff2",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/_site_initialize_0.cpython-312-x86_64-linux-gnu.so": "4764f1967c3e5acf5361e559aa3b2f33ec0a606e0122c524552d8a6e96f80082",
+    ".local/section8-refactor/source-pinned/candidate-build/python/ptoas/mlir/_mlir_libs/libPTOASCompiler.so": "a2a9f8350428f1e24947e0e6b233599c793d49573a036e7e57ea1babf93a5f29"
+  },
+  "input_sha256": "cbea9bc8bb4495be482f84dd5f1b670a2ee9f81464638b9d432f6e0fc1813b2e",
+  "research_inputs": {
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/prototype-conservative-services-task-2026-10-21.md": "c18a13e709b7061b687b720e832f2f4409a0c7f28ff2904697f9f6b0396c2001",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/experiment-X10-source-pipe-projection-2026-10-21.md": "e641dc28ed4d5fe2bd3039a0c5dc73d4204b81015a613408e6d40f2fd60d279e",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/source_pipe_projection_experiment.py": "b37a4e5632fe51fde6bcd8f843193014d0f9cfa4ac0d8067f1376f4e5e313b79",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/source-pipe-projection-results.json": "aaf9047c6ac9dad5fdecbda11dbc2ba7bce8caf35a56ab6da49fbf527c3f4881",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/experiment-X06-current-cuts-2026-10-21.md": "8cbfd2f41084d0b36da4fae43ba84c4371204a0219b961918639dd37998cc842",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/current_cut_experiment.py": "185ec463cf95ffd679f851d72c982f0ce6f4172d88fc9954dec36387e9675ae3",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/experiment-X07-current-cut-reuse-2026-10-21.md": "0bae133f9d44930a6f2c476ca0e337c9cff42d68ca03c250f7a203a4d5a5cdf1",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/current_cut_physical_experiment.py": "cd9f1bfed9321c13164780796a1291780acea398a2cf0f5e75652a03ad66cf1c",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/experiment-X04-boundary-interface-2026-10-20.md": "c430bfd52a909144c9c50046c94cfa2f862193c12a8fe40eaf8b9cec3db175ca",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/current-cut-physical-results.json": "a10b66194f686f6b21a5d89e68852a97a9abf67b4cccea29870c7711396d2025",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/current-cut-refinement-results.json": "8dc91ad72cb5e245cb718690349b134fdaa4cc4bf9c0f0598f49fa348447c87c",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/service-deletion-results.json": "61f3505d8371de86edf9ead318931deae5e94f6f3492846a1dd61e8d493abf05",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/current-cut-physical-delta-command-tree.json": "9636319a93331ff464d3fd850d83afdd2cd6ce3900392c1aaa95323036a8f79f",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/current_cut_refinement_experiment.py": "59b24e85187abd523db73900d487fe58f6f862a936e382653916099fe7918c55",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/service_deletion_experiment.py": "1a37aae44cad68ed31d06d20fb6c07e6341f9ac0201ea528810e7a5f46d50fcf",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/compact_frontier_witness.py": "39452fe1bcdc4c4d368a503775230f28d7e65203455a679cde66f106e0893973",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/research-audits/child_boundary_experiment.py": "8b58ece5c4d15888112bd4f51551cbb32797fecd4ace9372330f1b06ff34b5b5"
+  },
+  "constraint": {
+    "host_only": true,
+    "aggregate_intensive_workers": 2,
+    "watchdog_seconds": 35,
+    "sourcepipe_refresh_on_delta": false,
+    "eligible_native_fixture_ids": [
+      3,
+      5
+    ]
+  },
+  "checkpoint1": {
+    "status": "passed",
+    "fresh_delta": {
+      "old_origin_pairs": 5497,
+      "old_out_facts": 13376,
+      "cfg_edges": 94,
+      "cfg_nodes": 89,
+      "cfg_preparation_seconds": 2.072e-05,
+      "edge_fact_transmissions": 1209,
+      "facts_retained": 1144,
+      "generated_insertions": 152,
+      "incoming_insertions": 1144,
+      "killed_arrivals": 0,
+      "plan_serialization_seconds": 0.002429046,
+      "prepared_modes": 234,
+      "selection_fact_inspections": 1014,
+      "solve_seconds": 9.4697e-05
+    },
+    "x10_delta": [
+      {
+        "name": "delta_coarse",
+        "old": {
+          "facts_retained": 13376,
+          "cfg_visits": 272,
+          "fact_inspections": 11856
+        },
+        "projected": {
+          "cfg_edges": 94,
+          "cfg_nodes": 89,
+          "cfg_preparation_seconds": 3.3669e-05,
+          "edge_fact_transmissions": 1209,
+          "facts_retained": 1144,
+          "generated_insertions": 152,
+          "incoming_insertions": 1144,
+          "killed_arrivals": 0,
+          "plan_serialization_seconds": 0.004679402,
+          "prepared_modes": 234,
+          "selection_fact_inspections": 1014,
+          "solve_seconds": 9.558e-05,
+          "state_bound_per_cut": 24
+        }
+      },
+      {
+        "name": "delta_refined",
+        "old": {
+          "facts_retained": 39336,
+          "cfg_visits": 272,
+          "fact_inspections": 34866
+        },
+        "projected": {
+          "cfg_edges": 94,
+          "cfg_nodes": 89,
+          "cfg_preparation_seconds": 3.5646e-05,
+          "edge_fact_transmissions": 11346,
+          "facts_retained": 10736,
+          "generated_insertions": 447,
+          "incoming_insertions": 10736,
+          "killed_arrivals": 0,
+          "plan_serialization_seconds": 0.004002665,
+          "prepared_modes": 2340,
+          "selection_fact_inspections": 9516,
+          "solve_seconds": 0.00098185,
+          "state_bound_per_cut": 240
+        }
+      }
+    ],
+    "equality": "every node IN/OUT; every possible pipe set; normalized logical and physical trees; role IDs; X09 unchanged candidate",
+    "synthetic_x10_cases": 20,
+    "scaling_x10_cases": 5,
+    "delta_single_observation_seconds": {
+      "access_recovery_seconds": 0.002608186,
+      "class_preparation_seconds": 2.8627e-05,
+      "descriptor_tree_seconds": 0.000319768,
+      "cfg_preparation_seconds": 2.072e-05,
+      "solve_seconds": 9.4697e-05,
+      "plan_serialization_seconds": 0.002429046
+    },
+    "scope": "exact projection of supplied conservative class model, not native physical-access exactness"
+  },
+  "checkpoint2": {
+    "status": "passed for scoped real recurrent A3 non-scalar invocation; Delta native realization remains refused",
+    "qualification": [
+      {
+        "premise": "payload correspondence",
+        "delta": "78 original phase sites/four pipes retained; compound/scalar adapter not qualified",
+        "accepted": "one original phase per admitted load/add/expand/store operation"
+      },
+      {
+        "premise": "shared cut/current control",
+        "delta": "structured source retained; scalar service cut contract unavailable",
+        "accepted": "commands immediately before original consumer in its original SCF block, pure current IV/entry controls"
+      },
+      {
+        "premise": "readiness",
+        "delta": "not discharged by storage analysis",
+        "accepted": "existing CompletionReadiness must succeed with zero missing cuts; no carried results"
+      },
+      {
+        "premise": "native commands",
+        "delta": "site 20 line 153 tgetval requests forbidden S local barrier; first whole-input witness site 9 line 121",
+        "accepted": "A3/AIV target capabilities checked; non-scalar scope only"
+      },
+      {
+        "premise": "ownership",
+        "delta": "abstract roles do not qualify whole Delta",
+        "accepted": "common physical preflight; no resident/hidden commands; explicit eligible pool"
+      },
+      {
+        "premise": "boundary",
+        "delta": "existing production completion retained",
+        "accepted": "whole isolated invocation, closed per-service matching, final ALL completion; no general imported command child"
+      }
+    ],
+    "emitter": "experimental test-driver only; one structured plan, FunctionStaging, PhysicalRecordAllocation and common constant-map planner/emitter",
+    "allocation": "producer-certified X07 role map through existing physical mapping services; not a newly successful general regional allocation export",
+    "cases": 24,
+    "cpp": {
+      "command": [
+        ".venv/bin/python",
+        ".local/section8-refactor/source-pinned/candidate-build/tools/ptoas/ptoas",
+        "--pto-arch=a3",
+        "--pto-level=level3",
+        "--enable-insert-sync=false",
+        "--enable-plan-memory=false",
+        ".local/conservative-services-20261021/native/o2-i3-first.physical.pto",
+        "-o",
+        ".local/conservative-services-20261021/native/current-cut.cpp"
+      ],
+      "status": "success",
+      "returncode": 0,
+      "seconds": 0.4662165520712733,
+      "stdout": ".local/conservative-services-20261021/native/cpp.stdout",
+      "stderr": ".local/conservative-services-20261021/native/cpp.stderr",
+      "output": ".local/conservative-services-20261021/native/current-cut.cpp",
+      "sha256": "887c9f7e66fff09fa4496298ba5e9ba677ec982a506d1ca5cf3f6fdf60f9df6b",
+      "bytes": 3554
+    },
+    "scaling": [
+      {
+        "stages": 1,
+        "trips": 1,
+        "seconds": 0.0643110410310328,
+        "original_arithmetic": 12,
+        "added_id_arithmetic": 16,
+        "introduced_guard_nodes": 0,
+        "retained_control_tests": 1,
+        "flags": 8,
+        "barriers": 3,
+        "arithmetic": 28,
+        "bytes": 2765
+      },
+      {
+        "stages": 1,
+        "trips": 256,
+        "seconds": 0.06443736283108592,
+        "original_arithmetic": 12,
+        "added_id_arithmetic": 16,
+        "introduced_guard_nodes": 0,
+        "retained_control_tests": 1,
+        "flags": 8,
+        "barriers": 3,
+        "arithmetic": 28,
+        "bytes": 2766
+      },
+      {
+        "stages": 2,
+        "trips": 1,
+        "seconds": 0.06449178513139486,
+        "original_arithmetic": 12,
+        "added_id_arithmetic": 24,
+        "introduced_guard_nodes": 0,
+        "retained_control_tests": 1,
+        "flags": 12,
+        "barriers": 4,
+        "arithmetic": 36,
+        "bytes": 3487
+      },
+      {
+        "stages": 2,
+        "trips": 256,
+        "seconds": 0.06444507418200374,
+        "original_arithmetic": 12,
+        "added_id_arithmetic": 24,
+        "introduced_guard_nodes": 0,
+        "retained_control_tests": 1,
+        "flags": 12,
+        "barriers": 4,
+        "arithmetic": 36,
+        "bytes": 3488
+      },
+      {
+        "stages": 4,
+        "trips": 1,
+        "seconds": 0.06491629825904965,
+        "original_arithmetic": 12,
+        "added_id_arithmetic": 40,
+        "introduced_guard_nodes": 0,
+        "retained_control_tests": 1,
+        "flags": 20,
+        "barriers": 6,
+        "arithmetic": 52,
+        "bytes": 4931
+      },
+      {
+        "stages": 4,
+        "trips": 256,
+        "seconds": 0.0648389090783894,
+        "original_arithmetic": 12,
+        "added_id_arithmetic": 40,
+        "introduced_guard_nodes": 0,
+        "retained_control_tests": 1,
+        "flags": 20,
+        "barriers": 6,
+        "arithmetic": 52,
+        "bytes": 4932
+      },
+      {
+        "stages": 8,
+        "trips": 1,
+        "seconds": 0.0641417670994997,
+        "original_arithmetic": 12,
+        "added_id_arithmetic": 72,
+        "introduced_guard_nodes": 0,
+        "retained_control_tests": 1,
+        "flags": 36,
+        "barriers": 10,
+        "arithmetic": 84,
+        "bytes": 7819
+      },
+      {
+        "stages": 8,
+        "trips": 256,
+        "seconds": 0.06415855092927814,
+        "original_arithmetic": 12,
+        "added_id_arithmetic": 72,
+        "introduced_guard_nodes": 0,
+        "retained_control_tests": 1,
+        "flags": 36,
+        "barriers": 10,
+        "arithmetic": 84,
+        "bytes": 7820
+      },
+      {
+        "stages": 16,
+        "trips": 1,
+        "seconds": 0.06435148976743221,
+        "original_arithmetic": 12,
+        "added_id_arithmetic": 136,
+        "introduced_guard_nodes": 0,
+        "retained_control_tests": 1,
+        "flags": 68,
+        "barriers": 18,
+        "arithmetic": 148,
+        "bytes": 13631
+      },
+      {
+        "stages": 16,
+        "trips": 256,
+        "seconds": 0.06476363306865096,
+        "original_arithmetic": 12,
+        "added_id_arithmetic": 136,
+        "introduced_guard_nodes": 0,
+        "retained_control_tests": 1,
+        "flags": 68,
+        "barriers": 18,
+        "arithmetic": 148,
+        "bytes": 13631
+      }
+    ],
+    "negative_results": [
+      {
+        "name": "one-role",
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            ".local/conservative-services-20261021/native/negative-one-role.pto"
+          ],
+          "status": "failure",
+          "returncode": 1,
+          "seconds": 0.06438353238627315,
+          "stdout": ".local/conservative-services-20261021/native/negative-one-role.output.pto",
+          "stderr": ".local/conservative-services-20261021/native/negative-one-role.output.stderr"
+        }
+      },
+      {
+        "name": "ineligible",
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            ".local/conservative-services-20261021/native/negative-ineligible.pto"
+          ],
+          "status": "failure",
+          "returncode": 1,
+          "seconds": 0.06438588118180633,
+          "stdout": ".local/conservative-services-20261021/native/negative-ineligible.output.pto",
+          "stderr": ".local/conservative-services-20261021/native/negative-ineligible.output.stderr"
+        }
+      },
+      {
+        "name": "unsupported-target",
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--current-cut-output",
+            ".local/conservative-services-20261021/native/negative-unsupported-target.pto"
+          ],
+          "status": "failure",
+          "returncode": 1,
+          "seconds": 0.06440976168960333,
+          "stdout": ".local/conservative-services-20261021/native/negative-unsupported-target.output.pto",
+          "stderr": ".local/conservative-services-20261021/native/negative-unsupported-target.output.stderr"
+        }
+      }
+    ],
+    "two_class_examples": [
+      {
+        "name": "two-class-all",
+        "payloads": 20,
+        "commands": 67,
+        "extra_completion_start_pairs": [
+          [
+            1,
+            2
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            4,
+            6
+          ],
+          [
+            6,
+            7
+          ],
+          [
+            7,
+            8
+          ],
+          [
+            7,
+            9
+          ],
+          [
+            9,
+            10
+          ],
+          [
+            10,
+            11
+          ],
+          [
+            10,
+            12
+          ],
+          [
+            12,
+            13
+          ],
+          [
+            13,
+            14
+          ],
+          [
+            13,
+            15
+          ],
+          [
+            15,
+            16
+          ],
+          [
+            16,
+            17
+          ],
+          [
+            16,
+            18
+          ],
+          [
+            18,
+            19
+          ]
+        ],
+        "added_vs_prefix": [],
+        "removed_vs_prefix": []
+      },
+      {
+        "name": "two-class-first",
+        "payloads": 16,
+        "commands": 47,
+        "extra_completion_start_pairs": [
+          [
+            1,
+            2
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            5,
+            6
+          ],
+          [
+            6,
+            7
+          ],
+          [
+            7,
+            8
+          ],
+          [
+            8,
+            9
+          ],
+          [
+            8,
+            10
+          ],
+          [
+            10,
+            11
+          ],
+          [
+            11,
+            12
+          ],
+          [
+            12,
+            13
+          ],
+          [
+            13,
+            14
+          ],
+          [
+            14,
+            15
+          ]
+        ],
+        "added_vs_prefix": [],
+        "removed_vs_prefix": []
+      }
+    ]
+  },
+  "validation": {
+    "focused_gate": {
+      "passed": 28,
+      "total": 28,
+      "receipt": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/gate.json"
+    },
+    "final_prototype_refresh": {
+      "passed": 2,
+      "total": 2,
+      "receipt": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/final-prototype-gate.json"
+    },
+    "source_model": "independent source layout interpreter; compiler cells/generators not used for concrete byte conflicts",
+    "command_model": "existing independent bounded command graph/matching/causal-reuse checks; native command semantics supplied",
+    "flags_at_exit": "closed matching within each executed service; final ALL separately establishes whole-invocation completion",
+    "production_optimizer_identical_to_starting_binary": true,
+    "raw_artifacts_identical": 32,
+    "raw_artifacts_compared": 36,
+    "historical_difference": "four Persistent may-not-alias artifacts differ against older compiler receipt; logical/support/physical equality established under checked non-escaping associative conjunction normalization; raw C++ remains distinct",
+    "same_start_optimizer_receipt_artifacts": {
+      "compared": 12,
+      "identical": 12
+    },
+    "compliance": "12 reviewed regex false positives, actual line length additions fixed; Ruff F/build/whitespace pass; external analyzers unavailable"
+  },
+  "unchanged": [
+    "production dispatch",
+    "SCC transfer",
+    "allocation algorithms",
+    "exact recognizers",
+    "expert protocols",
+    "zero-inner-body barriers",
+    "research token construction"
+  ],
+  "not_claimed": [
+    "whole Delta emission",
+    "new uniform token-to-SET/WAIT theorem",
+    "minimum demands for native accesses",
+    "general imported-child equality",
+    "small approximation factor",
+    "compiler/device speedup",
+    "device execution"
+  ],
+  "receipts": {
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/projected/receipt.json": "66b005f7e24b5af1889833a5248b4d2b7fcb7f7e05e73bb5167c9753ccb61542",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/native/receipt.json": "0e87824e6a62d8d0648f86ff72034595288b90b67a544b0578730b22e4569fbd",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/x10/receipt.json": "588e65f65755a23f8e45733098ae5366ac49cf6d31f7e698c2e0680b3547639d",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/preservation/receipt.json": "dc554c90927ccff1e128b62271d59502bea5e9a5206929971bcc46a738bd9880",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/gate.json": "8f68a6cadea0e29ad858fc83a15808932393e6ad47a22fd7344ab6a4555c2ed1",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/final-prototype-gate.json": "28a34132545cd3acdf27cb36973337680ff945569f17bd709f83358e23e7dc5d",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/compliance-review.json": "71f0157354103a618b57377f6cf5330dc62784536e9faf082938b9b9d9b2acfa",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/historical-conjunctions.json": "30449114122cf5abacf2de432a5868073f1bd282cf64bf78e6da8fa546933297",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/replay_x10.py": "47fe74c3c83c90336d656112f0f2afe618183f8bf90f32a53931a57744f05ffa",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/check_preservation.py": "bab9cd25aec9d1f102fe952bf2d0f982ee061508dba998463f927ad3ef633fed",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/check_historical_conjunctions.py": "52901c1515c80d36cfd906dca3b2be135f8761c079bc9bbe69823fae64e4bf43",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/build-accepted.log": "74b68a1fe5838e7632e6bcefcd72f84c0f87ab62c23fb17ebbc83b0362cb7abc",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/build-final-instrumentation.log": "6a50b7731817a94f72f78f67a8f903e461e76bc1cde102a49bed91ae1cc8a520",
+    "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/conservative-services-20261021/build-help-format.log": "6a50b7731817a94f72f78f67a8f903e461e76bc1cde102a49bed91ae1cc8a520"
+  },
+  "reused_production_probe": {
+    "path": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/production-review-20261021/followup.json",
+    "sha256": "f455309777a2e65c64fc1a18bd920b3c60ac92018534fcd5c6af0e0e1ec0a71f"
+  },
+  "reproducibility": {
+    "source_command": [
+      ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+      "--step1-json",
+      ".local/conservative-services-20261021/projected/delta.pto"
+    ],
+    "native_commands": [
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o0-i2-all.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o0-i2-none.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o0-i2-first.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o1-i0-all.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o1-i0-none.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o1-i0-first.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o1-i1-all.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o1-i1-none.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o1-i1-first.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o1-i3-all.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o1-i3-none.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o1-i3-first.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o2-i1-all.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o2-i1-none.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o2-i1-first.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o2-i3-all.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o2-i3-none.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o2-i3-first.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o3-i2-all.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o3-i2-none.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/o3-i2-first.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/two-class-all.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/two-class-first.pto"
+      ],
+      [
+        ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+        "--current-cut-output",
+        ".local/conservative-services-20261021/native/empty-invocation.pto"
+      ]
+    ],
+    "x10_command": [
+      ".venv/bin/python",
+      ".local/conservative-services-20261021/replay_x10.py"
+    ]
+  },
+  "review": "scoped self-review with independent host-model oracles; no external reviewer or device signoff",
+  "committed": false
+}

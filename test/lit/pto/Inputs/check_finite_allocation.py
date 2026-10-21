@@ -21,7 +21,7 @@ def run(tool, args, path):
     return subprocess.run([tool, *args, str(path)], capture_output=True, text=True, timeout=45)
 
 
-def physical_check(report, eligible):
+def physical_check(report, eligible, *, native_serial_pipes=()):
     assert report["accepted"] and report["allocated"], report
     logical, physical = report["trace"], report["physical"]
     assert not physical["error"] and len(logical["events"]) == len(physical["events"])
@@ -42,7 +42,9 @@ def physical_check(report, eligible):
             identity += (new["source_pipe"], new["target_pipe"])
             uses.append((len(commands), new["kind"], event, identity))
         commands.append(command)
-    reach = closure_with_commands(pipes, commands, include_commands=True)
+    reach = closure_with_commands(
+        pipes, commands, include_commands=True, native_serial_pipes=native_serial_pipes
+    )
     live, consumed = {}, {}
     for index, kind, event, identity in uses:
         vertex = 2 * len(pipes) + index

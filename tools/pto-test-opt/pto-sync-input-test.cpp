@@ -34,6 +34,7 @@
 #include "PTO/Transforms/FrontierSynch/Structured/BoundedLifetimeRegional.h"
 #include "PTO/IR/PTO.h"
 #include "SyncPhaseCopyChecks.h"
+#include "SourcePipeServiceChecks.h"
 #include "SequenceExplicitRetryChecks.h"
 #include "RetainedPeriodicRequestChecks.h"
 #include "RetainedControlSelectionChecks.h"
@@ -47,7 +48,10 @@
 #include "mlir/IR/AffineMap.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
+#include <chrono>
 using namespace mlir;
+LogicalResult emitCurrentCutServices(func::FuncOp, pto::GMAliasPolicy);
+llvm::json::Object inspectCurrentCutContracts(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSyncStorageMemberships(func::FuncOp, const pto::SyncInput&);
 bool checkBoundedRegionalQueries(const pto::frontiersynch::BoundedLifetimeDemandResult&,
     const pto::frontiersynch::BoundedLifetimeRecognition&, const pto::frontiersynch::PhaseIndex&,
@@ -2000,6 +2004,7 @@ bool runRegionalAllocationCandidateChecks(mlir::func::FuncOp function,
 LogicalResult emitFiniteComposed(func::FuncOp function, pto::GMAliasPolicy policy);
 int runCompactRegionContract(const char* filename);
 int main(int argc, char **argv) {
+  if (argc == 3 && StringRef(argv[1]) == "--source-pipe-json") { return runSourcePipeServicesJson(argv[2]); }
   if (argc == 3 && StringRef(argv[1]) == "--compact-region-contract") {
     return runCompactRegionContract(argv[2]);
   }
@@ -2159,6 +2164,8 @@ int main(int argc, char **argv) {
     for (int i = 1; i + 1 < argc; ++i) { argv[i] = argv[i + 1]; }
     --argc;
   }
+  const bool currentContracts = argc == 3 && StringRef(argv[1]) == "--current-cut-contracts";
+  const bool currentCut = currentContracts || (argc == 3 && StringRef(argv[1]) == "--current-cut-output");
   const bool contextualChecks = argc == 3 && StringRef(argv[1]) == "--contextual-local-access-checks";
   const bool descriptorChecks = argc == 3 && StringRef(argv[1]) == "--descriptor-state-checks";
   const bool stageProfileChecks = argc == 3 && StringRef(argv[1]) == "--stage-profile-checks";
@@ -2233,7 +2240,7 @@ int main(int argc, char **argv) {
   const bool sequenceAnalysis = argc == 3 && StringRef(argv[1]) == "--sequence-analysis";
   const bool structuredTrace = argc == 3 && StringRef(argv[1]) == "--structured-trace";
   const bool physicalTrace = argc == 3 && StringRef(argv[1]) == "--physical-trace";
-  if (argc != 2 && !contextualChecks && !descriptorChecks && !stageProfileChecks && !boundedQueries &&
+  if (argc != 2 && !currentCut && !contextualChecks && !descriptorChecks && !stageProfileChecks && !boundedQueries &&
       !identitySessionChecks && !allocationSessionChecks &&
       !regionalSessionChecks && !retainedChecks &&
       !sessionChecks && !rotatingAnalysis && !explicitAnalysis && !arithmetic && !finiteExpansion && !recognition &&
@@ -2270,7 +2277,8 @@ int main(int argc, char **argv) {
              "--arithmetic|--finite-expansion|--arithmetic-periodic-input-checks|"
              "--explicit-analysis|--rotating-analysis|--roundtrip|"
              "--region-contract-checks|"
-             "--step0-json|--step1-json|--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
+             "--source-pipe-json|--current-cut-output|--current-cut-contracts|--step0-json|--step1-json|"
+             "--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
       return 1;
   }
   DialectRegistry dialects;
@@ -2315,7 +2323,8 @@ int main(int argc, char **argv) {
   }
   context.disableMultithreading();
   const bool hasOption =
-      contextualChecks || descriptorChecks || stageProfileChecks || boundedQueries || identitySessionChecks ||
+      currentCut || contextualChecks || descriptorChecks || stageProfileChecks || boundedQueries ||
+      identitySessionChecks ||
       allocationSessionChecks ||
       regionalSessionChecks ||
       retainedChecks || sessionChecks ||
@@ -2496,6 +2505,21 @@ int main(int argc, char **argv) {
     const int64_t ids[] = {0, 1, 2, 3, 4, 5};
     for (auto function : module->getOps<func::FuncOp>()) {
       if (failed(mlir::pto::frontiersynch::allocateDeferredFamilyOutput(function, ids, true))) { return 1; }
+    }
+    module->print(llvm::outs());
+    return 0;
+  }
+  if (currentContracts) {
+    llvm::json::Array results;
+    for (auto function : module->getOps<func::FuncOp>()) {
+      results.push_back(inspectCurrentCutContracts(function, policy));
+    }
+    llvm::outs() << llvm::json::Value(std::move(results)) << "\n";
+    return 0;
+  }
+  if (currentCut) {
+    for (auto function : module->getOps<func::FuncOp>()) {
+      if (failed(emitCurrentCutServices(function, policy))) { return 1; }
     }
     module->print(llvm::outs());
     return 0;
@@ -3121,7 +3145,12 @@ int main(int argc, char **argv) {
   for (auto function : module->getOps<func::FuncOp>()) {
     const auto view = (step1 || finiteExpansion) ? pto::SyncInstructionView::PipeEnvelopes :
         pto::SyncInstructionView::TranslatorStages;
+    const auto inputStarted = std::chrono::steady_clock::now();
     const bool translated = succeeded(input.build(function, view));
+    if (step1 && function->hasAttr("test.reaching_access")) {
+      const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - inputStarted).count();
+      llvm::errs() << "source-pipe-access-recovery-seconds " << seconds << "\n";
+    }
     if (expectFailure) {
       if (translated || !input.ir().empty() || !input.instructions().empty() || !input.buffers().empty()) {
         return 1;

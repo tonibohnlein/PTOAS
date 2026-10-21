@@ -10,8 +10,11 @@
 #define PTO_TEST_COMPLETIONDATAFLOWINPUT_H
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/CompletionStorage.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "SourcePipeServiceChecks.h"
+#include "CurrentCutNativeOrder.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/JSON.h"
+#include <chrono>
 namespace completion_dataflow {
 using namespace mlir;
 namespace fs = pto::frontiersynch;
@@ -37,10 +40,21 @@ class Input {
 public:
     explicit Input(ArrayRef<const pto::CompoundInstanceElement*> instructions)
         : phases(instructions), storage(instructions)
-    {}
+    {
+        classSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
+    }
     llvm::json::Object exportFunction(func::FuncOp function)
     {
+        const auto start = std::chrono::steady_clock::now();
         llvm::json::Array sites;
+        std::string architecture;
+        for (Operation* op = function; op; op = op->getParentOp()) {
+            if (auto attr = op->getAttrOfType<StringAttr>("pto.target_arch")) {
+                architecture = attr.str();
+                break;
+            }
+        }
+        auto core = pto::recoverSyncPhysicalCore(function);
         for (const auto* phase : phases) {
             llvm::json::Array facts, effects;
             auto summary = storage.effects({phase});
@@ -53,11 +67,15 @@ public:
             for (const auto* memory : phase->defVec) {
                 effects.push_back(reservation(*memory, true));
             }
+            const auto order = current_cut::nativeOrder(*phase, architecture, core);
             sites.push_back(
                 llvm::json::Object{
                     {"line", line(phase->elementOp)},
                     {"operation", phase->opName.getStringRef()},
                     {"pipe", static_cast<unsigned>(phase->kPipeValue)},
+                    {"native_prefix_order", order == current_cut::NativeOrder::Serialized  ? "serialized" :
+                                            order == current_cut::NativeOrder::Overlapping ? "overlapping" :
+                                                                                             "unavailable"},
                     {"facts", std::move(facts)},
                     {"effects", std::move(effects)}});
         }
@@ -67,17 +85,26 @@ public:
         } else {
             tree = block(function.front());
         }
-        return llvm::json::Object{
+        llvm::json::Object result{
             {"classes", storage.size()},
             {"sites", std::move(sites)},
             {"tree", std::move(tree)},
             {"error", error},
-            {"guarantee", "static-may-storage-facts-only"}};
+            {"guarantee", "static-may-storage-facts-only"},
+            {"class_preparation_seconds", classSeconds},
+            {"descriptor_tree_seconds",
+             std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()}};
+        if (error.empty()) {
+            result["projected"] = exportSourcePipeServices(result);
+        }
+        return result;
     }
 
 private:
     ArrayRef<const pto::CompoundInstanceElement*> phases;
+    std::chrono::steady_clock::time_point began = std::chrono::steady_clock::now();
     fs::CompletionStorage storage;
+    double classSeconds = 0;
     std::string error;
     llvm::json::Array block(Block& source)
     {
