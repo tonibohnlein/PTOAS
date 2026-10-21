@@ -272,6 +272,96 @@ def negatives(args):
     return results
 
 
+def alias_contracts(args):
+    """Visibility qualification is independent of directional event capacity."""
+    readonly = fixture(1)
+    distinct = (
+        fixture(1, transfer=True)
+        .replace(
+            "(%bounds: !pto.ptr<f32, gm>)",
+            "(%bounds: !pto.ptr<f32, gm>, %output: !pto.ptr<f32, gm>)",
+        )
+        .replace("pto.make_tensor_view %bounds", "pto.make_tensor_view %output")
+    )
+    rows = []
+    for name, text in (("readonly", readonly), ("distinct-writer", distinct)):
+        source = args.output / f"alias-{name}.pto"
+        source.write_text(text)
+        for policy in ("may-alias", "may-not-alias"):
+            run = invoke(
+                [
+                    args.trace_tool,
+                    f"--gm-alias={policy}",
+                    "--current-cut-contracts",
+                    source,
+                ],
+                args.output / f"alias-{name}-{policy}.json",
+                35,
+            )
+            require(run["status"] == "success", str(run))
+            inventory = json.loads(Path(run["stdout"]).read_text())[0]
+            issues = inventory["issues"]
+            expected = name == "distinct-writer" and policy == "may-alias"
+            require(
+                bool(issues) == expected, f"alias qualification differs: {inventory}"
+            )
+            require(
+                all(i["contract"] == "gm-read-visibility" for i in issues), str(issues)
+            )
+            refusal = None
+            if expected:
+                refusal = invoke(
+                    [
+                        args.trace_tool,
+                        f"--gm-alias={policy}",
+                        "--current-cut-output",
+                        source,
+                    ],
+                    args.output / f"alias-{name}-{policy}-output.pto",
+                    35,
+                )
+                require(refusal["status"] == "failure", str(refusal))
+                diagnostic = Path(refusal["stderr"]).read_text()
+                require(
+                    "gm-read-visibility" in diagnostic
+                    and "eligible role reservation" not in diagnostic,
+                    diagnostic,
+                )
+            rows.append(
+                dict(
+                    name=name,
+                    policy=policy,
+                    inventory=inventory,
+                    run=run,
+                    emission_refusal=refusal,
+                )
+            )
+    empty = readonly.replace("array<i64: 3, 5>", "array<i64>")
+    source = args.output / "alias-empty-pool.pto"
+    source.write_text(empty)
+    contracts = invoke(
+        [args.trace_tool, "--current-cut-contracts", source],
+        args.output / "alias-empty-pool.json",
+        35,
+    )
+    require(contracts["status"] == "success", str(contracts))
+    require(
+        not json.loads(Path(contracts["stdout"]).read_text())[0]["issues"],
+        "capacity polluted contracts",
+    )
+    output = invoke(
+        [args.trace_tool, "--current-cut-output", source],
+        args.output / "alias-empty-pool-output.pto",
+        35,
+    )
+    require(output["status"] == "failure", str(output))
+    diagnostic = Path(output["stderr"]).read_text()
+    require("eligible role reservation unavailable" in diagnostic, diagnostic)
+    require("gm-read-visibility" not in diagnostic, diagnostic)
+    rows.append(dict(name="empty-pool", contracts=contracts, output=output))
+    return rows
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--trace-tool", type=Path, required=True)
@@ -363,6 +453,7 @@ def main():
                 cases=cases,
                 scaling=scaling,
                 negatives=negative,
+                alias_contracts=alias_contracts(args),
                 vector_service_negative=vector_negative,
                 cpp=cpp,
                 tool_sha256=digest(args.trace_tool),

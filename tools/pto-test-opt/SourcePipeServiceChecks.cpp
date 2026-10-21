@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SourcePipeServiceChecks.h"
+#include "PTO/Transforms/FrontierSynch/Shared/ServicePruning.h"
 #include "PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
@@ -276,6 +277,90 @@ llvm::json::Object exportSourcePipeServices(const llvm::json::Object& input)
                         {"killed_arrivals", w.killed},
                         {"selection_fact_inspections", w.inspected}}}};
 }
+llvm::json::Object exportSourcePipePruning(const llvm::json::Object& input, const llvm::json::Object& baseline)
+{
+    const auto started = std::chrono::steady_clock::now();
+    Input source;
+    if (!source.read(input)) {
+        return llvm::json::Object{{"accepted", false}, {"reason", source.error}};
+    }
+    fs::ServiceMask full, protectedPaths(source.sites.size());
+    auto readMask = [&](const llvm::json::Array* rows, fs::ServiceMask& mask) {
+        if (!rows || rows->size() != source.sites.size()) {
+            return false;
+        }
+        mask.clear();
+        for (const auto& value : *rows) {
+            auto* row = value.getAsArray();
+            if (!row) {
+                return false;
+            }
+            mask.emplace_back();
+            for (const auto& pipe : *row) {
+                auto number = pipe.getAsInteger();
+                if (!number || *number < 0 || uint64_t(*number) > UINT32_MAX) {
+                    return false;
+                }
+                mask.back().push_back(*number);
+            }
+        }
+        return true;
+    };
+    if (!readMask(baseline.getArray("possible"), full) ||
+        (input.get("protected_services") && !readMask(input.getArray("protected_services"), protectedPaths))) {
+        return llvm::json::Object{{"accepted", false}, {"reason", "invalid service masks"}};
+    }
+    if (input.get("baseline_services") && !readMask(input.getArray("baseline_services"), full)) {
+        return llvm::json::Object{{"accepted", false}, {"reason", "invalid diagnostic baseline mask"}};
+    }
+    const auto began = std::chrono::steady_clock::now();
+    auto proposal = fs::proposeLocalServices(source.graph, source.sites, full, protectedPaths);
+    if (!proposal.error.empty()) {
+        return llvm::json::Object{{"accepted", false}, {"reason", proposal.error}, {"certificate_runs", 0}};
+    }
+    // Diagnostic-only fixed candidates exercise joint rejection, including
+    // mutually redundant proposals. The emitter never supplies this field.
+    if (input.get("candidate_services") && !readMask(input.getArray("candidate_services"), proposal.kept)) {
+        return llvm::json::Object{{"accepted", false}, {"reason", "invalid candidate mask"}};
+    }
+    const auto proposed = std::chrono::steady_clock::now();
+    auto certificate = fs::certifyServiceDelivery(source.graph, source.sites, full, proposal.kept, protectedPaths);
+    const auto certified = std::chrono::steady_clock::now();
+    fs::SourcePipeServices selected;
+    selected.possible = proposal.kept;
+    llvm::json::Array kept;
+    for (const auto& row : proposal.kept) {
+        llvm::json::Array pipes;
+        for (auto pipe : row) {
+            pipes.push_back(pipe);
+        }
+        kept.push_back(std::move(pipes));
+    }
+    llvm::json::Object result{
+        {"accepted", certificate.accepted},
+        {"reason", certificate.error},
+        {"certificate_runs", 1},
+        {"input_preparation_seconds", std::chrono::duration<double>(began - started).count()},
+        {"proposal_seconds", std::chrono::duration<double>(proposed - began).count()},
+        {"verification_seconds", std::chrono::duration<double>(certified - proposed).count()},
+        {"proposal_nodes", proposal.nodes},
+        {"service_tests", proposal.tested},
+        {"class_tests", proposal.classTests},
+        {"class_updates", proposal.updates},
+        {"clear_entries", proposal.cleared},
+        {"proposed_deletions", proposal.deleted},
+        {"facts_retained", certificate.retained},
+        {"fact_transmissions", certificate.transmissions},
+        {"fact_inspections", certificate.inspected},
+        {"violations", certificate.violations},
+        {"kept", std::move(kept)}};
+    if (certificate.accepted) {
+        result["physical_plan"] = commandPlan(*input.getArray("tree"), source, selected, true);
+    }
+    result["plan_construction_seconds"] =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - certified).count();
+    return result;
+}
 int runSourcePipeServicesJson(const char* path)
 {
     auto buffer = llvm::MemoryBuffer::getFile(path);
@@ -293,6 +378,10 @@ int runSourcePipeServicesJson(const char* path)
         llvm::errs() << "source-pipe input must be an object\n";
         return 1;
     }
-    llvm::outs() << llvm::json::Value(exportSourcePipeServices(*input)) << "\n";
+    auto result = exportSourcePipeServices(*input);
+    if (input->getBoolean("prune").value_or(false) && result.getString("error").value_or("invalid").empty()) {
+        result["pruning"] = exportSourcePipePruning(*input, result);
+    }
+    llvm::outs() << llvm::json::Value(std::move(result)) << "\n";
     return 0;
 }

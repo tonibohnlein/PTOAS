@@ -29,6 +29,7 @@ struct Command {
     bool barrier = false, publish = false;
     uint32_t source = 0, target = 0;
     std::shared_ptr<const fs::PhysicalEndpointMap> mapping;
+    int64_t physicalId = -1;
 };
 void collectServices(const llvm::json::Array& tree, SmallVector<const llvm::json::Object*>& services)
 {
@@ -47,7 +48,9 @@ void collectServices(const llvm::json::Array& tree, SmallVector<const llvm::json
 }
 class Adapter {
 public:
-    explicit Adapter(func::FuncOp function, pto::GMAliasPolicy policy) : function(function), input(policy) {}
+    explicit Adapter(func::FuncOp function, pto::GMAliasPolicy policy, bool pruning)
+        : function(function), input(policy), pruning(pruning)
+    {}
     LogicalResult prepare();
     LogicalResult emit();
 
@@ -58,12 +61,15 @@ private:
     SmallVector<Command> commands;
     std::string architecture;
     pto::SyncPhysicalCore core = pto::SyncPhysicalCore::Unknown;
+    bool pruning = false;
     uint64_t nativeDischarges = 0, selectedSelf = 0, selectedCross = 0;
     double recoverySeconds = 0, indexSeconds = 0, mapsSeconds = 0;
     double nativeSeconds = 0, physicalMapSeconds = 0;
     llvm::json::Object work;
     SmallVector<int64_t> pool{0, 1, 2, 3, 4, 5};
     LogicalResult qualify();
+    bool verifyProtocol() const;
+    bool protectPaths(llvm::json::Object& description);
 };
 LogicalResult Adapter::qualify()
 {
@@ -115,6 +121,81 @@ LogicalResult Adapter::qualify()
     }
     return success();
 }
+bool Adapter::protectPaths(llvm::json::Object& description)
+{
+    // Admission already excludes completion-requiring payload results/cuts.
+    // Native scalar SSA/control paths remain in the original IR. Preserve all
+    // incident services too, rather than infer their support from storage.
+    bool qualified = true;
+    uint64_t native = 0;
+    function.walk([&](Operation* op) {
+        for (const auto& prerequisite : index.prerequisitesFor(op)) {
+            ++native;
+            qualified &= prerequisite.native && prerequisite.producer &&
+                         current_cut::nativeOrder(*prerequisite.producer, architecture, core) ==
+                             current_cut::NativeOrder::Serialized;
+        }
+    });
+    llvm::json::Array protectedPaths;
+    const auto& possible = *description.getObject("projected")->getArray("possible");
+    uint64_t protectedCount = 0;
+    for (std::size_t id = 0; id < possible.size(); ++id) {
+        llvm::json::Array row;
+        for (const auto& value : *possible[id].getAsArray()) {
+            auto source = *value.getAsInteger();
+            if (source == static_cast<uint32_t>(pto::PIPE::PIPE_S) ||
+                input.instructions()[id]->kPipeValue == pto::PipelineType::PIPE_S) {
+                row.push_back(source);
+                ++protectedCount;
+            }
+        }
+        protectedPaths.push_back(std::move(row));
+    }
+    description["protected_services"] = std::move(protectedPaths);
+    work["protected_scalar_services"] = protectedCount;
+    work["protected_native_prerequisites"] = native;
+    return qualified;
+}
+bool Adapter::verifyProtocol() const
+{
+    // Check the actual prepared command sequence and decoded constant IDs.
+    // Whole acknowledgments rearm each directional role before its next use.
+    std::map<std::pair<uint32_t, uint32_t>, std::map<bool, int64_t>> roles;
+    uint64_t checked = 0;
+    for (std::size_t i = 0; i < commands.size();) {
+        if (commands[i].barrier) {
+            ++i;
+            continue;
+        }
+        if (commands.size() - i < 4) {
+            return false;
+        }
+        const auto& a = commands[i];
+        const auto& b = commands[i + 1];
+        const auto& c = commands[i + 2];
+        const auto& d = commands[i + 3];
+        if (b.barrier || c.barrier || d.barrier || !a.publish || b.publish || !c.publish || d.publish ||
+            a.cut != b.cut || a.cut != c.cut || a.cut != d.cut || a.source != b.source || a.target != b.target ||
+            c.source != a.target || c.target != a.source || d.source != c.source || d.target != c.target ||
+            a.physicalId != b.physicalId || c.physicalId != d.physicalId || a.source == a.target) {
+            return false;
+        }
+        for (auto entry : {std::make_pair(&a, false), std::make_pair(&c, true)}) {
+            auto& assigned = roles[{entry.first->source, entry.first->target}];
+            auto old = assigned.find(entry.second);
+            if (old != assigned.end() && old->second != entry.first->physicalId) {
+                return false;
+            }
+            assigned[entry.second] = entry.first->physicalId;
+            if (assigned.size() == 2 && assigned[false] == assigned[true]) {
+                return false;
+            }
+        }
+        ++checked;
+        i += 4;
+    }
+    return checked == selectedCross;
+}
 LogicalResult Adapter::prepare()
 {
     if (failed(qualify())) {
@@ -127,6 +208,15 @@ LogicalResult Adapter::prepare()
     }
     work["class_preparation_seconds"] = *description.getNumber("class_preparation_seconds");
     work["descriptor_tree_seconds"] = *description.getNumber("descriptor_tree_seconds");
+    bool supported = false;
+    if (pruning) {
+        const auto supportingStart = std::chrono::steady_clock::now();
+        supported = protectPaths(description);
+        work["pruning_support_seconds"] =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - supportingStart).count();
+    }
+    // Adding protection can grow the root JSON DenseMap. Acquire references
+    // to its values only after that mutation, independently of bucket capacity.
     const auto& projected = *description.getObject("projected");
     const auto& metrics = *projected.getObject("metrics");
     work["cfg_preparation_seconds"] = *metrics.getNumber("cfg_preparation_seconds");
@@ -134,8 +224,22 @@ LogicalResult Adapter::prepare()
     work["plan_serialization_seconds"] = *metrics.getNumber("plan_serialization_seconds");
     work["out_facts"] = *metrics.getInteger("facts_retained");
     work["edge_fact_transmissions"] = *metrics.getInteger("edge_fact_transmissions");
-    const auto mappingStart = std::chrono::steady_clock::now();
     auto* plan = projected.getArray("physical_plan");
+    std::optional<llvm::json::Object> pruned;
+    if (pruning) {
+        if (supported) {
+            pruned = exportSourcePipePruning(description, projected);
+            if (pruned->getBoolean("accepted").value_or(false)) {
+                plan = pruned->getArray("physical_plan");
+            }
+        } else {
+            pruned = llvm::json::Object{{"accepted", false}, {"reason", "unqualified non-storage supporting path"}};
+        }
+        auto stats = *pruned;
+        stats.erase("physical_plan");
+        work["pruning"] = std::move(stats);
+    }
+    const auto mappingStart = std::chrono::steady_clock::now();
     auto* roles = projected.getArray("role_ids");
     if (!plan || !roles) {
         return function.emitError("current-cut: projected analysis unavailable");
@@ -161,67 +265,92 @@ LogicalResult Adapter::prepare()
         return function.emitError("current-cut: A3 invocation-return contract required");
     }
     DominanceInfo dominance;
-    SmallVector<const llvm::json::Object*> services;
-    collectServices(*plan, services);
-    // Consume the one generated structured plan. Original SCF still owns its
-    // control and occurrence coordinates; no endpoint or guard is relocated.
-    for (const auto* service : services) {
-        auto id = *service->getInteger("site");
-        if (id < 0 || uint64_t(id) >= input.instructions().size()) {
-            return function.emitError("current-cut: invalid planned occurrence");
-        }
-        auto* cut = input.instructions()[id]->elementOp;
-        for (const auto& value : *service->getArray("commands")) {
-            const auto& command = *value.getAsObject();
-            auto op = *command.getString("op");
-            auto pipe = static_cast<uint32_t>(*command.getInteger("pipe"));
-            if (op == "B") {
-                ++selectedSelf;
-                const auto nativeStart = std::chrono::steady_clock::now();
-                const auto order = current_cut::nativeOrder(*input.instructions()[id], architecture, core);
-                nativeSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - nativeStart).count();
-                if (order == current_cut::NativeOrder::Serialized) {
-                    ++nativeDischarges;
+    auto constructCommands = [&](const llvm::json::Array& selected) -> LogicalResult {
+        SmallVector<const llvm::json::Object*> services;
+        collectServices(selected, services);
+        // Consume the one generated structured plan. Original SCF still owns its
+        // control and occurrence coordinates; no endpoint or guard is relocated.
+        for (const auto* service : services) {
+            auto id = *service->getInteger("site");
+            if (id < 0 || uint64_t(id) >= input.instructions().size()) {
+                return function.emitError("current-cut: invalid planned occurrence");
+            }
+            auto* cut = input.instructions()[id]->elementOp;
+            for (const auto& value : *service->getArray("commands")) {
+                const auto& command = *value.getAsObject();
+                auto op = *command.getString("op");
+                auto pipe = static_cast<uint32_t>(*command.getInteger("pipe"));
+                if (op == "B") {
+                    ++selectedSelf;
+                    const auto nativeStart = std::chrono::steady_clock::now();
+                    const auto order = current_cut::nativeOrder(*input.instructions()[id], architecture, core);
+                    nativeSeconds +=
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - nativeStart).count();
+                    if (order == current_cut::NativeOrder::Serialized) {
+                        ++nativeDischarges;
+                        continue;
+                    }
+                    auto available = pto::getSyncBarrierAvailability(architecture, core, static_cast<pto::PIPE>(pipe));
+                    if (!available.value_or(false)) {
+                        return function.emitError("current-cut: local barrier unavailable");
+                    }
+                    commands.push_back({cut, true, false, pipe, pipe, {}});
                     continue;
                 }
-                auto available = pto::getSyncBarrierAvailability(architecture, core, static_cast<pto::PIPE>(pipe));
-                if (!available.value_or(false)) {
-                    return function.emitError("current-cut: local barrier unavailable");
+                auto found = assignments.find(command.getString("source")->str());
+                if (found == assignments.end()) {
+                    return function.emitError("current-cut: missing role assignment");
                 }
-                commands.push_back({cut, true, false, pipe, pipe, {}});
-                continue;
+                const auto& allocation = found->second;
+                auto source = allocation.sourcePipe;
+                auto target = allocation.targetPipe;
+                if (op == "S" && command.getString("source")->starts_with("F:")) {
+                    ++selectedCross;
+                }
+                const auto reserved = pto::SyncEventIdAllocation::GetReservedEventIdNum(
+                    static_cast<pto::PipelineType>(source), static_cast<pto::PipelineType>(target));
+                if (reserved >= pto::kTotalEventIdNum || llvm::any_of(allocation.ids, [&](int64_t physical) {
+                        return static_cast<uint64_t>(physical) >= pto::kTotalEventIdNum - reserved;
+                    })) {
+                    return function.emitError("current-cut: role collides with reserved directional tail");
+                }
+                auto capability = pto::getSyncEventAvailability(
+                    architecture, core, static_cast<pto::PIPE>(source), static_cast<pto::PIPE>(target));
+                if (!capability.available.value_or(false) || pipe != (op == "S" ? source : target)) {
+                    return function.emitError("current-cut: direction unavailable or endpoint inconsistent");
+                }
+                const auto mapStart = std::chrono::steady_clock::now();
+                auto mapping = fs::planPhysicalEndpointMap(cut, {allocation}, {{}}, 1, false, dominance);
+                physicalMapSeconds +=
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - mapStart).count();
+                if (failed(mapping)) {
+                    return failure();
+                }
+                commands.push_back({cut, false, op == "S", source, target, *mapping, allocation.ids.front()});
             }
-            auto found = assignments.find(command.getString("source")->str());
-            if (found == assignments.end()) {
-                return function.emitError("current-cut: missing role assignment");
-            }
-            const auto& allocation = found->second;
-            auto source = allocation.sourcePipe;
-            auto target = allocation.targetPipe;
-            if (op == "S" && command.getString("source")->starts_with("F:")) {
-                ++selectedCross;
-            }
-            const auto reserved = pto::SyncEventIdAllocation::GetReservedEventIdNum(
-                static_cast<pto::PipelineType>(source), static_cast<pto::PipelineType>(target));
-            if (reserved >= pto::kTotalEventIdNum || llvm::any_of(allocation.ids, [&](int64_t physical) {
-                    return static_cast<uint64_t>(physical) >= pto::kTotalEventIdNum - reserved;
-                })) {
-                return function.emitError("current-cut: role collides with reserved directional tail");
-            }
-            auto capability = pto::getSyncEventAvailability(
-                architecture, core, static_cast<pto::PIPE>(source), static_cast<pto::PIPE>(target));
-            if (!capability.available.value_or(false) || pipe != (op == "S" ? source : target)) {
-                return function.emitError("current-cut: direction unavailable or endpoint inconsistent");
-            }
-            const auto mapStart = std::chrono::steady_clock::now();
-            auto mapping = fs::planPhysicalEndpointMap(cut, {allocation}, {{}}, 1, false, dominance);
-            physicalMapSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - mapStart).count();
-            if (failed(mapping)) {
-                return failure();
-            }
-            commands.push_back({cut, false, op == "S", source, target, *mapping});
+        }
+        return success();
+    };
+    if (failed(constructCommands(*plan))) {
+        return failure();
+    }
+    const auto protocolStart = std::chrono::steady_clock::now();
+    if (!verifyProtocol()) {
+        if (!pruned || !pruned->getBoolean("accepted").value_or(false)) {
+            return function.emitError("current-cut: ordered role protocol certificate failed");
+        }
+        commands.clear();
+        nativeDischarges = 0;
+        selectedSelf = 0;
+        selectedCross = 0;
+        work["pruning"] = llvm::json::Object{{"accepted", false}, {"reason", "physical protocol certificate failed"}};
+        if (failed(constructCommands(*projected.getArray("physical_plan"))) || !verifyProtocol()) {
+            return function.emitError("current-cut: baseline protocol certificate failed");
         }
     }
+    work["protocol_verification_seconds"] =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - protocolStart).count();
+    work["protocol_certified"] = true;
     mapsSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - mappingStart).count();
     return success();
 }
@@ -269,13 +398,13 @@ LogicalResult Adapter::emit()
     return success();
 }
 } // namespace
-LogicalResult emitCurrentCutServices(func::FuncOp original, pto::GMAliasPolicy policy)
+LogicalResult emitCurrentCutServices(func::FuncOp original, pto::GMAliasPolicy policy, bool pruning)
 {
     if (!llvm::hasSingleElement(original.getBody())) {
         return original.emitError("current-cut: one entry block required");
     }
     fs::FunctionStaging staging(original);
-    Adapter adapter(staging.function, policy);
+    Adapter adapter(staging.function, policy, pruning);
     if (failed(adapter.prepare()) || failed(adapter.emit())) {
         return failure();
     }

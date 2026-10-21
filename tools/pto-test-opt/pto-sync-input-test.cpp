@@ -50,7 +50,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <chrono>
 using namespace mlir;
-LogicalResult emitCurrentCutServices(func::FuncOp, pto::GMAliasPolicy);
+LogicalResult emitCurrentCutServices(func::FuncOp, pto::GMAliasPolicy, bool);
 llvm::json::Object inspectCurrentCutContracts(func::FuncOp, pto::GMAliasPolicy);
 LogicalResult checkSyncStorageMemberships(func::FuncOp, const pto::SyncInput&);
 bool checkBoundedRegionalQueries(const pto::frontiersynch::BoundedLifetimeDemandResult&,
@@ -2164,8 +2164,10 @@ int main(int argc, char **argv) {
     for (int i = 1; i + 1 < argc; ++i) { argv[i] = argv[i + 1]; }
     --argc;
   }
+  const bool currentPruned = argc == 3 && StringRef(argv[1]) == "--current-cut-pruned";
   const bool currentContracts = argc == 3 && StringRef(argv[1]) == "--current-cut-contracts";
-  const bool currentCut = currentContracts || (argc == 3 && StringRef(argv[1]) == "--current-cut-output");
+  const bool currentCut = currentPruned || currentContracts ||
+      (argc == 3 && StringRef(argv[1]) == "--current-cut-output");
   const bool contextualChecks = argc == 3 && StringRef(argv[1]) == "--contextual-local-access-checks";
   const bool descriptorChecks = argc == 3 && StringRef(argv[1]) == "--descriptor-state-checks";
   const bool stageProfileChecks = argc == 3 && StringRef(argv[1]) == "--stage-profile-checks";
@@ -2277,7 +2279,8 @@ int main(int argc, char **argv) {
              "--arithmetic|--finite-expansion|--arithmetic-periodic-input-checks|"
              "--explicit-analysis|--rotating-analysis|--roundtrip|"
              "--region-contract-checks|"
-             "--source-pipe-json|--current-cut-output|--current-cut-contracts|--step0-json|--step1-json|"
+             "--source-pipe-json|--current-cut-output|--current-cut-pruned|"
+             "--current-cut-contracts|--step0-json|--step1-json|"
              "--existing-check|--existing-dump|--phase-copy-checks] input.pto\n";
       return 1;
   }
@@ -2519,7 +2522,7 @@ int main(int argc, char **argv) {
   }
   if (currentCut) {
     for (auto function : module->getOps<func::FuncOp>()) {
-      if (failed(emitCurrentCutServices(function, policy))) { return 1; }
+      if (failed(emitCurrentCutServices(function, policy, currentPruned))) { return 1; }
     }
     module->print(llvm::outs());
     return 0;

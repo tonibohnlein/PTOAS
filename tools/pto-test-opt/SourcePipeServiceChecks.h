@@ -10,5 +10,6 @@
 #define PTO_TEST_SOURCEPIPESERVICECHECKS_H
 #include "llvm/Support/JSON.h"
 llvm::json::Object exportSourcePipeServices(const llvm::json::Object& input);
+llvm::json::Object exportSourcePipePruning(const llvm::json::Object&, const llvm::json::Object&);
 int runSourcePipeServicesJson(const char* path);
 #endif

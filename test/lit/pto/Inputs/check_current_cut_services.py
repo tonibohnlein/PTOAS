@@ -71,7 +71,10 @@ def two_class_fixture(guard):
     return text[:end] + "\n" + independent + text[end:]
 
 
-def qualify(args, source, target, path, *, native_serial_pipes=(), scalar_payload=None):
+def qualify(
+    args, source, target, path, *, native_serial_pipes=(), scalar_payload=None,
+    retained_services=None, return_relation=False
+):
     source_path = path.with_suffix(".input.pto")
     source_path.write_text(annotate(source, "test.reaching_access"))
     access_run = invoke(
@@ -93,6 +96,22 @@ def qualify(args, source, target, path, *, native_serial_pipes=(), scalar_payloa
                     collect(item[key])
 
     collect(data["projected"]["physical_plan"])
+    selected = data["projected"]["possible"] if retained_services is None else retained_services
+    if retained_services is not None:
+        for site, commands in planned.items():
+            kept = []
+            cursor = 0
+            while cursor < len(commands):
+                command = commands[cursor]
+                if command["op"] == "B":
+                    kept.append(command)
+                    cursor += 1
+                    continue
+                source_pipe = int(command["source"].split(":")[1])
+                if source_pipe in selected[site]:
+                    kept.extend(commands[cursor:cursor + 4])
+                cursor += 4
+            planned[site] = kept
     role_ids = {
         f"{r['role']}:{r['source']}:{r['target']}": (3, 5)[r["id"]]
         for r in data["projected"]["role_ids"]
@@ -148,7 +167,7 @@ def qualify(args, source, target, path, *, native_serial_pipes=(), scalar_payloa
     prefix_edges = native([e["pipe"] for e in payload], native_serial_pipes)
     prefix_edges.update((2 * a + 1, 2 * b) for a, b in scalar)
     for b, target_event in enumerate(payload):
-        sources = data["projected"]["possible"][target_event["type"]]
+        sources = selected[target_event["type"]]
         prefix_edges.update(
             (2 * a + 1, 2 * b) for a in range(b) if payload[a]["pipe"] in sources
         )
@@ -293,6 +312,7 @@ def qualify(args, source, target, path, *, native_serial_pipes=(), scalar_payloa
         extra_pairs=extra,
         physical_added_event_pairs=sorted(physical_pairs - prefix_pairs),
         physical_removed_event_pairs=[],
+        **({"payload_event_relation": sorted(physical_pairs)} if return_relation else {}),
         ids=sorted(
             {(e["source_pipe"], e["target_pipe"], e["physical_id"]) for e in sets}
         ),
