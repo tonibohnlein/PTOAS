@@ -1,0 +1,2258 @@
+{
+  "requests": [
+    {
+      "kernel": "prefill",
+      "strategy": "production",
+      "exports": 0,
+      "original_sha256": "4a2da46ad42fbded8d15dd4b64cdabc93ae0df9570ea6d5d165712361ce16831",
+      "run": {
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--compact-region-contract",
+          ".local/compact-class-checkpoints/stage3/prefill-production-e0.pto"
+        ],
+        "status": "timeout",
+        "returncode": null,
+        "seconds": 35.01812166115269,
+        "stdout": ".local/compact-class-checkpoints/stage3/prefill-production-e0.json",
+        "stderr": ".local/compact-class-checkpoints/stage3/prefill-production-e0.stderr"
+      },
+      "result": {}
+    },
+    {
+      "kernel": "prefill",
+      "strategy": "numerical",
+      "exports": 0,
+      "original_sha256": "4a2da46ad42fbded8d15dd4b64cdabc93ae0df9570ea6d5d165712361ce16831",
+      "run": {
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--compact-region-contract",
+          ".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.0638375929556787,
+        "stdout": ".local/compact-class-checkpoints/stage3/prefill-numerical-e0.json",
+        "stderr": ".local/compact-class-checkpoints/stage3/prefill-numerical-e0.stderr"
+      },
+      "result": {
+        "backend": "unavailable",
+        "error": "production exact export not ready",
+        "obligations": [
+          "regional numerical template form is unavailable",
+          "unsupported-control"
+        ],
+        "retained_mathematics": false,
+        "status": 1,
+        "structure": [
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":10:3)",
+            "region": 0,
+            "static_payloads": 104
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":11:11)",
+            "region": 1,
+            "static_payloads": 14
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":107:5)",
+            "region": 2,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":121:12)",
+            "region": 3,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":123:5)",
+            "region": 4,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":134:5)",
+            "region": 5,
+            "static_payloads": 9
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":146:5)",
+            "region": 6,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":184:5)",
+            "region": 7,
+            "static_payloads": 60
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":382:13)",
+            "region": 8,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":386:5)",
+            "region": 9,
+            "static_payloads": 9
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":107:5)",
+            "region": 10,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":107:5)",
+            "region": 11,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":123:5)",
+            "region": 12,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":123:5)",
+            "region": 13,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":146:5)",
+            "region": 14,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":146:5)",
+            "region": 15,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":184:5)",
+            "region": 16,
+            "static_payloads": 60
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":386:5)",
+            "region": 17,
+            "static_payloads": 9
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":386:5)",
+            "region": 18,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":108:14)",
+            "region": 19,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":124:14)",
+            "region": 20,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":147:14)",
+            "region": 21,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":185:15)",
+            "region": 22,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":191:7)",
+            "region": 23,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":231:15)",
+            "region": 24,
+            "static_payloads": 52
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":334:7)",
+            "region": 25,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":345:15)",
+            "region": 26,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":346:7)",
+            "region": 27,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":357:15)",
+            "region": 28,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":358:7)",
+            "region": 29,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":369:15)",
+            "region": 30,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":370:7)",
+            "region": 31,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":387:7)",
+            "region": 32,
+            "static_payloads": 9
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":191:7)",
+            "region": 33,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":191:7)",
+            "region": 34,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":334:7)",
+            "region": 35,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":334:7)",
+            "region": 36,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":346:7)",
+            "region": 37,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":346:7)",
+            "region": 38,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":358:7)",
+            "region": 39,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":358:7)",
+            "region": 40,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":370:7)",
+            "region": 41,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":370:7)",
+            "region": 42,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":192:17)",
+            "region": 43,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":335:17)",
+            "region": 44,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":347:17)",
+            "region": 45,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":359:17)",
+            "region": 46,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e0.pto\":371:17)",
+            "region": 47,
+            "static_payloads": 1
+          }
+        ]
+      }
+    },
+    {
+      "kernel": "prefill",
+      "strategy": "numerical",
+      "exports": 3,
+      "original_sha256": "4a2da46ad42fbded8d15dd4b64cdabc93ae0df9570ea6d5d165712361ce16831",
+      "run": {
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--compact-region-contract",
+          ".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.1150137148797512,
+        "stdout": ".local/compact-class-checkpoints/stage3/prefill-numerical-e3.json",
+        "stderr": ".local/compact-class-checkpoints/stage3/prefill-numerical-e3.stderr"
+      },
+      "result": {
+        "backend": "unavailable",
+        "error": "production exact export not ready",
+        "obligations": [
+          "regional numerical template form is unavailable",
+          "unsupported-control"
+        ],
+        "retained_mathematics": false,
+        "status": 1,
+        "structure": [
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":10:3)",
+            "region": 0,
+            "static_payloads": 104
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":11:11)",
+            "region": 1,
+            "static_payloads": 14
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":107:5)",
+            "region": 2,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":121:12)",
+            "region": 3,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":123:5)",
+            "region": 4,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":134:5)",
+            "region": 5,
+            "static_payloads": 9
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":146:5)",
+            "region": 6,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":184:5)",
+            "region": 7,
+            "static_payloads": 60
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":382:13)",
+            "region": 8,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":386:5)",
+            "region": 9,
+            "static_payloads": 9
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":107:5)",
+            "region": 10,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":107:5)",
+            "region": 11,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":123:5)",
+            "region": 12,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":123:5)",
+            "region": 13,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":146:5)",
+            "region": 14,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":146:5)",
+            "region": 15,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":184:5)",
+            "region": 16,
+            "static_payloads": 60
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":386:5)",
+            "region": 17,
+            "static_payloads": 9
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":386:5)",
+            "region": 18,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":108:14)",
+            "region": 19,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":124:14)",
+            "region": 20,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":147:14)",
+            "region": 21,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":185:15)",
+            "region": 22,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":191:7)",
+            "region": 23,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":231:15)",
+            "region": 24,
+            "static_payloads": 52
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":334:7)",
+            "region": 25,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":345:15)",
+            "region": 26,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":346:7)",
+            "region": 27,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":357:15)",
+            "region": 28,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":358:7)",
+            "region": 29,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":369:15)",
+            "region": 30,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":370:7)",
+            "region": 31,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":387:7)",
+            "region": 32,
+            "static_payloads": 9
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":191:7)",
+            "region": 33,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":191:7)",
+            "region": 34,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":334:7)",
+            "region": 35,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":334:7)",
+            "region": 36,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":346:7)",
+            "region": 37,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":346:7)",
+            "region": 38,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":358:7)",
+            "region": 39,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":358:7)",
+            "region": 40,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":370:7)",
+            "region": 41,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":370:7)",
+            "region": 42,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":192:17)",
+            "region": 43,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":335:17)",
+            "region": 44,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":347:17)",
+            "region": 45,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":359:17)",
+            "region": 46,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-numerical-e3.pto\":371:17)",
+            "region": 47,
+            "static_payloads": 1
+          }
+        ]
+      }
+    },
+    {
+      "kernel": "prefill",
+      "strategy": "arithmetic",
+      "exports": 0,
+      "original_sha256": "4a2da46ad42fbded8d15dd4b64cdabc93ae0df9570ea6d5d165712361ce16831",
+      "run": {
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--compact-region-contract",
+          ".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 30.638166157063097,
+        "stdout": ".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.json",
+        "stderr": ".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.stderr"
+      },
+      "result": {
+        "arithmetic": {
+          "class": "bounded-coefficients",
+          "difference_bound_reducer": false,
+          "observed_coefficient": 1024,
+          "observed_dimensions": 6,
+          "parameters": 2,
+          "primitive_relations": 12083,
+          "retained_pieces": 2586,
+          "sites": 60
+        },
+        "backend": "arithmetic",
+        "error": "",
+        "inventory": {
+          "inspection": "no-semantic-callbacks",
+          "rows": [
+            {
+              "id": 0,
+              "original_region": 7,
+              "representation": "arithmetic"
+            }
+          ],
+          "scope": "selected-retained-owners-only",
+          "version": 1
+        },
+        "new_construction": [
+          1,
+          0,
+          0
+        ],
+        "region": 7,
+        "request": "mathematics-only-diagnostic",
+        "structure": [
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":10:3)",
+            "region": 0,
+            "static_payloads": 104
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":11:11)",
+            "region": 1,
+            "static_payloads": 14
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":107:5)",
+            "region": 2,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":121:12)",
+            "region": 3,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":123:5)",
+            "region": 4,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":134:5)",
+            "region": 5,
+            "static_payloads": 9
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":146:5)",
+            "region": 6,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":184:5)",
+            "region": 7,
+            "static_payloads": 60
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":382:13)",
+            "region": 8,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":386:5)",
+            "region": 9,
+            "static_payloads": 9
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":107:5)",
+            "region": 10,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":107:5)",
+            "region": 11,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":123:5)",
+            "region": 12,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":123:5)",
+            "region": 13,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":146:5)",
+            "region": 14,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":146:5)",
+            "region": 15,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":184:5)",
+            "region": 16,
+            "static_payloads": 60
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":386:5)",
+            "region": 17,
+            "static_payloads": 9
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":386:5)",
+            "region": 18,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":108:14)",
+            "region": 19,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":124:14)",
+            "region": 20,
+            "static_payloads": 3
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":147:14)",
+            "region": 21,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":185:15)",
+            "region": 22,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":191:7)",
+            "region": 23,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":231:15)",
+            "region": 24,
+            "static_payloads": 52
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":334:7)",
+            "region": 25,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":345:15)",
+            "region": 26,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":346:7)",
+            "region": 27,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":357:15)",
+            "region": 28,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":358:7)",
+            "region": 29,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":369:15)",
+            "region": 30,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":370:7)",
+            "region": 31,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":387:7)",
+            "region": 32,
+            "static_payloads": 9
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":191:7)",
+            "region": 33,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":191:7)",
+            "region": 34,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":334:7)",
+            "region": 35,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":334:7)",
+            "region": 36,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":346:7)",
+            "region": 37,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":346:7)",
+            "region": 38,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":358:7)",
+            "region": 39,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":358:7)",
+            "region": 40,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":370:7)",
+            "region": 41,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":370:7)",
+            "region": 42,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":192:17)",
+            "region": 43,
+            "static_payloads": 4
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":335:17)",
+            "region": 44,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":347:17)",
+            "region": 45,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":359:17)",
+            "region": 46,
+            "static_payloads": 1
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/prefill-arithmetic-e0.pto\":371:17)",
+            "region": 47,
+            "static_payloads": 1
+          }
+        ]
+      }
+    },
+    {
+      "kernel": "finalize",
+      "strategy": "production",
+      "exports": 0,
+      "original_sha256": "adf101fe830023ff85e62160fbb098974df7b23839867028541830e6d9a0d016",
+      "run": {
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--compact-region-contract",
+          ".local/compact-class-checkpoints/stage3/finalize-production-e0.pto"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.7155442386865616,
+        "stdout": ".local/compact-class-checkpoints/stage3/finalize-production-e0.json",
+        "stderr": ".local/compact-class-checkpoints/stage3/finalize-production-e0.stderr"
+      },
+      "result": {
+        "backend": "unavailable",
+        "error": "production exact export not ready",
+        "obligations": [
+          "backend has no standalone regional adapter",
+          "order coverage requires an unconditional fixed original body",
+          "loop-domain",
+          "structured-body",
+          "backend has no standalone regional adapter",
+          "guarded rotating form is not established",
+          "loop-domain",
+          "guard-invariance",
+          "unknown-geometry",
+          "overlapping-families",
+          "bounded lifetime form is not established",
+          "loop-domain",
+          "whole-invocation arithmetic capability belongs to the outer request",
+          "affine repeating-boundary form is not established",
+          "structured-body",
+          "finite visit joint storage projection: no constant-stride evolving storage family was constructed",
+          "regional arithmetic primitives do not satisfy the configured class; index-arithmetic at scf.for loc(\".local/compact-class-checkpoints/stage3/finalize-production-e0.pto\":29:3)",
+          "index-arithmetic",
+          "backend has no standalone regional adapter",
+          "regional numerical template form is unavailable",
+          "loop-domain",
+          "numerical sequence adapter requires retained exact numerical mathematics",
+          "finite expansion requires a bounded exact occurrence/access adapter / loop-domain",
+          "loop-domain"
+        ],
+        "retained_mathematics": false,
+        "status": 2,
+        "structure": [
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-production-e0.pto\":10:1)",
+            "region": 0,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-production-e0.pto\":11:13)",
+            "region": 1,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-production-e0.pto\":29:3)",
+            "region": 2,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-production-e0.pto\":29:3)",
+            "region": 3,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-production-e0.pto\":30:10)",
+            "region": 4,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-production-e0.pto\":40:5)",
+            "region": 5,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-production-e0.pto\":40:5)",
+            "region": 6,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-production-e0.pto\":40:5)",
+            "region": 7,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-production-e0.pto\":41:13)",
+            "region": 8,
+            "static_payloads": 5
+          }
+        ]
+      }
+    },
+    {
+      "kernel": "finalize",
+      "strategy": "numerical",
+      "exports": 0,
+      "original_sha256": "adf101fe830023ff85e62160fbb098974df7b23839867028541830e6d9a0d016",
+      "run": {
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--compact-region-contract",
+          ".local/compact-class-checkpoints/stage3/finalize-numerical-e0.pto"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.0639317617751658,
+        "stdout": ".local/compact-class-checkpoints/stage3/finalize-numerical-e0.json",
+        "stderr": ".local/compact-class-checkpoints/stage3/finalize-numerical-e0.stderr"
+      },
+      "result": {
+        "backend": "unavailable",
+        "error": "production exact export not ready",
+        "obligations": [
+          "regional numerical template form is unavailable",
+          "loop-domain"
+        ],
+        "retained_mathematics": false,
+        "status": 1,
+        "structure": [
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e0.pto\":10:1)",
+            "region": 0,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e0.pto\":11:13)",
+            "region": 1,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e0.pto\":29:3)",
+            "region": 2,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e0.pto\":29:3)",
+            "region": 3,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e0.pto\":30:10)",
+            "region": 4,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e0.pto\":40:5)",
+            "region": 5,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e0.pto\":40:5)",
+            "region": 6,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e0.pto\":40:5)",
+            "region": 7,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e0.pto\":41:13)",
+            "region": 8,
+            "static_payloads": 5
+          }
+        ]
+      }
+    },
+    {
+      "kernel": "finalize",
+      "strategy": "numerical",
+      "exports": 3,
+      "original_sha256": "adf101fe830023ff85e62160fbb098974df7b23839867028541830e6d9a0d016",
+      "run": {
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--compact-region-contract",
+          ".local/compact-class-checkpoints/stage3/finalize-numerical-e3.pto"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.06397380772978067,
+        "stdout": ".local/compact-class-checkpoints/stage3/finalize-numerical-e3.json",
+        "stderr": ".local/compact-class-checkpoints/stage3/finalize-numerical-e3.stderr"
+      },
+      "result": {
+        "backend": "unavailable",
+        "error": "production exact export not ready",
+        "obligations": [
+          "regional numerical template form is unavailable",
+          "loop-domain"
+        ],
+        "retained_mathematics": false,
+        "status": 1,
+        "structure": [
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e3.pto\":10:1)",
+            "region": 0,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e3.pto\":11:13)",
+            "region": 1,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e3.pto\":29:3)",
+            "region": 2,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e3.pto\":29:3)",
+            "region": 3,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e3.pto\":30:10)",
+            "region": 4,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e3.pto\":40:5)",
+            "region": 5,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e3.pto\":40:5)",
+            "region": 6,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e3.pto\":40:5)",
+            "region": 7,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-numerical-e3.pto\":41:13)",
+            "region": 8,
+            "static_payloads": 5
+          }
+        ]
+      }
+    },
+    {
+      "kernel": "finalize",
+      "strategy": "arithmetic",
+      "exports": 0,
+      "original_sha256": "adf101fe830023ff85e62160fbb098974df7b23839867028541830e6d9a0d016",
+      "run": {
+        "command": [
+          ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+          "--compact-region-contract",
+          ".local/compact-class-checkpoints/stage3/finalize-arithmetic-e0.pto"
+        ],
+        "status": "success",
+        "returncode": 0,
+        "seconds": 0.7658118447288871,
+        "stdout": ".local/compact-class-checkpoints/stage3/finalize-arithmetic-e0.json",
+        "stderr": ".local/compact-class-checkpoints/stage3/finalize-arithmetic-e0.stderr"
+      },
+      "result": {
+        "backend": "unavailable",
+        "error": "production exact export not ready",
+        "obligations": [
+          "regional arithmetic primitives do not satisfy the configured class; index-arithmetic at scf.for loc(\".local/compact-class-checkpoints/stage3/finalize-arithmetic-e0.pto\":29:3)",
+          "index-arithmetic"
+        ],
+        "retained_mathematics": false,
+        "status": 2,
+        "structure": [
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-arithmetic-e0.pto\":10:1)",
+            "region": 0,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-arithmetic-e0.pto\":11:13)",
+            "region": 1,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 0,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-arithmetic-e0.pto\":29:3)",
+            "region": 2,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-arithmetic-e0.pto\":29:3)",
+            "region": 3,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-arithmetic-e0.pto\":30:10)",
+            "region": 4,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-arithmetic-e0.pto\":40:5)",
+            "region": 5,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-arithmetic-e0.pto\":40:5)",
+            "region": 6,
+            "static_payloads": 5
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-arithmetic-e0.pto\":40:5)",
+            "region": 7,
+            "static_payloads": 0
+          },
+          {
+            "enclosing_coordinates": 1,
+            "location": "loc(\".local/compact-class-checkpoints/stage3/finalize-arithmetic-e0.pto\":41:13)",
+            "region": 8,
+            "static_payloads": 5
+          }
+        ]
+      }
+    }
+  ],
+  "prefill_export_request": {
+    "command": [
+      ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+      "--compact-region-contract",
+      ".local/compact-class-checkpoints/stage3/prefill-arithmetic-exports.pto"
+    ],
+    "status": "timeout",
+    "returncode": null,
+    "seconds": 35.02134719118476,
+    "stdout": ".local/compact-class-checkpoints/stage3/prefill-arithmetic-exports.json",
+    "stderr": ".local/compact-class-checkpoints/stage3/prefill-arithmetic-exports.stderr"
+  },
+  "bounded": {
+    "phase": {
+      "comparisons": 1024,
+      "negative_counterexample": {
+        "start": -1,
+        "first": [
+          0,
+          0,
+          -1,
+          0
+        ],
+        "four_visits_later": [
+          2,
+          7,
+          7,
+          23
+        ]
+      },
+      "premise": "start in [0,47], positive step 48; caller evidence not supplied as input range metadata",
+      "production_rewrite": false
+    },
+    "prefill": {
+      "input_sha256": "4a2da46ad42fbded8d15dd4b64cdabc93ae0df9570ea6d5d165712361ce16831",
+      "cases": [
+        {
+          "length": 4,
+          "initial": 0,
+          "groups": 1,
+          "gm_transfers": 18,
+          "output_rows": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "cache_writeback_rows": [
+            0,
+            1,
+            2
+          ],
+          "bindings": {
+            "block_index": {
+              "ssa": "%v4",
+              "value": 0,
+              "type": "i64"
+            },
+            "sequence_start": {
+              "ssa": "%v6",
+              "value": 0,
+              "type": "i32"
+            },
+            "sequence_end": {
+              "ssa": "%v9",
+              "value": 4,
+              "type": "i32"
+            },
+            "cache_index": {
+              "ssa": "%v12",
+              "value": 0,
+              "type": "i32"
+            },
+            "initial": {
+              "ssa": "%v14",
+              "value": 0,
+              "type": "i32"
+            },
+            "flag_read_0": {
+              "ssa": "%v44",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_1": {
+              "ssa": "%v57",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_2": {
+              "ssa": "%v227",
+              "value": 1,
+              "type": "i32"
+            }
+          }
+        },
+        {
+          "length": 4,
+          "initial": 1,
+          "groups": 1,
+          "gm_transfers": 21,
+          "output_rows": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "cache_writeback_rows": [
+            0,
+            1,
+            2
+          ],
+          "bindings": {
+            "block_index": {
+              "ssa": "%v4",
+              "value": 0,
+              "type": "i64"
+            },
+            "sequence_start": {
+              "ssa": "%v6",
+              "value": 0,
+              "type": "i32"
+            },
+            "sequence_end": {
+              "ssa": "%v9",
+              "value": 4,
+              "type": "i32"
+            },
+            "cache_index": {
+              "ssa": "%v12",
+              "value": 0,
+              "type": "i32"
+            },
+            "initial": {
+              "ssa": "%v14",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_0": {
+              "ssa": "%v44",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_1": {
+              "ssa": "%v57",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_2": {
+              "ssa": "%v227",
+              "value": 1,
+              "type": "i32"
+            }
+          }
+        },
+        {
+          "length": 8,
+          "initial": 0,
+          "groups": 2,
+          "gm_transfers": 26,
+          "output_rows": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "cache_writeback_rows": [
+            0,
+            1,
+            2
+          ],
+          "bindings": {
+            "block_index": {
+              "ssa": "%v4",
+              "value": 0,
+              "type": "i64"
+            },
+            "sequence_start": {
+              "ssa": "%v6",
+              "value": 0,
+              "type": "i32"
+            },
+            "sequence_end": {
+              "ssa": "%v9",
+              "value": 8,
+              "type": "i32"
+            },
+            "cache_index": {
+              "ssa": "%v12",
+              "value": 0,
+              "type": "i32"
+            },
+            "initial": {
+              "ssa": "%v14",
+              "value": 0,
+              "type": "i32"
+            },
+            "flag_read_0": {
+              "ssa": "%v44",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_1": {
+              "ssa": "%v57",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_2": {
+              "ssa": "%v227",
+              "value": 1,
+              "type": "i32"
+            }
+          }
+        },
+        {
+          "length": 8,
+          "initial": 1,
+          "groups": 2,
+          "gm_transfers": 29,
+          "output_rows": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "cache_writeback_rows": [
+            0,
+            1,
+            2
+          ],
+          "bindings": {
+            "block_index": {
+              "ssa": "%v4",
+              "value": 0,
+              "type": "i64"
+            },
+            "sequence_start": {
+              "ssa": "%v6",
+              "value": 0,
+              "type": "i32"
+            },
+            "sequence_end": {
+              "ssa": "%v9",
+              "value": 8,
+              "type": "i32"
+            },
+            "cache_index": {
+              "ssa": "%v12",
+              "value": 0,
+              "type": "i32"
+            },
+            "initial": {
+              "ssa": "%v14",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_0": {
+              "ssa": "%v44",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_1": {
+              "ssa": "%v57",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_2": {
+              "ssa": "%v227",
+              "value": 1,
+              "type": "i32"
+            }
+          }
+        },
+        {
+          "length": 12,
+          "initial": 0,
+          "groups": 3,
+          "gm_transfers": 34,
+          "output_rows": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "cache_writeback_rows": [
+            0,
+            1,
+            2
+          ],
+          "bindings": {
+            "block_index": {
+              "ssa": "%v4",
+              "value": 0,
+              "type": "i64"
+            },
+            "sequence_start": {
+              "ssa": "%v6",
+              "value": 0,
+              "type": "i32"
+            },
+            "sequence_end": {
+              "ssa": "%v9",
+              "value": 12,
+              "type": "i32"
+            },
+            "cache_index": {
+              "ssa": "%v12",
+              "value": 0,
+              "type": "i32"
+            },
+            "initial": {
+              "ssa": "%v14",
+              "value": 0,
+              "type": "i32"
+            },
+            "flag_read_0": {
+              "ssa": "%v44",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_1": {
+              "ssa": "%v57",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_2": {
+              "ssa": "%v227",
+              "value": 1,
+              "type": "i32"
+            }
+          }
+        },
+        {
+          "length": 12,
+          "initial": 1,
+          "groups": 3,
+          "gm_transfers": 37,
+          "output_rows": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "cache_writeback_rows": [
+            0,
+            1,
+            2
+          ],
+          "bindings": {
+            "block_index": {
+              "ssa": "%v4",
+              "value": 0,
+              "type": "i64"
+            },
+            "sequence_start": {
+              "ssa": "%v6",
+              "value": 0,
+              "type": "i32"
+            },
+            "sequence_end": {
+              "ssa": "%v9",
+              "value": 12,
+              "type": "i32"
+            },
+            "cache_index": {
+              "ssa": "%v12",
+              "value": 0,
+              "type": "i32"
+            },
+            "initial": {
+              "ssa": "%v14",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_0": {
+              "ssa": "%v44",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_1": {
+              "ssa": "%v57",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_2": {
+              "ssa": "%v227",
+              "value": 1,
+              "type": "i32"
+            }
+          }
+        },
+        {
+          "length": 32,
+          "initial": 0,
+          "groups": 8,
+          "gm_transfers": 74,
+          "output_rows": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "cache_writeback_rows": [
+            0,
+            1,
+            2
+          ],
+          "bindings": {
+            "block_index": {
+              "ssa": "%v4",
+              "value": 0,
+              "type": "i64"
+            },
+            "sequence_start": {
+              "ssa": "%v6",
+              "value": 0,
+              "type": "i32"
+            },
+            "sequence_end": {
+              "ssa": "%v9",
+              "value": 32,
+              "type": "i32"
+            },
+            "cache_index": {
+              "ssa": "%v12",
+              "value": 0,
+              "type": "i32"
+            },
+            "initial": {
+              "ssa": "%v14",
+              "value": 0,
+              "type": "i32"
+            },
+            "flag_read_0": {
+              "ssa": "%v44",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_1": {
+              "ssa": "%v57",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_2": {
+              "ssa": "%v227",
+              "value": 1,
+              "type": "i32"
+            }
+          }
+        },
+        {
+          "length": 32,
+          "initial": 1,
+          "groups": 8,
+          "gm_transfers": 77,
+          "output_rows": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "cache_writeback_rows": [
+            0,
+            1,
+            2
+          ],
+          "bindings": {
+            "block_index": {
+              "ssa": "%v4",
+              "value": 0,
+              "type": "i64"
+            },
+            "sequence_start": {
+              "ssa": "%v6",
+              "value": 0,
+              "type": "i32"
+            },
+            "sequence_end": {
+              "ssa": "%v9",
+              "value": 32,
+              "type": "i32"
+            },
+            "cache_index": {
+              "ssa": "%v12",
+              "value": 0,
+              "type": "i32"
+            },
+            "initial": {
+              "ssa": "%v14",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_0": {
+              "ssa": "%v44",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_1": {
+              "ssa": "%v57",
+              "value": 1,
+              "type": "i32"
+            },
+            "flag_read_2": {
+              "ssa": "%v227",
+              "value": 1,
+              "type": "i32"
+            }
+          }
+        }
+      ],
+      "scope": "independent integer control/GM boundary views, not full demand or native checks"
+    },
+    "finite_finalize": [
+      {
+        "work": 0,
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/compact-class-checkpoints/stage3/bounded/work0.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.0642208382487297,
+          "stdout": ".local/compact-class-checkpoints/stage3/bounded/work0.json",
+          "stderr": ".local/compact-class-checkpoints/stage3/bounded/work0.stderr"
+        },
+        "input_sha256": "4c5f9f940e066c42b39b352a31462a8e6edd5042d386d4e912ce228f13a0aabf",
+        "checked": {
+          "status": "passed",
+          "error": "",
+          "presence": true,
+          "closure": true,
+          "covers": true,
+          "cover_error": "",
+          "selectors": true,
+          "selector_error": "",
+          "actual_cover_count": 3,
+          "oracle_cover_count": 3,
+          "event_query_comparisons": 100
+        }
+      },
+      {
+        "work": 16,
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/compact-class-checkpoints/stage3/bounded/work16.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06486701825633645,
+          "stdout": ".local/compact-class-checkpoints/stage3/bounded/work16.json",
+          "stderr": ".local/compact-class-checkpoints/stage3/bounded/work16.stderr"
+        },
+        "input_sha256": "70395ef79f8a0f149cbc7648dc7acb14a5487dfc83f5a7bf2638eeb06e6c3b55",
+        "checked": {
+          "status": "passed",
+          "error": "",
+          "presence": true,
+          "closure": true,
+          "covers": true,
+          "cover_error": "",
+          "selectors": true,
+          "selector_error": "",
+          "actual_cover_count": 3,
+          "oracle_cover_count": 3,
+          "event_query_comparisons": 100
+        }
+      },
+      {
+        "work": 32,
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/compact-class-checkpoints/stage3/bounded/work32.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06423099292442203,
+          "stdout": ".local/compact-class-checkpoints/stage3/bounded/work32.json",
+          "stderr": ".local/compact-class-checkpoints/stage3/bounded/work32.stderr"
+        },
+        "input_sha256": "e7e2b9f951c312a229897c32e0d13253ebd3f1e99d9814f395ba1227e301255d",
+        "checked": {
+          "status": "passed",
+          "error": "",
+          "presence": true,
+          "closure": true,
+          "covers": true,
+          "cover_error": "",
+          "selectors": true,
+          "selector_error": "",
+          "actual_cover_count": 3,
+          "oracle_cover_count": 3,
+          "event_query_comparisons": 100
+        }
+      },
+      {
+        "work": 48,
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/compact-class-checkpoints/stage3/bounded/work48.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06421802565455437,
+          "stdout": ".local/compact-class-checkpoints/stage3/bounded/work48.json",
+          "stderr": ".local/compact-class-checkpoints/stage3/bounded/work48.stderr"
+        },
+        "input_sha256": "c9f594efa082e4b0d60b73889912c2938c4fabf68dabfee14d3debeffc24547b",
+        "checked": {
+          "status": "passed",
+          "error": "",
+          "presence": true,
+          "closure": true,
+          "covers": true,
+          "cover_error": "",
+          "selectors": true,
+          "selector_error": "",
+          "actual_cover_count": 3,
+          "oracle_cover_count": 3,
+          "event_query_comparisons": 100
+        }
+      },
+      {
+        "work": 64,
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/compact-class-checkpoints/stage3/bounded/work64.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06499312305822968,
+          "stdout": ".local/compact-class-checkpoints/stage3/bounded/work64.json",
+          "stderr": ".local/compact-class-checkpoints/stage3/bounded/work64.stderr"
+        },
+        "input_sha256": "1fe74a21f203fca39b66c4af099493926e376797704746841d8aeff1393f5398",
+        "checked": {
+          "status": "passed",
+          "error": "",
+          "presence": true,
+          "closure": true,
+          "covers": true,
+          "cover_error": "",
+          "selectors": true,
+          "selector_error": "",
+          "actual_cover_count": 3,
+          "oracle_cover_count": 3,
+          "event_query_comparisons": 100
+        }
+      },
+      {
+        "work": 1008,
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/compact-class-checkpoints/stage3/bounded/work1008.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06494826916605234,
+          "stdout": ".local/compact-class-checkpoints/stage3/bounded/work1008.json",
+          "stderr": ".local/compact-class-checkpoints/stage3/bounded/work1008.stderr"
+        },
+        "input_sha256": "7a66bc9ca96baf8b5c2da4d29c4a7abb95ca5e6a35529c0e1c3421069d059cfb",
+        "checked": {
+          "status": "passed",
+          "error": "",
+          "presence": true,
+          "closure": true,
+          "covers": true,
+          "cover_error": "",
+          "selectors": true,
+          "selector_error": "",
+          "actual_cover_count": 3,
+          "oracle_cover_count": 3,
+          "event_query_comparisons": 100
+        }
+      }
+    ],
+    "finite_crossings": [
+      {
+        "trips": 0,
+        "active": 8,
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/compact-class-checkpoints/stage3/bounded/crossings-0-8.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06443405942991376,
+          "stdout": ".local/compact-class-checkpoints/stage3/bounded/crossings-0-8.json",
+          "stderr": ".local/compact-class-checkpoints/stage3/bounded/crossings-0-8.stderr"
+        },
+        "checked": {
+          "status": "passed",
+          "error": "",
+          "presence": true,
+          "closure": true,
+          "covers": true,
+          "cover_error": "",
+          "selectors": true,
+          "selector_error": "",
+          "actual_cover_count": 0,
+          "oracle_cover_count": 0,
+          "event_query_comparisons": 0
+        }
+      },
+      {
+        "trips": 1,
+        "active": 8,
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/compact-class-checkpoints/stage3/bounded/crossings-1-8.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06472220923751593,
+          "stdout": ".local/compact-class-checkpoints/stage3/bounded/crossings-1-8.json",
+          "stderr": ".local/compact-class-checkpoints/stage3/bounded/crossings-1-8.stderr"
+        },
+        "checked": {
+          "status": "unavailable",
+          "error": "production exact export not ready"
+        }
+      },
+      {
+        "trips": 2,
+        "active": 8,
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/compact-class-checkpoints/stage3/bounded/crossings-2-8.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06470543891191483,
+          "stdout": ".local/compact-class-checkpoints/stage3/bounded/crossings-2-8.json",
+          "stderr": ".local/compact-class-checkpoints/stage3/bounded/crossings-2-8.stderr"
+        },
+        "checked": {
+          "status": "unavailable",
+          "error": "production exact export not ready"
+        }
+      },
+      {
+        "trips": 4,
+        "active": 8,
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/compact-class-checkpoints/stage3/bounded/crossings-4-8.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.06448500417172909,
+          "stdout": ".local/compact-class-checkpoints/stage3/bounded/crossings-4-8.json",
+          "stderr": ".local/compact-class-checkpoints/stage3/bounded/crossings-4-8.stderr"
+        },
+        "checked": {
+          "status": "unavailable",
+          "error": "production exact export not ready"
+        }
+      },
+      {
+        "trips": 2,
+        "active": 0,
+        "run": {
+          "command": [
+            ".local/section8-refactor/source-pinned/candidate-build/tools/pto-test-opt/pto-sync-input-test",
+            "--compact-region-contract",
+            ".local/compact-class-checkpoints/stage3/bounded/crossings-2-0.pto"
+          ],
+          "status": "success",
+          "returncode": 0,
+          "seconds": 0.0640801559202373,
+          "stdout": ".local/compact-class-checkpoints/stage3/bounded/crossings-2-0.json",
+          "stderr": ".local/compact-class-checkpoints/stage3/bounded/crossings-2-0.stderr"
+        },
+        "checked": {
+          "status": "unavailable",
+          "error": "production exact export not ready"
+        }
+      }
+    ],
+    "production_changes": false
+  },
+  "source_premises": [
+    {
+      "path": "test/npu_validation/benchmarks/auto_sync/prepared/causal_conv1d_prefill/port.json",
+      "sha256": "6afde760b5dbe0f24aa37c513de1918cbf477843110e6aba8061f58325ad84e7"
+    },
+    {
+      "path": "/home/toni/work/pypto3_sync_more/corpus-refresh-20260916/pypto-lib/models/qwen3_14b/prefill_fwd.py",
+      "sha256": "266b36de6ed41dd13ba8118b517ace2f6a1d3623eb373dacfd8bcfb1d6b077dc"
+    },
+    {
+      "path": "/home/toni/work/pypto3_sync_more/corpus-refresh-20260916/capture/pypto_lib__prefill_fwd/generated/kernels/aiv/attention_finalize_phase.pto",
+      "sha256": "5a844488d2fb15a9baeaed2227e4ed434bba41680663338ab5ad288be1efe250"
+    },
+    {
+      "path": "/home/toni/work/pypto3_sync_more/corpus-refresh-20260916/capture/pypto_lib__prefill_fwd/generated/orchestration/prefill_fwd.cpp",
+      "sha256": "d092ecef3e5751ff852301326fb2de0b755127fb13392cdfd4faee30d643266b"
+    }
+  ],
+  "original_request_tool_sha256": "3d18d0b28030d28eb1ed0ebcb3f1abdc304d8cb9b3ecc219420777356a5ad530",
+  "original_request_tool_provenance": "Same test tool used for the stage-2 checkpoint; before stage-4 adapter changes. Original requests were not rerun with a longer watchdog."
+}
