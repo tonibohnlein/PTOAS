@@ -46,6 +46,35 @@ def main():
                 # Existing InsertSync consumes the same shared declarations.
                 existing = run(tool, path, "--existing-dump")
                 assert "pto.set_flag" in existing and "pto.wait_flag" in existing, existing
+            store = next(line for line in dynamic.splitlines() if line.lstrip().startswith('pto.tstore '))
+            atomic = dynamic.replace(store, store + ' {atomicType = #pto<atomic_type atomic_add>}')
+            path.write_text(atomic)
+            effects = run(tool, path, '--storage-effects')
+            # Read + write of the destination must both survive. f16/bf16
+            # atomic conversions are deliberately outside this qualification.
+            stores = [line for line in effects.splitlines() if re.search(r'effect \d+ pto.tstore ', line)]
+            assert len(stores) == 3, stores
+            if element == 'f32':
+                assert all('description=declared-region' in line for line in stores), stores
+                assert sum(' read ' in line for line in stores) == 2, stores
+                assert sum(' write ' in line for line in stores) == 1, stores
+                assert 'unresolved' not in '\n'.join(stores), stores
+                # Unknown valid extents cannot acquire an exact footprint merely
+                # from the tile's full capacity or the atomic operation mode.
+                unknown_atomic = atomic.replace('%a: !pto.ptr', '%rows: index, %a: !pto.ptr')
+                unknown_atomic = unknown_atomic.replace(
+                    '%acc = pto.alloc_tile addr = %base0 valid_row = %i16',
+                    '%acc = pto.alloc_tile addr = %base0 valid_row = %rows')
+                # Use the actual accumulator address spelling from the fixture.
+                unknown_atomic = re.sub(r'(%acc = pto.alloc_tile addr = %\w+ valid_row = )%i16',
+                                        r'\1%rows', unknown_atomic)
+                path.write_text(unknown_atomic)
+                unknown_effects = run(tool, path, '--storage-effects')
+                unknown_stores = [line for line in unknown_effects.splitlines()
+                                  if re.search(r'effect \d+ pto.tstore ', line)]
+                assert not any('description=declared-region' in line for line in unknown_stores), unknown_stores
+            else:
+                assert not any('description=declared-region' in line for line in stores), stores
             # A later descriptor update cannot reuse the original full extent.
             changed = dynamic.replace("    pto.tmatmul ins",
                                       "    pto.set_validshape %al, %i1, %i16 : !left\n    pto.tmatmul ins")
@@ -67,6 +96,28 @@ def main():
             path.write_text(unknown)
             effects = run(tool, path, "--storage-effects")
             assert "effect 8 pto.tmatmul read intervals" in effects, effects
+        # Independently enumerate a noncontiguous atomic GM rectangle. Source
+        # geometry, row stride, offset and read/write modes are all checked;
+        # this does not use the compiler's storage-cell partition as an oracle.
+        atomic = text.replace('f16', 'f32')
+        atomic = atomic.replace('    %zero =', '    %extent = arith.constant 64 : index\n    %zero =', 1)
+        atomic = atomic.replace('%cv = pto.make_tensor_view %c, shape = [%i16, %i16], strides = [%i16, %i1]',
+                                '%cv = pto.make_tensor_view %c, shape = [%extent, %extent], strides = [%extent, %i1]')
+        atomic = atomic.replace('%cvp = pto.partition_view %cv, offsets = [%zero, %zero]',
+                                '%cvp = pto.partition_view %cv, offsets = [%i1, %i1]')
+        store = next(line for line in atomic.splitlines() if line.lstrip().startswith('pto.tstore '))
+        atomic = atomic.replace(store, store + ' {atomicType = #pto<atomic_type atomic_add>}')
+        expected = [(4 * ((row + 1) * 64 + 1), 4 * ((row + 1) * 64 + 17)) for row in range(16)]
+        for policy in ('may-alias', 'may-not-alias'):
+            path.write_text(atomic)
+            recovered = json.loads(run(tool, path, '--step1-json', '--gm-alias=' + policy))['access_records']
+            stores = recovered[-3:]
+            assert [r['mode'] for r in stores] == ['read', 'read', 'write'], stores
+            for record in stores[1:]:
+                assert record['space'] == 1 and record['ranges_materialized'], record
+                ranges = [(r['begin'], r['end']) for r in record['ranges']]
+                assert ranges == expected, (ranges, expected)
+                assert all(r['base'].get('number') == 2 for r in record['ranges']), record
         # More precise input maps must not reject an otherwise read-only base
         # just because a varying max expression is outside template arithmetic.
         source = text.replace('f16', 'bf16').replace('%a: !pto.ptr', '%offset: index, %a: !pto.ptr')

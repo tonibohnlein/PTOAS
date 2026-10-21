@@ -111,7 +111,7 @@ static bool addMatrixLoadAccessEffects(pto::TLoadOp op, PTOEffectList& effects)
 static bool addMatrixStoreAccessEffects(pto::TStoreOp op, PTOEffectList& effects)
 {
     if (!fullAccumulatorAccess(op.getSrc()) || op.getFp() || op.getPreQuantScalar() ||
-        op.getStPhase() != pto::STPhase::Unspecified || op.getAtomicType() != pto::AtomicType::AtomicNone) {
+        op.getStPhase() != pto::STPhase::Unspecified) {
         return false;
     }
     auto tile = cast<pto::TileBufType>(op.getSrc().getType());
@@ -123,9 +123,20 @@ static bool addMatrixStoreAccessEffects(pto::TStoreOp op, PTOEffectList& effects
         !matrixAccessNdView(op.getDst(), shape, element)) {
         return false;
     }
+    // AtomicAdd uses the same ND transfer rectangle. Qualify only f32-to-f32
+    // here; other atomic element/conversion combinations retain their existing
+    // conservative effects. The destination is read as well as written.
+    if (op.getAtomicType() != pto::AtomicType::AtomicNone &&
+        (op.getAtomicType() != pto::AtomicType::AtomicAdd || !element.isF32())) {
+        return false;
+    }
     auto conditions = fullMatrixConditions({&op.getSrcMutable()});
     addFullMatrixAccess(effects, op.getSrcMutable(), MemoryEffects::Read::get(), conditions);
     auto identity = mlir::AffineMap::getMultiDimIdentityMap(2, op.getContext());
+    if (op.getAtomicType() == pto::AtomicType::AtomicAdd) {
+        pto::addAccessRegion(effects, op.getDstMutable(), MemoryEffects::Read::get(),
+                            pto::makeCheckedAccessRegion(op.getSrcMutable(), identity, conditions));
+    }
     pto::addAccessRegion(effects, op.getDstMutable(), MemoryEffects::Write::get(),
                         pto::makeCheckedAccessRegion(op.getSrcMutable(), identity, conditions));
     return true;
