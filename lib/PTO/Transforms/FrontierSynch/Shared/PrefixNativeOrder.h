@@ -5,16 +5,16 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Prototype-only native prefix order. Storage-pair protection alone does not
+// Qualified standalone native prefix order. Storage-pair protection alone does not
 // imply this stronger event relation; the supplied scalar serialization contract
 // is scoped below to synchronous, noncompound vector-buffer accesses and scalar GM pointer loads.
-#ifndef PTO_TEST_CURRENTCUTNATIVEORDER_H
-#define PTO_TEST_CURRENTCUTNATIVEORDER_H
+#ifndef PTO_FRONTIERSYNCH_PREFIXNATIVEORDER_H
+#define PTO_FRONTIERSYNCH_PREFIXNATIVEORDER_H
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
 #include "PTO/Transforms/FrontierSynch/Shared/HardwareProtection.h"
 #include "PTO/Transforms/InsertSync/SyncInput.h"
-namespace current_cut {
+namespace mlir::pto::frontiersynch::prefix {
 enum class NativeOrder { Unknown, Overlapping, Serialized };
 inline NativeOrder nativeOrder(
     const mlir::pto::CompoundInstanceElement& phase, llvm::StringRef architecture, mlir::pto::SyncPhysicalCore core)
@@ -66,5 +66,5 @@ inline NativeOrder nativeOrder(
     // it does not discharge vector/transfer visibility into a scalar read.
     return NativeOrder::Serialized;
 }
-} // namespace current_cut
+} // namespace mlir::pto::frontiersynch::prefix
 #endif

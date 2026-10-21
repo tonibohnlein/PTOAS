@@ -470,3 +470,21 @@ complete their exits; summary-only children may retain pending effects. The
 generic realized-order loss bound is explicitly unavailable, not zero. Existing
 selected-order upper/lower bounds are a separate capability and are not a bound
 on stronger barrier placement.
+
+## Explicit standalone conservative prefixes
+
+`conservative-prefix=true physical-output=true` on the existing module pass
+selects the shared standalone source-pipe route; `prune-prefix-services=true`
+adds one optional jointly certified deletion. Default request dispatch is
+unchanged. `Shared/PrefixInput`, `SourcePipeServices`, `ServicePruning`,
+`PrefixRecipe` and `PrefixPreparation` own the typed construction. Admission
+uses the existing effect, readiness, native and target interfaces. JSON is
+inspection only, including in the thin experimental driver. Module-owned
+staging rolls back the complete request on any refusal.
+
+The result covers modeled storage and the selected prefix order; minimum
+ordering is not claimed. Constant acknowledgment roles use the existing
+eligible pool and directional reservations. Empty/exclusive invocation entry,
+closed notifications and return payload completion are separate contracts.
+No retained-child palettes or automatic fallback selection are admitted here.
+See `docs/designs/frontier-conservative-prefix-production-20261021.md`.

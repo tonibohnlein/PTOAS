@@ -5,18 +5,18 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// Test-only admission adapter over existing effect/phase/readiness contracts.
+// Standalone prefix admission adapter over existing effect/phase/readiness contracts.
 // No operation-name registry: unknown effects are not an empty access set.
-#ifndef PTO_TEST_CURRENTCUTCONTRACTS_H
-#define PTO_TEST_CURRENTCUTCONTRACTS_H
-#include "CurrentCutNativeOrder.h"
+#ifndef PTO_FRONTIERSYNCH_PREFIXCONTRACTS_H
+#define PTO_FRONTIERSYNCH_PREFIXCONTRACTS_H
+#include "PrefixNativeOrder.h"
 #include "PTO/IR/PTOAccessRegion.h"
 #include "PTO/Transforms/InsertSync/SyncStorageEffects.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
-#include "../../lib/PTO/Transforms/FrontierSynch/Shared/CompletionReadiness.h"
+#include "CompletionReadiness.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-namespace current_cut {
+namespace mlir::pto::frontiersynch::prefix {
 struct ContractIssue {
     mlir::Operation* operation;
     const char* contract;
@@ -201,5 +201,5 @@ inline ContractCheck checkContracts(
     }
     return result;
 }
-} // namespace current_cut
+} // namespace mlir::pto::frontiersynch::prefix
 #endif

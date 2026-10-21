@@ -10,6 +10,7 @@
 // are assigned by the following allocation pass. Analysis-only mode retains
 // the mathematical certification checkpoint without changing the original IR.
 #include "PTO/Transforms/FrontierSynch/Shared/EventIdPool.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PrefixServices.h"
 #include "AnalysisSessionInternal.h"
 #include "PTO/Transforms/FrontierSynch/Shared/RetainedInventory.h"
 #include "PTO/Transforms/FrontierSynch/ResultGuarantees.h"
@@ -638,6 +639,16 @@ public:
                 return;
             }
         }
+        if ((prunePrefixServices && !conservativePrefix) ||
+            (conservativePrefix && (!physicalOutput || !prepareAllocation || analysisOnly || completionOnly ||
+                deferredOutput || normalizeTwoTripLoops || experimentalCoordinateAllocation ||
+                !arithmeticProfile.empty()))) {
+            getOperation().emitError(
+                "conservative-prefix requires physical-output and prepare-allocation, excludes other analysis/"
+                "completion/normalization policies; prune-prefix-services requires conservative-prefix");
+            signalPassFailure();
+            return;
+        }
         if (deferredOutput && (analysisOnly || physicalOutput || completionOnly || !prepareAllocation)) {
             getOperation().emitError(
                 "deferred-output requires logical allocation preparation and excludes analysis-only, "
@@ -665,6 +676,15 @@ public:
             return;
         }
         auto policy = gmAlias == "may-alias" ? GMAliasPolicy::MayAlias : GMAliasPolicy::MayNotAlias;
+        if (conservativePrefix) {
+            frontiersynch::PrefixOptions options;
+            options.prune = prunePrefixServices;
+            options.eligibleIds.assign(allocationIds.begin(), allocationIds.end());
+            if (failed(frontiersynch::insertModuleConservativePrefix(getOperation(), policy, options))) {
+                signalPassFailure();
+            }
+            return;
+        }
         std::optional<frontiersynch::ArithmeticLimits> profile;
         if (!arithmeticProfile.empty()) {
             auto parsed = frontiersynch::parseArithmeticProfile(arithmeticProfile);

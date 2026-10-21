@@ -274,6 +274,11 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Shared/BoundingSequence.cpp
   FrontierSynch/Shared/CertifiedPartialReduction.cpp
   FrontierSynch/Shared/ChainComposition.cpp
+  FrontierSynch/Shared/PrefixRecipe.cpp
+  FrontierSynch/Shared/PrefixInput.cpp
+  FrontierSynch/Shared/PrefixServices.cpp
+  FrontierSynch/Shared/PrefixQualification.cpp
+  FrontierSynch/Shared/PrefixPreparation.cpp
   FrontierSynch/Shared/ServicePruning.cpp
   FrontierSynch/Shared/SourcePipeServices.cpp
   FrontierSynch/Shared/CompletionTransfer.cpp

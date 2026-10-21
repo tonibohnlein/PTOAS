@@ -10,6 +10,7 @@
 import argparse
 import copy
 import json
+import re
 from pathlib import Path
 from assess_whole_kernel_access import invoke, digest, annotate
 from check_current_cut_services import fixture, qualify
@@ -20,13 +21,49 @@ from current_cut_delta_oracle import check_delta, normalized_payload
 
 
 def profile(run):
-    return json.loads(
-        next(
-            s.removeprefix("current-cut-work ")
-            for s in Path(run["stderr"]).read_text().splitlines()
-            if s.startswith("current-cut-work ")
-        )
+    for line in Path(run["stderr"]).read_text().splitlines():
+        if line.startswith("current-cut-work "):
+            return json.loads(line.removeprefix("current-cut-work "))
+        if line.startswith("frontier-prefix-result "):
+            return json.loads(line.removeprefix("frontier-prefix-result "))["work"]
+    raise AssertionError("no service profile")
+
+
+def emit_mode(args, mode, source, output, *, alias="may-not-alias"):
+    experimental = invoke(
+        [args.trace_tool, "--gm-alias=" + alias, mode, source],
+        output.with_suffix(".experimental.pto"),
+        35,
     )
+    require(experimental["status"] == "success", str(experimental))
+    if not getattr(args, "production_tool", None):
+        output.write_bytes(Path(experimental["stdout"]).read_bytes())
+        experimental["stdout"] = str(output)
+        return experimental
+    pool = re.search(
+        r"test.current_cut_ids = array<i64:\s*([^>]*)>", source.read_text()
+    )
+    options = "conservative-prefix=true physical-output=true gm-alias=" + alias
+    if mode == "--current-cut-pruned":
+        options += " prune-prefix-services=true"
+    if pool:
+        options += " allocation-ids=" + pool[1].replace(" ", "")
+    production = invoke(
+        [args.production_tool, "--pto-frontier-analysis=" + options, source], output, 35
+    )
+    require(
+        production["status"] == "success",
+        str(production) + Path(production["stderr"]).read_text(),
+    )
+    require(
+        Path(experimental["stdout"]).read_bytes().rstrip(b"\n") == output.read_bytes().rstrip(b"\n"),
+        "production/experimental command or payload difference",
+    )
+    # MlirOptMain appends one extra terminal newline. Nothing inside the IR
+    # (including commands, operands, cuts and payloads) is normalized.
+    production["comparison"] = "identical-except-terminal-newlines"
+    production["experimental"] = experimental
+    return production
 
 
 def reference_delivery(data, full, kept, protected):
@@ -97,8 +134,10 @@ def model_case(args, data, name):
         delivered = reference_delivery(data, full, prune["kept"], protected)
         # Debt propagation sees a set of deliveries. Joint acceptance also
         # requires preserving their program order, which a set cannot prove.
-        ordered = all([p for p in full[i] if p in row] == row
-                      for i, row in enumerate(prune["kept"]))
+        ordered = all(
+            [p for p in full[i] if p in row] == row
+            for i, row in enumerate(prune["kept"])
+        )
         require(prune["accepted"] == (delivered and ordered), str(prune))
     if "fact_transmissions" in prune:
         graph = Graph(data["tree"])
@@ -166,8 +205,16 @@ def joint_negatives(args):
         and "refresh" in row["reason"],
         str(row),
     )
-    reordered = dict(classes=1, sites=[dict(pipe=4, facts=[2]), dict(pipe=5, facts=[2]), dict(pipe=1, facts=[1])],
-                     tree=[dict(kind="payload", site=i) for i in range(3)], candidate_services=[[], [4], [5, 4]])
+    reordered = dict(
+        classes=1,
+        sites=[
+            dict(pipe=4, facts=[2]),
+            dict(pipe=5, facts=[2]),
+            dict(pipe=1, facts=[1]),
+        ],
+        tree=[dict(kind="payload", site=i) for i in range(3)],
+        candidate_services=[[], [4], [5, 4]],
+    )
     order = model_case(args, reordered, "reordered-services")
     require(not order["accepted"] and "ordered subset" in order["reason"], str(order))
     return dict(mutual=rows, protected=protected, refresh=row, reordered=order)
@@ -179,7 +226,7 @@ def run_pair(args, name, text, counts=None):
     runs, checks, profiles = [], [], []
     for mode in ("--current-cut-output", "--current-cut-pruned"):
         output = args.output / f"{name}{mode}.pto"
-        run = invoke([args.trace_tool, mode, source], output, 35)
+        run = emit_mode(args, mode, source, output)
         require(run["status"] == "success", str(run) + Path(run["stderr"]).read_text())
         work = profile(run)
         kept = work.get("pruning", {}).get("kept")
@@ -228,9 +275,7 @@ def delta_case(args):
     programs, runs, work = [], [], []
     for mode in ("--current-cut-output", "--current-cut-pruned"):
         output = args.output / f"delta{mode}.pto"
-        result = invoke(
-            [args.trace_tool, "--gm-alias=may-not-alias", mode, source], output, 35
-        )
+        result = emit_mode(args, mode, source, output)
         require(result["status"] == "success", str(result))
         programs.append(output.read_text())
         runs.append(result)
@@ -242,8 +287,10 @@ def delta_case(args):
         runs=runs,
         work=work,
         cases=cases,
-        scope=("actual emitted commands and independent original SSA/control; reservation-model effects, "
-               "not native footprint recovery or numerical Delta execution"),
+        scope=(
+            "actual emitted commands and independent original SSA/control; reservation-model effects, "
+            "not native footprint recovery or numerical Delta execution"
+        ),
     )
 
 
@@ -252,6 +299,7 @@ def main():
     parser.add_argument("--trace-tool", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--delta", type=Path)
+    parser.add_argument("--production-tool", type=Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     negatives = joint_negatives(args)
@@ -335,10 +383,8 @@ def main():
             text = fixture(2, trips, "all", stages=stages)
             source = args.output / f"scale-{stages}-{trips}.pto"
             source.write_text(text)
-            run = invoke(
-                [args.trace_tool, "--current-cut-pruned", source],
-                source.with_suffix(".out.pto"),
-                35,
+            run = emit_mode(
+                args, "--current-cut-pruned", source, source.with_suffix(".out.pto")
             )
             require(run["status"] == "success", str(run))
             scaling.append(dict(stages=stages, trips=trips, run=run, work=profile(run)))

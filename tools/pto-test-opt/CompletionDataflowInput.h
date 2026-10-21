@@ -11,7 +11,7 @@
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/CompletionStorage.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "SourcePipeServiceChecks.h"
-#include "CurrentCutNativeOrder.h"
+#include "../../lib/PTO/Transforms/FrontierSynch/Shared/PrefixNativeOrder.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/JSON.h"
 #include <chrono>
@@ -67,14 +67,14 @@ public:
             for (const auto* memory : phase->defVec) {
                 effects.push_back(reservation(*memory, true));
             }
-            const auto order = current_cut::nativeOrder(*phase, architecture, core);
+            const auto order = fs::prefix::nativeOrder(*phase, architecture, core);
             sites.push_back(
                 llvm::json::Object{
                     {"line", line(phase->elementOp)},
                     {"operation", phase->opName.getStringRef()},
                     {"pipe", static_cast<unsigned>(phase->kPipeValue)},
-                    {"native_prefix_order", order == current_cut::NativeOrder::Serialized  ? "serialized" :
-                                            order == current_cut::NativeOrder::Overlapping ? "overlapping" :
+                    {"native_prefix_order", order == fs::prefix::NativeOrder::Serialized  ? "serialized" :
+                                            order == fs::prefix::NativeOrder::Overlapping ? "overlapping" :
                                                                                              "unavailable"},
                     {"facts", std::move(facts)},
                     {"effects", std::move(effects)}});

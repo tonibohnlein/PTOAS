@@ -52,7 +52,16 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
     primitive children retain pending effects; their boundaries do not add drains.
     This option does not silently replace a retained exact result and cannot be
     combined with analysis-only, physical-output or an arithmetic class request.
-    Functions with manual on-core SET/WAIT or record/wait events are left
+    Explicit conservative-prefix=true selects the qualified standalone source-pipe
+    construction, with physical-output=true and the allocation-ids/default pool.
+    It reports conservative coverage, not minimum demands or order equality.
+    prune-prefix-services=true enables one jointly certified deletion proposal.
+    This route requires empty exclusively owned roles at invocation entry and
+    completes payload work at return separately from closing notifications.
+    Existing/manual protocols are refused; no implicit policy fallback occurs.
+    It excludes completion-only, deferred-output, analysis-only, arithmetic-profile,
+    coordinate-allocation and loop-normalization requests. Defaults are unchanged.
+    In default selection, functions with manual on-core SET/WAIT or record/wait events are left
     unchanged, including dynamic event IDs. Cross-core commands and barriers
     alone do not trigger this skip, matching the shared InsertSync policy.
   }];
@@ -64,6 +73,10 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
       "Stop after mathematical certification without inserting synchronization">,
     Option<"normalizeTwoTripLoops", "normalize-two-trip-loops", "bool", "false",
       "Opt in to unrolling supported original two-trip leaf loops before insertion">,
+    Option<"conservativePrefix", "conservative-prefix", "bool", "false",
+      "Explicit standalone conservative prefix acknowledgment route; requires physical-output">,
+    Option<"prunePrefixServices", "prune-prefix-services", "bool", "false",
+      "Jointly certify optional whole-service deletion; requires conservative-prefix">,
     Option<"completionOnly", "completion-only", "bool", "false",
            "Explicit SCC completion request using coarse input and qualified closed children">,
     Option<"physicalOutput", "physical-output", "bool", "false",

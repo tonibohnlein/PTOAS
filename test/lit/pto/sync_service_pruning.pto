@@ -5,5 +5,5 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-// RUN: %python %S/Inputs/check_service_pruning.py --trace-tool pto-sync-input-test --output %t.pruning --delta %S/../../npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto
+// RUN: %python %S/Inputs/check_service_pruning.py --trace-tool pto-sync-input-test --production-tool pto-test-opt --output %t.pruning --delta %S/../../npu_validation/benchmarks/auto_sync/prepared/gated_delta_rule/input.pto
 module {}

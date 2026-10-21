@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SourcePipeServiceChecks.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PrefixRecipe.h"
 #include "PTO/Transforms/FrontierSynch/Shared/ServicePruning.h"
 #include "PTO/Transforms/FrontierSynch/Shared/SourcePipeServices.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -169,25 +170,25 @@ llvm::json::Array commandPlan(
                 }
                 commands.push_back(std::move(command));
             };
-            for (auto source : result.possible[site]) {
-                if (source == target) {
-                    continue;
-                }
-                add("S", source, source, false);
-                if (physical) {
-                    add("W", target, source, false);
-                    add("S", target, source, true);
-                    add("W", source, source, true);
-                }
-            }
-            if (std::binary_search(result.possible[site].begin(), result.possible[site].end(), target)) {
-                commands.push_back(llvm::json::Object{{"op", "B"}, {"pipe", target}});
-            }
-            if (!physical) {
-                for (auto source : result.possible[site]) {
-                    if (source != target) {
-                        add("W", target, source, false);
+            if (physical) {
+                for (const auto& command : fs::prefixCommands(target, result.possible[site])) {
+                    if (command.kind == fs::PrefixCommandKind::Barrier) {
+                        commands.push_back(llvm::json::Object{{"op", "B"}, {"pipe", target}});
+                    } else {
+                        uint32_t source = command.reverse ? command.target : command.source;
+                        uint32_t pipe = command.kind == fs::PrefixCommandKind::Set ? command.source : command.target;
+                        add(command.kind == fs::PrefixCommandKind::Set ? "S" : "W", pipe, source, command.reverse);
                     }
+                }
+            } else {
+                for (auto source : result.possible[site]) {
+                    if (source != target) { add("S", source, source, false); }
+                }
+                if (std::binary_search(result.possible[site].begin(), result.possible[site].end(), target)) {
+                    commands.push_back(llvm::json::Object{{"op", "B"}, {"pipe", target}});
+                }
+                for (auto source : result.possible[site]) {
+                    if (source != target) { add("W", target, source, false); }
                 }
             }
             node["commands"] = std::move(commands);
@@ -206,25 +207,10 @@ llvm::json::Array commandPlan(
 }
 llvm::json::Array roleIds(const Input& input, const fs::SourcePipeServices& result)
 {
-    std::map<std::pair<uint32_t, uint32_t>, std::set<std::string>> roles;
-    for (std::size_t site = 0; site < input.sites.size(); ++site) {
-        auto target = input.sites[site].pipe;
-        for (auto source : result.possible[site]) {
-            if (source == target) {
-                continue;
-            }
-            roles[{source, target}].insert("F");
-            roles[{target, source}].insert("R");
-        }
-    }
     llvm::json::Array output;
-    for (const auto& [direction, names] : roles) {
-        uint64_t id = 0;
-        for (const auto& name : names) {
-            output.push_back(
-                llvm::json::Object{
-                    {"role", name}, {"source", direction.first}, {"target", direction.second}, {"id", id++}});
-        }
+    for (const auto& role : fs::prefixRoles(input.sites, result.possible)) {
+        output.push_back(llvm::json::Object{{"role", role.reverse ? "R" : "F"},
+            {"source", role.source}, {"target", role.target}, {"id", role.ordinal}});
     }
     return output;
 }
