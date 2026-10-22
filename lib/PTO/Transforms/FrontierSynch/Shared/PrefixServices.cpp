@@ -54,6 +54,15 @@ bool Preparation::verifyProtocol() const
 LogicalResult Preparation::emit()
 {
     const auto start = std::chrono::steady_clock::now();
+    // Lower the retained child through the existing insertion and allocation
+    // services before adding disjoint physical parent roles. Original payload
+    // operations stay alive; only generated logical endpoints are replaced.
+    if (childPlan) {
+        if (failed(fs::insertLogicalSynchronization(function, *childPlan)) ||
+            failed(fs::allocatePhysicalEventIds(function, pool))) { return failure(); }
+        work["child_realization_seconds"] =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    }
     // This ordered immutable list is complete before any IR changes. Constant
     // maps ignore logical coordinates; matching identity remains (site, IVs, p).
     for (const auto& command : commands) {

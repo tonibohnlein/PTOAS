@@ -13,11 +13,18 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/Support/JSON.h"
+#include <functional>
+#include <optional>
 namespace mlir::pto::frontiersynch {
+class CompletionInlineChild;
 enum class PrefixRefusal { None, Admission, Visibility, Readiness, CutOrDirection, Resources, Certificate, Emission };
 llvm::StringRef prefixRefusalName(PrefixRefusal reason);
 struct PrefixOptions {
     bool prune = false;
+    std::optional<std::size_t> childRegion;
+    // A trusted caller may supply an already qualified provider in the staged
+    // original frame. Mutually exclusive with a session region request.
+    std::function<std::shared_ptr<const CompletionInlineChild>(func::FuncOp)> childProvider;
     SmallVector<int64_t> eligibleIds;
 };
 struct PrefixResult {
@@ -29,7 +36,8 @@ struct PrefixResult {
     bool accepted() const { return refusal == PrefixRefusal::None; }
 };
 // No original mutation on refusal. Entry roles must be empty and exclusively
-// owned; no manual/open protocols or child palettes are admitted. Return ALL
+// owned; manual/open protocols are refused. Optional whole-loop children require
+// separately qualified boundaries, disjoint palettes and causal entry wrappers. Return ALL
 // completes payload work separately from notification matching/reuse.
 PrefixResult insertConservativePrefix(func::FuncOp function, GMAliasPolicy policy, const PrefixOptions& options);
 // Module-owned transaction, including rollback if a later function refuses.

@@ -81,7 +81,9 @@ LogicalResult Preparation::reserveRoles(const fs::PrefixInput& description, cons
             static_cast<pto::PipelineType>(role.source), static_cast<pto::PipelineType>(role.target));
         SmallVector<int64_t> directional;
         for (auto id : pool) {
-            if (reserved < pto::kTotalEventIdNum && static_cast<uint64_t>(id) < pto::kTotalEventIdNum - reserved) {
+            if (reserved < pto::kTotalEventIdNum && static_cast<uint64_t>(id) < pto::kTotalEventIdNum - reserved &&
+                (!boundary || !(boundary->palette.count({role.source, role.target}) &&
+                    (boundary->palette.at({role.source, role.target}) & (1u << id))))) {
                 directional.push_back(id);
             }
         }
@@ -106,52 +108,73 @@ LogicalResult Preparation::reserveRoles(const fs::PrefixInput& description, cons
     }
     return success();
 }
-LogicalResult Preparation::constructCommands(const fs::PrefixInput& description, const fs::ServiceMask& masks)
+LogicalResult Preparation::appendCommands(Operation* cut, uint32_t targetPipe,
+    const std::vector<uint32_t>& sources, const pto::CompoundInstanceElement* phase)
 {
     DominanceInfo dominance;
-    for (auto id : description.order) {
-        auto* cut = input.instructions()[id]->elementOp;
-        for (const auto& command : fs::prefixCommands(description.sites[id].pipe, masks[id])) {
-            if (command.kind == fs::PrefixCommandKind::Barrier) {
-                ++selectedSelf;
-                const auto nativeStart = std::chrono::steady_clock::now();
-                const auto order = fs::prefix::nativeOrder(*input.instructions()[id], architecture, core);
-                nativeSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - nativeStart).count();
-                if (order == fs::prefix::NativeOrder::Serialized) {
-                    ++nativeDischarges;
-                    continue;
-                }
-                auto available =
-                    pto::getSyncBarrierAvailability(architecture, core, static_cast<pto::PIPE>(command.source));
-                if (!available.value_or(false)) {
-                    return refuse(fs::PrefixRefusal::CutOrDirection, "local barrier unavailable");
-                }
-                commands.push_back({cut, true, false, command.source, command.target, {}});
+    for (const auto& command : fs::prefixCommands(targetPipe, sources)) {
+        if (command.kind == fs::PrefixCommandKind::Barrier) {
+            ++selectedSelf;
+            const auto nativeStart = std::chrono::steady_clock::now();
+            const auto order = phase ? fs::prefix::nativeOrder(*phase, architecture, core) :
+                                   fs::prefix::NativeOrder::Unknown;
+            nativeSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - nativeStart).count();
+            if (order == fs::prefix::NativeOrder::Serialized) {
+                ++nativeDischarges;
                 continue;
             }
-            auto found = assignments.find({command.source, command.target, command.reverse});
-            if (found == assignments.end()) {
-                return refuse(fs::PrefixRefusal::Certificate, "missing role assignment");
+            auto available =
+                pto::getSyncBarrierAvailability(architecture, core, static_cast<pto::PIPE>(command.source));
+            if (!available.value_or(false)) {
+                return refuse(fs::PrefixRefusal::CutOrDirection, "local barrier unavailable");
             }
-            const auto& allocation = found->second;
-            auto source = allocation.sourcePipe;
-            auto target = allocation.targetPipe;
-            bool publish = command.kind == fs::PrefixCommandKind::Set;
-            if (publish && !command.reverse) {
-                ++selectedCross;
+            commands.push_back({cut, true, false, command.source, command.target, {}});
+            continue;
+        }
+        auto found = assignments.find({command.source, command.target, command.reverse});
+        if (found == assignments.end()) {
+            return refuse(fs::PrefixRefusal::Certificate, "missing role assignment");
+        }
+        const auto& allocation = found->second;
+        auto source = allocation.sourcePipe;
+        auto target = allocation.targetPipe;
+        bool publish = command.kind == fs::PrefixCommandKind::Set;
+        if (publish && !command.reverse) {
+            ++selectedCross;
+        }
+        auto capability = pto::getSyncEventAvailability(
+            architecture, core, static_cast<pto::PIPE>(source), static_cast<pto::PIPE>(target));
+        if (!capability.available.value_or(false)) {
+            return refuse(fs::PrefixRefusal::CutOrDirection, "direction unavailable or endpoint inconsistent");
+        }
+        const auto mapStart = std::chrono::steady_clock::now();
+        auto mapping = fs::planPhysicalEndpointMap(cut, {allocation}, {{}}, 1, false, dominance);
+        physicalMapSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - mapStart).count();
+        if (failed(mapping)) {
+            return refuse(fs::PrefixRefusal::CutOrDirection, "physical endpoint map unavailable");
+        }
+        commands.push_back({cut, false, publish, source, target, *mapping, allocation.ids.front()});
+    }
+    return success();
+}
+LogicalResult Preparation::constructCommands(const fs::PrefixInput& description, const fs::ServiceMask& masks)
+{
+    bool emittedEntry = false;
+    for (auto id : description.order) {
+        auto* cut = input.instructions()[id]->elementOp;
+        if (insideChild(cut)) {
+            if (!emittedEntry) {
+                for (std::size_t i = 0; i < entryPipes.size(); ++i) {
+                    if (failed(appendCommands(boundary->invocation, entryPipes[i], entryMasks[i]))) {
+                        return failure();
+                    }
+                }
+                emittedEntry = true;
             }
-            auto capability = pto::getSyncEventAvailability(
-                architecture, core, static_cast<pto::PIPE>(source), static_cast<pto::PIPE>(target));
-            if (!capability.available.value_or(false)) {
-                return refuse(fs::PrefixRefusal::CutOrDirection, "direction unavailable or endpoint inconsistent");
-            }
-            const auto mapStart = std::chrono::steady_clock::now();
-            auto mapping = fs::planPhysicalEndpointMap(cut, {allocation}, {{}}, 1, false, dominance);
-            physicalMapSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - mapStart).count();
-            if (failed(mapping)) {
-                return refuse(fs::PrefixRefusal::CutOrDirection, "physical endpoint map unavailable");
-            }
-            commands.push_back({cut, false, publish, source, target, *mapping, allocation.ids.front()});
+            continue;
+        }
+        if (failed(appendCommands(cut, description.sites[id].pipe, masks[id], input.instructions()[id]))) {
+            return failure();
         }
     }
     return success();
@@ -183,8 +206,9 @@ LogicalResult Preparation::prepare()
     work["edge_fact_transmissions"] = baseline.work.transmissions;
     fs::ServiceMask selected = baseline.possible;
     const bool acceptedPruning = pruning && refine(description, baseline, selected);
+    if (failed(prepareChild(description, selected))) { return failure(); }
     const auto mappingStart = std::chrono::steady_clock::now();
-    if (failed(reserveRoles(description, baseline.possible))) {
+    if (failed(reserveRoles(description, child ? selected : baseline.possible))) {
         return failure();
     }
     if (failed(constructCommands(description, selected))) {

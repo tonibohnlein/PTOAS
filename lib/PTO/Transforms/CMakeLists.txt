@@ -277,6 +277,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Shared/PrefixRecipe.cpp
   FrontierSynch/Shared/PrefixInput.cpp
   FrontierSynch/Shared/PrefixServices.cpp
+  FrontierSynch/Shared/PrefixChildren.cpp
   FrontierSynch/Shared/PrefixQualification.cpp
   FrontierSynch/Shared/PrefixPreparation.cpp
   FrontierSynch/Shared/ServicePruning.cpp
@@ -287,6 +288,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/Shared/CompletionLoss.cpp
   FrontierSynch/Shared/CompletionRegion.cpp
   FrontierSynch/Shared/CompletionInlineChild.cpp
+  FrontierSynch/Shared/CompletionPrefixChild.cpp
   FrontierSynch/Shared/ChainInterface.cpp
   FrontierSynch/Shared/ChainMergeQueries.cpp
   FrontierSynch/Shared/ClosedCallees.cpp

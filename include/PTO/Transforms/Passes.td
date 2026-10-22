@@ -75,6 +75,9 @@ def PTOFrontierAnalysis : Pass<"pto-frontier-analysis", "ModuleOp"> {
       "Opt in to unrolling supported original two-trip leaf loops before insertion">,
     Option<"conservativePrefix", "conservative-prefix", "bool", "false",
       "Explicit standalone conservative prefix acknowledgment route; requires physical-output">,
+    Option<"prefixChildRegion", "prefix-child-region", "int64_t", "-1",
+      "Original region of one explicitly requested closed whole-loop child; " #
+      "requires conservative-prefix, excludes pruning">,
     Option<"prunePrefixServices", "prune-prefix-services", "bool", "false",
       "Jointly certify optional whole-service deletion; requires conservative-prefix">,
     Option<"completionOnly", "completion-only", "bool", "false",

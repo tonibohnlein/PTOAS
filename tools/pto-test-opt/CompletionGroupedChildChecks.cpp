@@ -13,6 +13,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/FamilyInsertion.h"
 #include "../../lib/PTO/Transforms/FrontierSynch/Shared/CompletionInlineChild.h"
 #include "mlir/IR/Verifier.h"
+#include "PTO/Transforms/FrontierSynch/Shared/PrefixServices.h"
 #include "mlir/IR/Matchers.h"
 using namespace mlir;
 namespace fs = pto::frontiersynch;
@@ -110,5 +111,53 @@ LogicalResult runGroupedCompletionParent(func::FuncOp function,
         IntegerAttr::get(IntegerType::get(function.getContext(), 64), retained));
     function->setAttr("test.pending_child_payloads", BoolAttr::get(function.getContext(), pendingPayload));
     function->setAttr("test.transparent_child", BoolAttr::get(function.getContext(), transparent));
+    return verify(function);
+}
+
+LogicalResult runGroupedPrefixParent(func::FuncOp function)
+{
+    fs::PrefixOptions options;
+    options.eligibleIds = {0, 1, 2, 3, 4, 5};
+    if (auto pool = function->getAttrOfType<DenseI64ArrayAttr>("test.prefix_pool")) {
+        options.eligibleIds.assign(pool.asArrayRef().begin(), pool.asArrayRef().end());
+    }
+    options.childProvider = [](func::FuncOp staged) -> std::shared_ptr<const fs::CompletionInlineChild> {
+        auto policy = staged->hasAttr("test.prefix_alias_mismatch") ?
+            pto::GMAliasPolicy::MayAlias : pto::GMAliasPolicy::MayNotAlias;
+        auto input = std::make_shared<pto::SyncInput>(policy);
+        if (failed(input->build(staged, pto::SyncInstructionView::PipeEnvelopes))) { return {}; }
+        scf::ForOp loop;
+        Operation* cut = nullptr;
+        staged.walk([&](scf::ForOp candidate) {
+            if (candidate->hasAttr("test.grouped_visit")) { loop = candidate; }
+        });
+        if (!loop || !fixedTwoVisits(loop)) { return {}; }
+        for (auto& op : loop.getBody()->without_terminator()) {
+            if (op.getName().getStringRef() == "pto.textract") { cut = &op; }
+        }
+        if (!cut) { return {}; }
+        auto prepare = [loop, cut, bad = staged->hasAttr("test.bad_child_arity"),
+                        escaped = staged->hasAttr("test.prefix_guard_escape")]() {
+            auto plan = suppliedPlan(loop, cut, bad);
+            if (escaped) {
+                // The guard is prepared inside the child. Moving either side
+                // to its enclosing cut has no valid availability/guard frame.
+                for (auto& endpoint : plan->endpoints) { endpoint.before = loop; }
+            }
+            return FailureOr<std::unique_ptr<fs::PreparedLogicalPlan>>(std::move(plan));
+        };
+        return fs::CompletionInlineChild::qualifyVisit(input, input, loop, prepare);
+    };
+    std::string before;
+    llvm::raw_string_ostream(before) << function;
+    auto result = fs::insertConservativePrefix(function, pto::GMAliasPolicy::MayNotAlias, options);
+    if (!result.accepted()) {
+        std::string after;
+        llvm::raw_string_ostream(after) << function;
+        if (before != after) { return function.emitError("prefix child refusal mutated original IR"); }
+        llvm::errs() << "prefix child refusal preserved original IR\n";
+        return failure();
+    }
+    llvm::errs() << "frontier-prefix-result " << llvm::json::Value(std::move(result.work)) << "\n";
     return verify(function);
 }

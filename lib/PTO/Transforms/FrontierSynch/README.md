@@ -486,5 +486,13 @@ The result covers modeled storage and the selected prefix order; minimum
 ordering is not claimed. Constant acknowledgment roles use the existing
 eligible pool and directional reservations. Empty/exclusive invocation entry,
 closed notifications and return payload completion are separate contracts.
-No retained-child palettes or automatic fallback selection are admitted here.
-See `docs/designs/frontier-conservative-prefix-production-20261021.md`.
+`prefix-child-region=N` explicitly requests one proper original whole-loop
+child through its existing provider. The wrapper preserves its closed internal
+recipe and original frames, reserves disjoint directional palettes, and adds
+acknowledged entry paths for cross-visit rearming. Pending payload effects are
+retained; missing exact selectors remain unavailable. Unsupported boundaries,
+changed assignments or insufficient reservations refuse transactionally.
+This composition excludes pruning. It performs no automatic child/fallback
+selection and never follows a failed retained-exact export implicitly.
+See `docs/designs/frontier-conservative-prefix-production-20261021.md` and
+`docs/designs/frontier-prefix-child-composition-20261022.md`.

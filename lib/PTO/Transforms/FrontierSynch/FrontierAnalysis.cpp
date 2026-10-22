@@ -639,13 +639,15 @@ public:
                 return;
             }
         }
-        if ((prunePrefixServices && !conservativePrefix) ||
+        if ((prefixChildRegion < -1 || (prefixChildRegion >= 0 && (!conservativePrefix || prunePrefixServices))) ||
+            (prunePrefixServices && !conservativePrefix) ||
             (conservativePrefix && (!physicalOutput || !prepareAllocation || analysisOnly || completionOnly ||
                 deferredOutput || normalizeTwoTripLoops || experimentalCoordinateAllocation ||
                 !arithmeticProfile.empty()))) {
             getOperation().emitError(
                 "conservative-prefix requires physical-output and prepare-allocation, excludes other analysis/"
-                "completion/normalization policies; prune-prefix-services requires conservative-prefix");
+                "completion/normalization policies; prune-prefix-services requires conservative-prefix; "
+                "prefix-child-region requires conservative-prefix without pruning");
             signalPassFailure();
             return;
         }
@@ -679,6 +681,7 @@ public:
         if (conservativePrefix) {
             frontiersynch::PrefixOptions options;
             options.prune = prunePrefixServices;
+            if (prefixChildRegion >= 0) { options.childRegion = static_cast<std::size_t>(prefixChildRegion); }
             options.eligibleIds.assign(allocationIds.begin(), allocationIds.end());
             if (failed(frontiersynch::insertModuleConservativePrefix(getOperation(), policy, options))) {
                 signalPassFailure();

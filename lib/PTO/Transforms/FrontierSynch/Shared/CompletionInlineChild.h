@@ -39,6 +39,15 @@ public:
     static std::shared_ptr<const CompletionInlineChild> qualifyVisit(
         std::shared_ptr<const void> owner, std::shared_ptr<const SyncInput> input,
         scf::ForOp loop, VisitPreparation prepare);
+    // Whole-loop confinement supplies boundary order, not payload completion.
+    struct PrefixBoundary {
+        scf::ForOp invocation;
+        std::map<uint32_t, CompletionFacts> pendingByPipe;
+        std::map<std::pair<uint32_t, uint32_t>, uint8_t> palette;
+    };
+    std::optional<PrefixBoundary> prefixBoundary(const CompletionStorage&, const PhaseIndex&) const;
+    // Same assignment, translated labels/frames. No new coloring or analysis.
+    FailureOr<std::unique_ptr<PreparedLogicalPlan>> preparePrefixImport(ArrayRef<int64_t> eligibleIds) const;
     const CompletionSummary& summary() const { return effects; }
     std::optional<uint64_t> payloadCount() const;
     bool exactRealizedOrder() const;

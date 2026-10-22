@@ -14,6 +14,7 @@
 #include "PTO/Transforms/FrontierSynch/Shared/PhysicalAllocation.h"
 #include "PTO/Transforms/FrontierSynch/Shared/PhaseIndex.h"
 #include "PTO/IR/PTOSyncCapabilities.h"
+#include "CompletionInlineChild.h"
 #include <map>
 #include <tuple>
 namespace mlir::pto::frontiersynch::prefix {
@@ -28,7 +29,8 @@ struct Command {
 class Preparation {
 public:
     explicit Preparation(func::FuncOp function, pto::GMAliasPolicy policy, const fs::PrefixOptions& options)
-        : function(function), input(policy), pruning(options.prune), pool(options.eligibleIds)
+        : function(function), input(policy), pruning(options.prune), aliasPolicy(policy),
+          childRegion(options.childRegion), childProvider(options.childProvider), pool(options.eligibleIds)
     {}
     LogicalResult prepare();
     LogicalResult emit();
@@ -47,6 +49,18 @@ private:
     std::string architecture;
     pto::SyncPhysicalCore core = pto::SyncPhysicalCore::Unknown;
     bool pruning = false;
+    pto::GMAliasPolicy aliasPolicy;
+    std::optional<std::size_t> childRegion;
+    std::function<std::shared_ptr<const fs::CompletionInlineChild>(func::FuncOp)> childProvider;
+    std::shared_ptr<const fs::CompletionInlineChild> child;
+    std::optional<fs::CompletionInlineChild::PrefixBoundary> boundary;
+    std::unique_ptr<fs::PreparedLogicalPlan> childPlan;
+    fs::ServiceMask entryMasks;
+    std::vector<uint32_t> entryPipes;
+    LogicalResult prepareChild(fs::PrefixInput&, fs::ServiceMask&);
+    LogicalResult appendCommands(Operation*, uint32_t, const std::vector<uint32_t>&,
+                                 const pto::CompoundInstanceElement* phase = nullptr);
+    bool insideChild(Operation*) const;
     uint64_t nativeDischarges = 0, selectedSelf = 0, selectedCross = 0;
     double recoverySeconds = 0, indexSeconds = 0, mapsSeconds = 0;
     double nativeSeconds = 0, physicalMapSeconds = 0;

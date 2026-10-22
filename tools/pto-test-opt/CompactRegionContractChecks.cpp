@@ -22,6 +22,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/Support/raw_ostream.h"
 #include <set>
+mlir::LogicalResult runGroupedPrefixParent(mlir::func::FuncOp function);
 mlir::LogicalResult runGroupedCompletionParent(mlir::func::FuncOp function,
     std::shared_ptr<const mlir::pto::frontiersynch::MathematicalResult> math);
 namespace {
@@ -538,6 +539,12 @@ int runCompactRegionContract(const char* filename)
         return 1;
     }
     for (auto function : module->getOps<func::FuncOp>()) {
+        if (function->hasAttr("test.contract_prefix_parent")) {
+            if (failed(runGroupedPrefixParent(function))) { return 1; }
+            function->getParentOp()->print(llvm::outs());
+            llvm::outs() << "\n";
+            return 0;
+        }
         fs::FrontierAnalysis session(function);
         auto policy = pto::GMAliasPolicy::MayNotAlias;
         if (auto alias = function->getAttrOfType<StringAttr>("test.contract_gm_alias")) {
