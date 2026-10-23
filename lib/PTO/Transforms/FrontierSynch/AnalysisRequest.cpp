@@ -895,6 +895,24 @@ FailureOr<std::unique_ptr<PreparedLogicalPlan>> FrontierAnalysis::prepareLogical
     return prepared;
 }
 namespace {
+bool closedExpandedAllocationFrame(const FiniteGuardedAnalysis& analysis)
+{
+    const auto program = analysis.expandedProgram;
+    if (!program) { return false; }
+    for (const auto& site : program->sites) {
+        auto* operation = site.phase ? site.phase->elementOp : nullptr;
+        if (!operation || !site.loops.empty()) { return false; }
+        for (auto* parent = operation->getParentOp(); parent && parent != program->context.function;
+             parent = parent->getParentOp()) {
+            if (isa<scf::WhileOp>(parent)) { return false; }
+            auto loop = dyn_cast<scf::ForOp>(parent);
+            if (loop && llvm::none_of(site.fixedCoordinates, [&](const auto& point) { return point.loop == loop; })) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
 // Borrow existing regional mathematics; requesting allocation must not invoke
 // another demand analysis or stronger query export merely to select a candidate.
 std::shared_ptr<const RegionalAnalysis> allocationRegion(const MathematicalResult& demands)
@@ -905,6 +923,13 @@ std::shared_ptr<const RegionalAnalysis> allocationRegion(const MathematicalResul
     }
     if (demands.finiteDemands && demands.finiteDemands->guarded()) {
         return std::make_shared<const RegionalAnalysis>(finiteRegionalResult(demands.finiteDemands));
+    }
+    if (demands.expandedFiniteDemands) {
+        // Visit-free queries certify one closed expansion. They cannot certify
+        // rearming across an enclosing invocation whose coordinates are unbound.
+        if (!closedExpandedAllocationFrame(*demands.expandedFiniteDemands)) { return {}; }
+        return std::make_shared<const RegionalAnalysis>(
+            expandedFiniteRegionalQueries(*demands.expandedFiniteDemands, demands.input));
     }
     return {};
 }
@@ -969,8 +994,10 @@ DictionaryAttr allocateRetained(const MathematicalResult& demands, const Program
         return guardedPeriodicAllocationCertificate(*conversion.expressions, conversion.payloads,
             conversion.generators, *conversion.guarded, plan, context);
     }
-    if (demands.sequenceDemands || (demands.finiteDemands && demands.finiteDemands->guarded())) {
+    if (demands.sequenceDemands || demands.expandedFiniteDemands ||
+        (demands.finiteDemands && demands.finiteDemands->guarded())) {
         auto region = allocationRegion(demands);
+        if (!region) { return {}; }
         auto certificate = regionalAllocationCertificate(*region, prepared, allocationProfile);
         return certificate ? certificate : finiteRegionalAllocationCertificate(*region, prepared);
     }
@@ -1034,6 +1061,10 @@ LogicalResult FrontierAnalysis::attachAllocation(const AnalysisOutcome& result, 
         return entry.second.mathematical == result.mathematical;
     });
     if (selected == attempts.end()) { return failure(); }
+    // A caller may already hold a local query export. It must not bypass the
+    // closed-frame check through candidate selection or a cached certificate.
+    if (result.mathematical->expandedFiniteDemands &&
+        !closedExpandedAllocationFrame(*result.mathematical->expandedFiniteDemands)) { return failure(); }
     const bool emptyInvocation = program && structuralIndex && staticallyEmptyWholeInvocation(
         *result.mathematical, function, *storage, *program, *structuralIndex);
     if (emptyInvocation && (plan.completeInvocation || plan.familyRecipe || plan.familyProtocol ||

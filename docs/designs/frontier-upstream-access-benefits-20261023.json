@@ -1,0 +1,2083 @@
+{
+  "version": 1,
+  "starting_revision": "3c7a5839aff5844101c7c6af3b37b4ef43183fc0",
+  "starting_tree": "clean before this checkpoint",
+  "candidate": "reviewed working-tree snapshot before commit",
+  "tracked_diff_sha256": "d7e3daea31211cd384b20957275fe80010fe5ffe4c7b3d2c29d719f08c268669",
+  "changed_file_sha256": {
+    "lib/PTO/IR/PTOInterfaces/PTOVectorAccessEffects.cpp": "742eff9649cf29da8555840a464eccf259437eccbaffb3614f16d2d324ac1f40",
+    "lib/PTO/Transforms/FrontierSynch/AnalysisRequest.cpp": "f8e2919e2373cea868b30020b676783fa133ef799b8083eb659318157c77d589",
+    "test/lit/pto/Inputs/check_frontier_upstream_access.py": "be806031432658fa00363fbfa6701b0e221f4aefcb84cf2566a1919798ee7ede",
+    "test/lit/pto/Inputs/upstream_access_reference.py": "5176e447a52cdd04d7dc5db9353192f88069ff4fa848218f95f9f76fdcec8617",
+    "test/lit/pto/sync_upstream_access_benefits.pto": "43ecf03612ce619f49dbb03af492799f203661000be141a252f67e63db5f488c",
+    "test/lit/pto/sync_upstream_dynamic_alias.pto": "a21f8c43abc299b1780bba81575748db46d3ee0276d32cc2796403024b6dec0b",
+    "docs/designs/frontier-upstream-access-benefits-20261023.md": "7aacfcf003ff7f26b25d348fafb1c9fd988bb132434d99eb5bced5204c7d5600",
+    "tools/pto-test-opt/CompactRegionContractChecks.cpp": "af9f190e4bd58a187b8b18f7a56655d2a379882bdda2e6094821d9723d203f98"
+  },
+  "linux_snapshot_matches": {
+    "lib/PTO/IR/PTOInterfaces/PTOVectorAccessEffects.cpp": true,
+    "lib/PTO/Transforms/FrontierSynch/AnalysisRequest.cpp": true,
+    "test/lit/pto/Inputs/check_frontier_upstream_access.py": true,
+    "test/lit/pto/Inputs/upstream_access_reference.py": true,
+    "test/lit/pto/sync_upstream_access_benefits.pto": true,
+    "test/lit/pto/sync_upstream_dynamic_alias.pto": true,
+    "tools/pto-test-opt/CompactRegionContractChecks.cpp": true
+  },
+  "python": {
+    "executable": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.venv/bin/python",
+    "version": "3.12.13 (main, Jun 23 2026, 15:18:55) [Clang 22.1.3 ]",
+    "platform": "Linux-7.2.5-100.fc43.x86_64-x86_64-with-glibc2.42"
+  },
+  "tools": {
+    "pre-rebase-tools": {
+      "pto-test-opt": "6c73f1d540825227e058798842a0443e3628db41b1abaf20a1cdd8171bff78a1",
+      "pto-sync-input-test": "842cb830195195410eb15d9fc7575b83b38bc52110a290cf38716abe885d2923"
+    },
+    "post-rebase-tools": {
+      "pto-test-opt": "0eb037f33814d28756c56891d40afdd92fd5a9c8bd73758b2ab7b83a5d897911",
+      "pto-sync-input-test": "1aeaec1848c8ac733abc7f81274e491a6edd24457fc05fbdef5aac58b4c8b301"
+    },
+    "candidate-tools": {
+      "pto-test-opt": "8b7488970d3352271d3972b1819d9b8a8c8373a86a0209e4f198ee18922d18f2",
+      "pto-sync-input-test": "a6a85092f9058358c413fb813120454a5d54116278e6293485094c49962b5a83"
+    },
+    "review-tools": {
+      "pto-test-opt": "3baa17c37d414df1283c3c7ea69767b42bb4ac15d4372c8b4aad869bd06e046f",
+      "pto-sync-input-test": "80fbe62a8c6e72c7570c74d4fc888134e12dc2300dcbf80d1c50c58531b17e57"
+    }
+  },
+  "incoming_commits": [
+    "6f5e16afa",
+    "d30269595",
+    "dea14616b",
+    "60c1a767f"
+  ],
+  "build": {
+    "baseline": "success; fresh rebased source before changes",
+    "candidate": "success",
+    "expanded_allocation_adapter": "success",
+    "workers_max": 2,
+    "new_warnings": 0,
+    "inherited_warnings": "exhaustive-switch defaults; deprecated Type::isa in PTODialectAndEntryVerification.cpp",
+    "review_scope_adapter": "success; AnalysisRequest and native probe rebuilt; no warnings"
+  },
+  "validation": {
+    "focused_tests": 22,
+    "focused_passed": 22,
+    "focused_command": [
+      "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.venv/bin/python",
+      "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+      "-j1",
+      "-v",
+      "--filter",
+      "(sync_upstream_access_benefits|sync_upstream_dynamic_alias|sync_storage_effects_views|sync_storage_effects_reuse|sync_storage_effects_blocked|sync_storage_effects_carried|sync_storage_effects_gm_alias|sync_storage_effects_slots|sync_storage_export_coverage|sync_hardware_protection|sync_scalar_shared_contracts|sync_native_class_certification|sync_scalar_current_cut_services|sync_compact_persistent_contract|sync_compact_replay_scaling|sync_prefix_children|sync_prefix_production|sync_qwen_interval_certificate|sync_qwen_completion_import|sync_qwen_caller_reuse|sync_completion_compact_child_contract|sync_expanded_endpoint_adapter)\\.pto$",
+      "-o",
+      ".local/frontier-upstream-benefits-20261023/review-final-gate.json",
+      "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit"
+    ],
+    "final_two_tests": 2,
+    "final_two_passed": 2,
+    "final_two_command": [
+      "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.venv/bin/python",
+      "/home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit",
+      "-j1",
+      "-v",
+      "--filter",
+      "sync_upstream_(access_benefits|dynamic_alias)\\.pto$",
+      "-o",
+      ".local/frontier-upstream-benefits-20261023/final-two.json",
+      "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/section8-refactor/source-pinned/candidate-build/test/lit"
+    ],
+    "positive_cases": 14,
+    "negative_cases": [
+      {
+        "case": "nonunit-step",
+        "declaration": "unqualified; conservative enclosure retained",
+        "native_execution_claimed": false
+      },
+      {
+        "case": "unknown-base",
+        "declaration": "unqualified; conservative enclosure retained",
+        "native_execution_claimed": false
+      },
+      {
+        "case": "unknown-row",
+        "declaration": "unqualified; conservative enclosure retained",
+        "native_execution_claimed": false
+      },
+      {
+        "case": "unaligned-vector-base",
+        "declaration": "unqualified; conservative enclosure retained",
+        "native_execution_claimed": false
+      },
+      {
+        "case": "short-vector-row",
+        "declaration": "unqualified; conservative enclosure retained",
+        "native_execution_claimed": false
+      },
+      {
+        "case": "unaligned-base",
+        "declaration": "invalid IR; verifier refusal preserved"
+      }
+    ],
+    "all_event_comparisons": 3644,
+    "local_boundary_probes": 162,
+    "actual_retained_cover_checks": 12,
+    "explicit_cover_test_adapter_limitations": [
+      "l1_2_64",
+      "l1_3_64"
+    ],
+    "compliance": "5 changed code files; zero errors/warnings",
+    "ruff_f": "passed",
+    "diff_check": "passed",
+    "full_suite": false,
+    "fresh_cpp_backend_build": false,
+    "device_compile": false,
+    "device_execution": false,
+    "sanitizer": false,
+    "prior_to_scope_review_gate": "focused.json: 22/22",
+    "focused_receipt": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/frontier-upstream-benefits-20261023/review-final-gate.json",
+    "frame_scope_cases": 2,
+    "frame_scope_cases_passed": 2,
+    "scope_regression_receipt": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/frontier-upstream-benefits-20261023/review-scope-regressions.json",
+    "arithmetic_cover_refusal_allowlist": [
+      "l1_2_64",
+      "l1_3_64"
+    ]
+  },
+  "cases": [
+    {
+      "name": "l1_0_64",
+      "accesses": {
+        "records": 0,
+        "exact_local": 0,
+        "enclosing_local": 0
+      },
+      "regional": {
+        "backend": "identity-sequence",
+        "occurrences": 0,
+        "covers": 0,
+        "retained_cover_check": "passed",
+        "all_event_comparisons": 0,
+        "selectors": 1,
+        "seconds": 0.06462513795122504,
+        "input_sha256": "9efd631164025660192c052148f000fdb061c86bfc5953d7e6c4957209e62356"
+      },
+      "original_effects": {},
+      "physical": {
+        "name": "l1_0_64",
+        "executed_commands": 0,
+        "excess_ci": 0,
+        "static": {
+          "bytes": 12343,
+          "sha256": "6750f85465b92cca2477af736fb6946e4d29f54354e114e3871e7331eae7dd2c",
+          "static_ir": {
+            "sets": 0,
+            "waits": 0,
+            "barriers": 0,
+            "arithmetic": 9
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "covers-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "not_requested"
+        },
+        "seconds": 0.2158198687247932
+      }
+    },
+    {
+      "name": "l1_1_64",
+      "accesses": {
+        "records": 6,
+        "exact_local": 0,
+        "enclosing_local": 4
+      },
+      "regional": {
+        "backend": "identity-sequence",
+        "occurrences": 3,
+        "covers": 1,
+        "retained_cover_check": "passed",
+        "all_event_comparisons": 36,
+        "selectors": 19,
+        "seconds": 0.06454870477318764,
+        "input_sha256": "2bab6edcf525548d285ea710d900162112ae67bd4993caeb29872dad6f286a06"
+      },
+      "original_effects": {},
+      "physical": {
+        "name": "l1_1_64",
+        "executed_commands": 3,
+        "excess_ci": 0,
+        "static": {
+          "bytes": 14384,
+          "sha256": "5a28ec1585016d6394a67553880d3e0461a45a9549f2ff496cf35f3ebb765547",
+          "static_ir": {
+            "sets": 1,
+            "waits": 1,
+            "barriers": 1,
+            "arithmetic": 21
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "covers-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "passed"
+        },
+        "seconds": 0.21497937990352511
+      }
+    },
+    {
+      "name": "l1_2_64",
+      "accesses": {
+        "records": 12,
+        "exact_local": 0,
+        "enclosing_local": 8
+      },
+      "regional": {
+        "backend": "identity-sequence",
+        "occurrences": 6,
+        "covers": 4,
+        "retained_cover_check": "nonempty arithmetic record expansion unavailable in this test adapter",
+        "all_event_comparisons": 144,
+        "selectors": 19,
+        "seconds": 0.06461883103474975,
+        "input_sha256": "4ccba2ce2734779bf52c0c41bccff352037d5c16c9ff47107422901636563d4b"
+      },
+      "original_effects": {},
+      "physical": {
+        "name": "l1_2_64",
+        "executed_commands": 8,
+        "excess_ci": 1,
+        "static": {
+          "bytes": 14572,
+          "sha256": "0506ce6cd3365bfd215bec576235c688e8e2d43fb4d35996a1bb231a4d2a671f",
+          "static_ir": {
+            "sets": 2,
+            "waits": 2,
+            "barriers": 2,
+            "arithmetic": 34
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "covers-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "passed"
+        },
+        "seconds": 0.21541952528059483
+      }
+    },
+    {
+      "name": "l1_3_64",
+      "accesses": {
+        "records": 18,
+        "exact_local": 0,
+        "enclosing_local": 12
+      },
+      "regional": {
+        "backend": "identity-sequence",
+        "occurrences": 9,
+        "covers": 7,
+        "retained_cover_check": "nonempty arithmetic record expansion unavailable in this test adapter",
+        "all_event_comparisons": 324,
+        "selectors": 19,
+        "seconds": 0.06447905907407403,
+        "input_sha256": "ad78a8163541c505557881b1300b63682c0273d37fd628ecad009dda0ff4573e"
+      },
+      "original_effects": {},
+      "physical": {
+        "name": "l1_3_64",
+        "executed_commands": 13,
+        "excess_ci": 2,
+        "static": {
+          "bytes": 15232,
+          "sha256": "782e509576f81c7c2b4fd969037ac7591c0cdf4983f8ad79df57b2f27748caad",
+          "static_ir": {
+            "sets": 2,
+            "waits": 2,
+            "barriers": 2,
+            "arithmetic": 50
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "covers-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "passed"
+        },
+        "seconds": 0.21512251487001777
+      }
+    },
+    {
+      "name": "l1_1_16",
+      "accesses": {
+        "records": 6,
+        "exact_local": 0,
+        "enclosing_local": 4
+      },
+      "regional": {
+        "backend": "identity-sequence",
+        "occurrences": 3,
+        "covers": 2,
+        "retained_cover_check": "passed",
+        "all_event_comparisons": 36,
+        "selectors": 23,
+        "seconds": 0.0643940893933177,
+        "input_sha256": "bfa1b3cfa1e69ba706c12755c748869c1df24270b9b16aea3a89aa85d8722152"
+      },
+      "original_effects": {},
+      "physical": {
+        "name": "l1_1_16",
+        "executed_commands": 5,
+        "excess_ci": 0,
+        "static": {
+          "bytes": 15025,
+          "sha256": "08f938624038ba1cdaf958a5509627a306211c077b5e843bf44495decd5fd92e",
+          "static_ir": {
+            "sets": 2,
+            "waits": 2,
+            "barriers": 1,
+            "arithmetic": 32
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "covers-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "passed"
+        },
+        "seconds": 0.21456805197522044
+      }
+    },
+    {
+      "name": "l1_1_64_two_windows",
+      "accesses": {
+        "records": 8,
+        "exact_local": 0,
+        "enclosing_local": 6
+      },
+      "regional": {
+        "backend": "identity-sequence",
+        "occurrences": 4,
+        "covers": 2,
+        "retained_cover_check": "passed",
+        "all_event_comparisons": 64,
+        "selectors": 21,
+        "seconds": 0.06436756998300552,
+        "input_sha256": "feeca1ccd06ee6c822bf10ebbb4364951a1ea6bc94e5db76a9db43697ce78640"
+      },
+      "original_effects": {},
+      "physical": {
+        "name": "l1_1_64_two_windows",
+        "executed_commands": 5,
+        "excess_ci": 0,
+        "static": {
+          "bytes": 15219,
+          "sha256": "d0cb333efd18f64987c780bf7dabee7da912349ff9af348ee944a3a07b93a851",
+          "static_ir": {
+            "sets": 2,
+            "waits": 2,
+            "barriers": 1,
+            "arithmetic": 32
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "covers-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "passed"
+        },
+        "seconds": 0.21561843575909734
+      }
+    },
+    {
+      "name": "acc_disjoint",
+      "accesses": {
+        "records": 13,
+        "exact_local": 0,
+        "enclosing_local": 11
+      },
+      "regional": {
+        "backend": "explicit",
+        "occurrences": 5,
+        "covers": 3,
+        "retained_cover_check": "passed",
+        "all_event_comparisons": 100,
+        "selectors": 8,
+        "seconds": 0.06427707616239786,
+        "input_sha256": "5b6777cf5cb08c7df8987ca3f76cc8e13eff0b294d85f0fcda6a3f6a9b56436f"
+      },
+      "original_effects": {},
+      "physical": {
+        "name": "acc_disjoint",
+        "executed_commands": 7,
+        "excess_ci": 0,
+        "static": {
+          "bytes": 6232,
+          "sha256": "a5d2e69ed8f7cc38f0e833b9b8f74f509ef5d69c53ba29b416cbc7a0e7262be9",
+          "static_ir": {
+            "sets": 3,
+            "waits": 3,
+            "barriers": 1,
+            "arithmetic": 16
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "equivalent-to-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "passed"
+        },
+        "seconds": 0.1652349471114576
+      }
+    },
+    {
+      "name": "acc_overlap",
+      "accesses": {
+        "records": 13,
+        "exact_local": 0,
+        "enclosing_local": 11
+      },
+      "regional": {
+        "backend": "explicit",
+        "occurrences": 5,
+        "covers": 4,
+        "retained_cover_check": "passed",
+        "all_event_comparisons": 100,
+        "selectors": 7,
+        "seconds": 0.06483090622350574,
+        "input_sha256": "758e32fe027cb51830592068b15c4ce81f1cc4899513cb74ae536c19eb9fa38f"
+      },
+      "original_effects": {},
+      "physical": {
+        "name": "acc_overlap",
+        "executed_commands": 9,
+        "excess_ci": 0,
+        "static": {
+          "bytes": 6499,
+          "sha256": "49a9a1b231d33c08576068a8d997e9ae3b575acf8294255fe1237d2e38989f6e",
+          "static_ir": {
+            "sets": 4,
+            "waits": 4,
+            "barriers": 1,
+            "arithmetic": 20
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "equivalent-to-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "passed"
+        },
+        "seconds": 0.16544408816844225
+      }
+    },
+    {
+      "name": "rows_0_1_0_1_0_8",
+      "accesses": {
+        "records": 4,
+        "exact_local": 1,
+        "enclosing_local": 2
+      },
+      "regional": {
+        "backend": "sequence",
+        "occurrences": 3,
+        "covers": 1,
+        "retained_cover_check": "passed",
+        "all_event_comparisons": 36,
+        "selectors": 5,
+        "seconds": 0.0647662952542305,
+        "input_sha256": "67b5adbb1f730f2ab0701c4bbe64e9b45c889b294b5d085fcf0b4a0b63ce5708"
+      },
+      "original_effects": {
+        "original_records": 8,
+        "row_regions": 2,
+        "descriptions": [
+          "declared-region",
+          "declared-region"
+        ]
+      },
+      "physical": {
+        "name": "rows_0_1_0_1_0_8",
+        "executed_commands": 3,
+        "excess_ci": 0,
+        "static": {
+          "bytes": 25201,
+          "sha256": "ec8001ca84ce17e3590a04be956ea75b29d076e6fa8f93e96ce9ba9e9e1c061d",
+          "static_ir": {
+            "sets": 1,
+            "waits": 1,
+            "barriers": 1,
+            "arithmetic": 19
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "covers-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "passed"
+        },
+        "seconds": 0.2661179122515023
+      }
+    },
+    {
+      "name": "rows_1_1_0_1_0_8",
+      "accesses": {
+        "records": 6,
+        "exact_local": 2,
+        "enclosing_local": 2
+      },
+      "regional": {
+        "backend": "expanded-finite-guarded",
+        "occurrences": 5,
+        "covers": 2,
+        "retained_cover_check": "passed",
+        "all_event_comparisons": 100,
+        "selectors": 6,
+        "seconds": 0.06503942795097828,
+        "input_sha256": "2507f5942623d27d5029c9e1005a13c4b8341cc742cd27881fb28a565ed02f02"
+      },
+      "original_effects": {
+        "original_records": 8,
+        "row_regions": 2,
+        "descriptions": [
+          "declared-region",
+          "declared-region"
+        ]
+      },
+      "physical": {
+        "name": "rows_1_1_0_1_0_8",
+        "executed_commands": 4,
+        "excess_ci": 0,
+        "static": {
+          "bytes": 31712,
+          "sha256": "dfe32f76332324c633e15b1c94ba9b737785ffe801df22e7f2fae064e4751c56",
+          "static_ir": {
+            "sets": 2,
+            "waits": 2,
+            "barriers": 0,
+            "arithmetic": 31
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "covers-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "passed"
+        },
+        "seconds": 0.3165673380717635
+      }
+    },
+    {
+      "name": "rows_3_1_0_1_0_8",
+      "accesses": {
+        "records": 10,
+        "exact_local": 5,
+        "enclosing_local": 2
+      },
+      "regional": {
+        "backend": "sequence",
+        "occurrences": 9,
+        "covers": 4,
+        "retained_cover_check": "passed",
+        "all_event_comparisons": 324,
+        "selectors": 8,
+        "seconds": 0.06431580008938909,
+        "input_sha256": "1e09e32ba2c1057b2dc977c7be1bcc377482eacc3b0769a3912fe57f56739760"
+      },
+      "original_effects": {
+        "original_records": 8,
+        "row_regions": 2,
+        "descriptions": [
+          "declared-region",
+          "declared-region"
+        ]
+      },
+      "physical": {
+        "name": "rows_3_1_0_1_0_8",
+        "executed_commands": 8,
+        "excess_ci": 0,
+        "static": {
+          "bytes": 26930,
+          "sha256": "b75c3ccb67e8cf72435af49d5c41f2b954cdbca6f7354e3578f69455d5354a35",
+          "static_ir": {
+            "sets": 3,
+            "waits": 3,
+            "barriers": 2,
+            "arithmetic": 39
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "covers-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "passed"
+        },
+        "seconds": 0.2649625581689179
+      }
+    },
+    {
+      "name": "rows_7_1_0_1_0_8",
+      "accesses": {
+        "records": 18,
+        "exact_local": 11,
+        "enclosing_local": 2
+      },
+      "regional": {
+        "backend": "sequence",
+        "occurrences": 17,
+        "covers": 4,
+        "retained_cover_check": "passed",
+        "all_event_comparisons": 1156,
+        "selectors": 12,
+        "seconds": 0.06408525398001075,
+        "input_sha256": "768bae13b3e07c3475ea9f4e65a36a4efc74aaeded69e3aaf262697777b51d11"
+      },
+      "original_effects": {
+        "original_records": 8,
+        "row_regions": 2,
+        "descriptions": [
+          "declared-region",
+          "declared-region"
+        ]
+      },
+      "physical": {
+        "name": "rows_7_1_0_1_0_8",
+        "executed_commands": 8,
+        "excess_ci": 0,
+        "static": {
+          "bytes": 26985,
+          "sha256": "f7d27b194123a8cad56844629850cd3f57c3ee3f981f02f292affd6574d8ced5",
+          "static_ir": {
+            "sets": 3,
+            "waits": 3,
+            "barriers": 2,
+            "arithmetic": 40
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "covers-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "passed"
+        },
+        "seconds": 0.2648138855583966
+      }
+    },
+    {
+      "name": "rows_3_2_0_1_0_8",
+      "accesses": {
+        "records": 16,
+        "exact_local": 9,
+        "enclosing_local": 2
+      },
+      "regional": {
+        "backend": "sequence",
+        "occurrences": 15,
+        "covers": 7,
+        "retained_cover_check": "passed",
+        "all_event_comparisons": 900,
+        "selectors": 8,
+        "seconds": 0.06479354202747345,
+        "input_sha256": "48150c664876bdf34c972446e30670c24bf07d67ef7bd3db261047231dd3a0e8"
+      },
+      "original_effects": {
+        "original_records": 8,
+        "row_regions": 2,
+        "descriptions": [
+          "declared-region",
+          "declared-region"
+        ]
+      },
+      "physical": {
+        "name": "rows_3_2_0_1_0_8",
+        "executed_commands": 11,
+        "excess_ci": 2,
+        "static": {
+          "bytes": 27896,
+          "sha256": "1dfbb78f8b5f481699a33dcfe853c9e175226d297dac560d88aed78e64d11633",
+          "static_ir": {
+            "sets": 3,
+            "waits": 3,
+            "barriers": 3,
+            "arithmetic": 58
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "covers-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "passed"
+        },
+        "seconds": 0.26585258822888136
+      }
+    },
+    {
+      "name": "rows_3_1_1_1_0_8",
+      "accesses": {
+        "records": 10,
+        "exact_local": 5,
+        "enclosing_local": 2
+      },
+      "regional": {
+        "backend": "sequence",
+        "occurrences": 9,
+        "covers": 5,
+        "retained_cover_check": "passed",
+        "all_event_comparisons": 324,
+        "selectors": 6,
+        "seconds": 0.06434224732220173,
+        "input_sha256": "4b5f7c89bbbbf74c18f582a2a62396c02beb1e3ea6af1105283bd66d51b788f0"
+      },
+      "original_effects": {
+        "original_records": 8,
+        "row_regions": 2,
+        "descriptions": [
+          "declared-region",
+          "declared-region"
+        ]
+      },
+      "physical": {
+        "name": "rows_3_1_1_1_0_8",
+        "executed_commands": 10,
+        "excess_ci": 0,
+        "static": {
+          "bytes": 30830,
+          "sha256": "ee0ea38ebfc7a01639930ed5e4640360da0abfa67a9d6ecb6dd61a64139a87d7",
+          "static_ir": {
+            "sets": 4,
+            "waits": 4,
+            "barriers": 2,
+            "arithmetic": 140
+          },
+          "guarantees": {
+            "reduction": [
+              "covers"
+            ],
+            "realization_order": [
+              "covers-selected-order"
+            ]
+          }
+        },
+        "physical_reuse": {
+          "status": "passed"
+        },
+        "seconds": 0.2650111489929259
+      }
+    }
+  ],
+  "comparisons": [
+    {
+      "before": "pre-rebase-baseline",
+      "after": "post-rebase-baseline",
+      "rows": [
+        {
+          "name": "l1_1_64",
+          "before": {
+            "name": "l1_1_64",
+            "executed_commands": 5,
+            "excess_ci": 2,
+            "static": {
+              "bytes": 14890,
+              "sha256": "55fe731f9c0afb5bf75ab586c521313a841121ca7e613d28b88889d105a1d058",
+              "static_ir": {
+                "sets": 2,
+                "waits": 2,
+                "barriers": 1,
+                "arithmetic": 32
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2660889611579478
+          },
+          "after": {
+            "name": "l1_1_64",
+            "executed_commands": 3,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 14246,
+              "sha256": "03c70548f06dcf126d840bc4135ed7ac9a8fc274504a5bcaefb45df2ac129d33",
+              "static_ir": {
+                "sets": 1,
+                "waits": 1,
+                "barriers": 1,
+                "arithmetic": 21
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2648741500452161
+          },
+          "removed_ci": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "added_ci": []
+        },
+        {
+          "name": "l1_1_16",
+          "before": {
+            "name": "l1_1_16",
+            "executed_commands": 5,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 14886,
+              "sha256": "d20e98dbb093640d413e2b1616353787b332409c44449b8c5db5908804f96e60",
+              "static_ir": {
+                "sets": 2,
+                "waits": 2,
+                "barriers": 1,
+                "arithmetic": 32
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2141116028651595
+          },
+          "after": {
+            "name": "l1_1_16",
+            "executed_commands": 5,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 14887,
+              "sha256": "3327814889efce29d8444fe73fb5234871c8b0d3a582ad16f810b9af1a6ed9fb",
+              "static_ir": {
+                "sets": 2,
+                "waits": 2,
+                "barriers": 1,
+                "arithmetic": 32
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2143353931605816
+          },
+          "removed_ci": [],
+          "added_ci": []
+        },
+        {
+          "name": "l1_1_64_two_windows",
+          "before": {
+            "name": "l1_1_64_two_windows",
+            "executed_commands": 7,
+            "excess_ci": 3,
+            "static": {
+              "bytes": 15731,
+              "sha256": "35f96626d1baadeb8187da5091d666fc0db9b91c39b2ed97bfa0a81b3a45d0f5",
+              "static_ir": {
+                "sets": 3,
+                "waits": 3,
+                "barriers": 1,
+                "arithmetic": 43
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.21419094828888774
+          },
+          "after": {
+            "name": "l1_1_64_two_windows",
+            "executed_commands": 5,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 15081,
+              "sha256": "bc294c0e57ed8710d83dcbd627427397fb7ba9294655afc766f00ff68aba34a0",
+              "static_ir": {
+                "sets": 2,
+                "waits": 2,
+                "barriers": 1,
+                "arithmetic": 32
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.21433162689208984
+          },
+          "removed_ci": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              1,
+              3
+            ]
+          ],
+          "added_ci": []
+        },
+        {
+          "name": "acc_disjoint",
+          "before": {
+            "name": "acc_disjoint",
+            "executed_commands": 9,
+            "excess_ci": 5,
+            "static": {
+              "bytes": 6499,
+              "sha256": "fc4d2625d282ca01bd81cb6670dad66780b430ae083242900ceacff59886bfdc",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 1,
+                "arithmetic": 20
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "equivalent-to-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.1641567200422287
+          },
+          "after": {
+            "name": "acc_disjoint",
+            "executed_commands": 7,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 6232,
+              "sha256": "a5d2e69ed8f7cc38f0e833b9b8f74f509ef5d69c53ba29b416cbc7a0e7262be9",
+              "static_ir": {
+                "sets": 3,
+                "waits": 3,
+                "barriers": 1,
+                "arithmetic": 16
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "equivalent-to-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.16423734603449702
+          },
+          "removed_ci": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              1,
+              3
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              3,
+              4
+            ]
+          ],
+          "added_ci": []
+        },
+        {
+          "name": "acc_overlap",
+          "before": {
+            "name": "acc_overlap",
+            "executed_commands": 9,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 6499,
+              "sha256": "49a9a1b231d33c08576068a8d997e9ae3b575acf8294255fe1237d2e38989f6e",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 1,
+                "arithmetic": 20
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "equivalent-to-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.1641274318099022
+          },
+          "after": {
+            "name": "acc_overlap",
+            "executed_commands": 9,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 6499,
+              "sha256": "49a9a1b231d33c08576068a8d997e9ae3b575acf8294255fe1237d2e38989f6e",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 1,
+                "arithmetic": 20
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "equivalent-to-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.16405898099765182
+          },
+          "removed_ci": [],
+          "added_ci": []
+        },
+        {
+          "name": "rows_3_1_0_1_0_8",
+          "before": {
+            "name": "rows_3_1_0_1_0_8",
+            "executed_commands": 10,
+            "excess_ci": 4,
+            "static": {
+              "bytes": 29772,
+              "sha256": "59d8ed8c97782710a01a94601d949eaa78641c3e2760543be29b932b23c02965",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 2,
+                "arithmetic": 116
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2643668679520488
+          },
+          "after": {
+            "name": "rows_3_1_0_1_0_8",
+            "executed_commands": 10,
+            "excess_ci": 4,
+            "static": {
+              "bytes": 29774,
+              "sha256": "c91f6a159593586dee0597c485a18c733b8a390b25bdd2b1a0ce930ae7c60fe8",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 2,
+                "arithmetic": 116
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2645503571256995
+          },
+          "removed_ci": [],
+          "added_ci": []
+        },
+        {
+          "name": "rows_3_2_0_1_0_8",
+          "before": {
+            "name": "rows_3_2_0_1_0_8",
+            "executed_commands": 15,
+            "excess_ci": 14,
+            "static": {
+              "bytes": 28762,
+              "sha256": "df0710ec658a39b6e4feb33a6b498c2c03bdc83f9bf238caf1189e3764761c86",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 3,
+                "arithmetic": 93
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2644615420140326
+          },
+          "after": {
+            "name": "rows_3_2_0_1_0_8",
+            "executed_commands": 15,
+            "excess_ci": 14,
+            "static": {
+              "bytes": 28764,
+              "sha256": "59c35bf240d32390c199fe11ee2bb81c69ab9b2cbf9127961ef92867d43ac6c0",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 3,
+                "arithmetic": 93
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.26461661607027054
+          },
+          "removed_ci": [],
+          "added_ci": []
+        },
+        {
+          "name": "rows_3_1_1_1_0_8",
+          "before": {
+            "name": "rows_3_1_1_1_0_8",
+            "executed_commands": 10,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 30586,
+              "sha256": "ad69269c7c945cd1912fe8f645b9a458d2b99aff07dc9316e3ce97cff900f0fc",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 2,
+                "arithmetic": 140
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2644433230161667
+          },
+          "after": {
+            "name": "rows_3_1_1_1_0_8",
+            "executed_commands": 10,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 30588,
+              "sha256": "53c18a48abce914a6bbc5ff4cc60e68596290df1214f4d44cd101b0e78253a7b",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 2,
+                "arithmetic": 140
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2644432978704572
+          },
+          "removed_ci": [],
+          "added_ci": []
+        }
+      ]
+    },
+    {
+      "before": "post-rebase-baseline",
+      "after": "review-comparison",
+      "rows": [
+        {
+          "name": "l1_1_64",
+          "before": {
+            "name": "l1_1_64",
+            "executed_commands": 3,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 14246,
+              "sha256": "03c70548f06dcf126d840bc4135ed7ac9a8fc274504a5bcaefb45df2ac129d33",
+              "static_ir": {
+                "sets": 1,
+                "waits": 1,
+                "barriers": 1,
+                "arithmetic": 21
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2648741500452161
+          },
+          "after": {
+            "name": "l1_1_64",
+            "executed_commands": 3,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 14243,
+              "sha256": "68c2d2ed376bdb8607fecf8a95eb5c79db1cad1225cc24667ac7b28a52d7db33",
+              "static_ir": {
+                "sets": 1,
+                "waits": 1,
+                "barriers": 1,
+                "arithmetic": 21
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.21441260492429137
+          },
+          "removed_ci": [],
+          "added_ci": []
+        },
+        {
+          "name": "l1_1_16",
+          "before": {
+            "name": "l1_1_16",
+            "executed_commands": 5,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 14887,
+              "sha256": "3327814889efce29d8444fe73fb5234871c8b0d3a582ad16f810b9af1a6ed9fb",
+              "static_ir": {
+                "sets": 2,
+                "waits": 2,
+                "barriers": 1,
+                "arithmetic": 32
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2143353931605816
+          },
+          "after": {
+            "name": "l1_1_16",
+            "executed_commands": 5,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 14884,
+              "sha256": "54dd93bd8f0aeff901a933d342a5310fe1a474b567e0c8de089d0083623a66a0",
+              "static_ir": {
+                "sets": 2,
+                "waits": 2,
+                "barriers": 1,
+                "arithmetic": 32
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.21429754607379436
+          },
+          "removed_ci": [],
+          "added_ci": []
+        },
+        {
+          "name": "l1_1_64_two_windows",
+          "before": {
+            "name": "l1_1_64_two_windows",
+            "executed_commands": 5,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 15081,
+              "sha256": "bc294c0e57ed8710d83dcbd627427397fb7ba9294655afc766f00ff68aba34a0",
+              "static_ir": {
+                "sets": 2,
+                "waits": 2,
+                "barriers": 1,
+                "arithmetic": 32
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.21433162689208984
+          },
+          "after": {
+            "name": "l1_1_64_two_windows",
+            "executed_commands": 5,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 15078,
+              "sha256": "6ab8455401cb285d6386914912a9ba87783a9b75b70a2ae8a0434d42a207cbe5",
+              "static_ir": {
+                "sets": 2,
+                "waits": 2,
+                "barriers": 1,
+                "arithmetic": 32
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.21413606498390436
+          },
+          "removed_ci": [],
+          "added_ci": []
+        },
+        {
+          "name": "acc_disjoint",
+          "before": {
+            "name": "acc_disjoint",
+            "executed_commands": 7,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 6232,
+              "sha256": "a5d2e69ed8f7cc38f0e833b9b8f74f509ef5d69c53ba29b416cbc7a0e7262be9",
+              "static_ir": {
+                "sets": 3,
+                "waits": 3,
+                "barriers": 1,
+                "arithmetic": 16
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "equivalent-to-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.16423734603449702
+          },
+          "after": {
+            "name": "acc_disjoint",
+            "executed_commands": 7,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 6232,
+              "sha256": "a5d2e69ed8f7cc38f0e833b9b8f74f509ef5d69c53ba29b416cbc7a0e7262be9",
+              "static_ir": {
+                "sets": 3,
+                "waits": 3,
+                "barriers": 1,
+                "arithmetic": 16
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "equivalent-to-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.16416666004806757
+          },
+          "removed_ci": [],
+          "added_ci": []
+        },
+        {
+          "name": "acc_overlap",
+          "before": {
+            "name": "acc_overlap",
+            "executed_commands": 9,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 6499,
+              "sha256": "49a9a1b231d33c08576068a8d997e9ae3b575acf8294255fe1237d2e38989f6e",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 1,
+                "arithmetic": 20
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "equivalent-to-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.16405898099765182
+          },
+          "after": {
+            "name": "acc_overlap",
+            "executed_commands": 9,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 6499,
+              "sha256": "49a9a1b231d33c08576068a8d997e9ae3b575acf8294255fe1237d2e38989f6e",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 1,
+                "arithmetic": 20
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "equivalent-to-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.1642651646398008
+          },
+          "removed_ci": [],
+          "added_ci": []
+        },
+        {
+          "name": "rows_3_1_0_1_0_8",
+          "before": {
+            "name": "rows_3_1_0_1_0_8",
+            "executed_commands": 10,
+            "excess_ci": 4,
+            "static": {
+              "bytes": 29774,
+              "sha256": "c91f6a159593586dee0597c485a18c733b8a390b25bdd2b1a0ce930ae7c60fe8",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 2,
+                "arithmetic": 116
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2645503571256995
+          },
+          "after": {
+            "name": "rows_3_1_0_1_0_8",
+            "executed_commands": 8,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 26366,
+              "sha256": "08624ae35d3e9db9fc00c9910cec9ff9c5edaa6b408d494c39fdc7a36ca0ac37",
+              "static_ir": {
+                "sets": 3,
+                "waits": 3,
+                "barriers": 2,
+                "arithmetic": 39
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.26428445894271135
+          },
+          "removed_ci": [
+            [
+              1,
+              4
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              3,
+              4
+            ]
+          ],
+          "added_ci": []
+        },
+        {
+          "name": "rows_3_2_0_1_0_8",
+          "before": {
+            "name": "rows_3_2_0_1_0_8",
+            "executed_commands": 15,
+            "excess_ci": 14,
+            "static": {
+              "bytes": 28764,
+              "sha256": "59c35bf240d32390c199fe11ee2bb81c69ab9b2cbf9127961ef92867d43ac6c0",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 3,
+                "arithmetic": 93
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.26461661607027054
+          },
+          "after": {
+            "name": "rows_3_2_0_1_0_8",
+            "executed_commands": 11,
+            "excess_ci": 2,
+            "static": {
+              "bytes": 27332,
+              "sha256": "3b8641ec90a6303dfdcb8e03a86e7ec596fa5c86a80876f1fe6f0def932cb2d7",
+              "static_ir": {
+                "sets": 3,
+                "waits": 3,
+                "barriers": 3,
+                "arithmetic": 58
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.26478036120533943
+          },
+          "removed_ci": [
+            [
+              1,
+              4
+            ],
+            [
+              1,
+              5
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              2,
+              6
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              3,
+              5
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              4,
+              6
+            ],
+            [
+              5,
+              6
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "added_ci": []
+        },
+        {
+          "name": "rows_3_1_1_1_0_8",
+          "before": {
+            "name": "rows_3_1_1_1_0_8",
+            "executed_commands": 10,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 30588,
+              "sha256": "53c18a48abce914a6bbc5ff4cc60e68596290df1214f4d44cd101b0e78253a7b",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 2,
+                "arithmetic": 140
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2644432978704572
+          },
+          "after": {
+            "name": "rows_3_1_1_1_0_8",
+            "executed_commands": 10,
+            "excess_ci": 0,
+            "static": {
+              "bytes": 30548,
+              "sha256": "5df369dee08cb032c7a67b40141135b7567301b54a55ab92326baf9873fcc979",
+              "static_ir": {
+                "sets": 4,
+                "waits": 4,
+                "barriers": 2,
+                "arithmetic": 140
+              },
+              "guarantees": {
+                "reduction": [
+                  "covers"
+                ],
+                "realization_order": [
+                  "covers-selected-order"
+                ]
+              }
+            },
+            "physical_reuse": {
+              "status": "passed"
+            },
+            "seconds": 0.2643854389898479
+          },
+          "removed_ci": [],
+          "added_ci": []
+        }
+      ]
+    }
+  ],
+  "scaling": [
+    {
+      "rows": 8,
+      "original_effect_records": 8,
+      "original_symbolic_row_regions": 2,
+      "math_only_backend": "sequence",
+      "math_only_shared_arena_nodes": 26,
+      "math_only_root_ports": 11,
+      "math_only_root_storage_cells": 10,
+      "math_only_seconds": 0.06425016792491078,
+      "production_logical_seconds": 0.26434757001698017,
+      "production_logical_static": {
+        "bytes": 29151,
+        "sha256": "7f92888e4b018875c9759fcbf6f2435f27aad3044f698f4dc75c2c5cdd4842e8",
+        "static_ir": {
+          "sets": 3,
+          "waits": 3,
+          "barriers": 2,
+          "arithmetic": 39
+        },
+        "guarantees": {
+          "reduction": [
+            "covers"
+          ],
+          "realization_order": [
+            "covers-selected-order"
+          ]
+        }
+      },
+      "allocation": "not requested"
+    },
+    {
+      "rows": 64,
+      "original_effect_records": 8,
+      "original_symbolic_row_regions": 2,
+      "math_only_backend": "sequence",
+      "math_only_shared_arena_nodes": 138,
+      "math_only_root_ports": 67,
+      "math_only_root_storage_cells": 66,
+      "math_only_seconds": 0.06396062625572085,
+      "production_logical_seconds": 0.26435694890096784,
+      "production_logical_static": {
+        "bytes": 29220,
+        "sha256": "b8b1e4cd8f4d2ce185234fdbcb16b336d5d2a4dbb0a34dbafe33081d4bb482ad",
+        "static_ir": {
+          "sets": 3,
+          "waits": 3,
+          "barriers": 2,
+          "arithmetic": 39
+        },
+        "guarantees": {
+          "reduction": [
+            "covers"
+          ],
+          "realization_order": [
+            "covers-selected-order"
+          ]
+        }
+      },
+      "allocation": "not requested"
+    },
+    {
+      "rows": 256,
+      "original_effect_records": 8,
+      "original_symbolic_row_regions": 2,
+      "math_only_backend": "sequence",
+      "math_only_shared_arena_nodes": 522,
+      "math_only_root_ports": 259,
+      "math_only_root_storage_cells": 258,
+      "math_only_seconds": 0.11404401902109385,
+      "production_logical_seconds": 0.26437358604744077,
+      "production_logical_static": {
+        "bytes": 29277,
+        "sha256": "d25d61ec5e8f9c9827771f9b9ca28e2d18a6c57d401d104011503a3fd801de8b",
+        "static_ir": {
+          "sets": 3,
+          "waits": 3,
+          "barriers": 2,
+          "arithmetic": 39
+        },
+        "guarantees": {
+          "reduction": [
+            "covers"
+          ],
+          "realization_order": [
+            "covers-selected-order"
+          ]
+        }
+      },
+      "allocation": "not requested"
+    }
+  ],
+  "contracts": {
+    "target": "A3",
+    "gm_alias": "may-not-alias for layout fixtures; dynamic-local alias regression tests both policies",
+    "eligibility": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "initialization": "payload inputs initialized on entry",
+    "model": "explicit ND and supplied NZ/ZN/fractal layouts",
+    "exact_local": "declared footprints independently compared",
+    "enclosing_local": "coverage checked; enclosing effects remain labeled enclosures",
+    "gm": "conflict model included; complete GM access agreement and selectors not qualified here",
+    "native": "host model under existing operation contracts; no independent instruction qualification"
+  },
+  "limitations": [
+    "BF16 local move admission unchanged",
+    "opaque GM partition layouts remain unqualified",
+    "coarse completion classes can erase some precision benefits",
+    "boundary interfaces grow with row partitions",
+    "bounded command containment is not uniform realization-order equality",
+    "two arithmetic retained-cover expansions unavailable in existing test adapter",
+    "Expanded allocation certifies closed fixed-coordinate invocations only; unbound enclosing visits require separate rearming evidence"
+  ],
+  "artifact_root": "/home/toni/work/pypto3_sync_more/PTOAS-handoff/workspaces/frontier-shared-input/.local/frontier-upstream-benefits-20261023",
+  "raw_receipts": [
+    "candidate-check/receipt.json",
+    "scaling/receipt.json",
+    "scaling/production-receipt.json",
+    "pre-rebase-baseline/receipt.json",
+    "post-rebase-baseline/receipt.json",
+    "candidate-comparison/receipt.json",
+    "review-final-cases.json",
+    "review-final-gate.json",
+    "review-comparison/receipt.json"
+  ],
+  "allocation_frames": [
+    {
+      "selected_loop": 0,
+      "closed_invocation": true,
+      "result": {
+        "allocated": true,
+        "backend": "expanded-finite-guarded",
+        "prepared": true,
+        "queries_retained": true,
+        "retained_owner_reusable": true
+      }
+    },
+    {
+      "selected_loop": 1,
+      "closed_invocation": false,
+      "result": {
+        "allocated": false,
+        "backend": "expanded-finite-guarded",
+        "prepared": true,
+        "queries_retained": true,
+        "retained_owner_reusable": true
+      }
+    }
+  ],
+  "accepted_tools": "review-tools",
+  "scaling_tools": "candidate-tools; retained historical measurements, allocation not requested",
+  "review": {
+    "correctness": {
+      "status": "accepted after closed-frame guard and regression",
+      "reviewer": "upstream_correctness_review",
+      "findings_resolved": [
+        "Reject expanded allocation for unbound enclosing counted visits and while scopes",
+        "Guard candidate/cached-certificate paths and null regional exports",
+        "Preserve queries and fresh preparation on refusal"
+      ]
+    },
+    "generality": {
+      "status": "accepted after final gate and receipt refresh",
+      "reviewer": "upstream_generality_review",
+      "findings_resolved": [
+        "Allowlist only the two known arithmetic cover test-adapter limitations"
+      ]
+    },
+    "final_gate": {
+      "tests": 22,
+      "passed": 22,
+      "seconds": 108.82
+    }
+  }
+}

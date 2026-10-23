@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-sync-input-test --gm-alias=may-alias --storage-effects %s | FileCheck %s
+// RUN: pto-sync-input-test --gm-alias=may-not-alias --storage-effects %s | FileCheck %s
+// GM alias policy is not permission to separate unknown local allocations.
+// CHECK-LABEL: storage dynamic_local
+// CHECK: effect 2 pto.texp read symbolic
+// CHECK: overlap 1,2=1
+// CHECK: conflict 1,2=1
+// CHECK-LABEL: storage static_local
+// CHECK: overlap 1,2=0
+// CHECK: conflict 1,2=0
+// CHECK: source-unchanged; dependency-analysis-not-run
+
+!tile = !pto.tile_buf<vec, 1x128xf32>
+!part = !pto.partition_tensor_view<1x128xf32>
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @dynamic_local(%source: !part, %address: i64) attributes {
+      test.overlap = array<i64: 1, 2>, test.conflict = array<i64: 1, 2>} {
+    %zero = arith.constant 0 : i64
+    %far = arith.constant 8192 : i64
+    %loaded = pto.alloc_tile addr = %zero : !tile
+    %dynamic = pto.alloc_tile addr = %address : !tile
+    %output = pto.alloc_tile addr = %far : !tile
+    pto.tload ins(%source : !part) outs(%loaded : !tile)
+    pto.texp ins(%dynamic : !tile) outs(%output : !tile)
+    return
+  }
+  func.func @static_local(%source: !part) attributes {
+      test.overlap = array<i64: 1, 2>, test.conflict = array<i64: 1, 2>} {
+    %zero = arith.constant 0 : i64
+    %middle = arith.constant 4096 : i64
+    %far = arith.constant 8192 : i64
+    %loaded = pto.alloc_tile addr = %zero : !tile
+    %separate = pto.alloc_tile addr = %middle : !tile
+    %output = pto.alloc_tile addr = %far : !tile
+    pto.tload ins(%source : !part) outs(%loaded : !tile)
+    pto.texp ins(%separate : !tile) outs(%output : !tile)
+    return
+  }
+}

@@ -9,12 +9,14 @@
 // Shared selections for ordinary ND/DN transfers and aligned pointwise operations.
 // GM and local effects are qualified separately: a byte-counted GM transfer
 // remains exact when the local DMA fringe needs an enclosing allocation bound.
-static bool plainVectorAccessTile(Value value, unsigned alignment, bool allowColumnMajor = false)
+// A supported complete-row view retains its original row expression. Its
+// footprint proof does not establish independence across visits or resets.
+static bool plainVectorAccessType(pto::TileBufType type, unsigned alignment, bool allowColumnMajor)
 {
-    auto type = dyn_cast<pto::TileBufType>(value.getType());
     auto space = type ? dyn_cast_or_null<pto::AddressSpaceAttr>(type.getMemorySpace()) : pto::AddressSpaceAttr{};
-    if (!type || !space || space.getAddressSpace() != pto::AddressSpace::VEC ||
-        type.getShape().size() != 2 || value.getDefiningOp<pto::SubViewOp>() ||
+    if (!type || !space || !alignment ||
+        space.getAddressSpace() != pto::AddressSpace::VEC ||
+        type.getShape().size() != 2 ||
         (type.getBLayoutValueI32() != static_cast<int>(pto::BLayout::RowMajor) &&
          (!allowColumnMajor || type.getBLayoutValueI32() != static_cast<int>(pto::BLayout::ColMajor))) ||
         type.getSLayoutValueI32() != static_cast<int>(pto::SLayout::NoneBox) ||
@@ -27,6 +29,69 @@ static bool plainVectorAccessTile(Value value, unsigned alignment, bool allowCol
     const unsigned outer = 1 - inner;
     return width && width <= 4 && shape[outer] > 0 && shape[outer] < 4096 &&
         shape[inner] > 0 && shape[inner] <= 65535 && (shape[inner] * width) % alignment == 0;
+}
+
+static bool vectorSubviewRowInBounds(Value row, int64_t rows)
+{
+    if (auto fixed = getConstIndexValue(row)) {
+        return *fixed >= 0 && *fixed < rows;
+    }
+    auto argument = dyn_cast<mlir::BlockArgument>(row);
+    auto loop = argument ? dyn_cast<mlir::scf::ForOp>(argument.getOwner()->getParentOp()) : mlir::scf::ForOp{};
+    if (!loop || row != loop.getInductionVar()) {
+        return false;
+    }
+    auto lower = getConstIndexValue(loop.getLowerBound());
+    auto upper = getConstIndexValue(loop.getUpperBound());
+    auto step = getConstIndexValue(loop.getStep());
+    return lower && upper && step && *lower >= 0 && *lower <= *upper && *upper <= rows && *step == 1;
+}
+
+static bool alignedFullVectorRowSubview(pto::SubViewOp view, unsigned alignment)
+{
+    // Complete 256-byte vector rows also contain A5's unmasked read fringes
+    // when a later valid-shape update shortens the selected logical row.
+    const unsigned requiredAlignment = std::max(alignment, 256u);
+    auto parent = dyn_cast<pto::TileBufType>(view.getSource().getType());
+    auto child = dyn_cast<pto::TileBufType>(view.getResult().getType());
+    auto allocation = view.getSource().getDefiningOp<pto::AllocTileOp>();
+    if (!child || !allocation ||
+        !plainVectorAccessType(parent, requiredAlignment, false) ||
+        child.getShape().size() != 2 || view.getOffsets().size() != 2 ||
+        parent.getElementType() != child.getElementType() || parent.getMemorySpace() != child.getMemorySpace() ||
+        child.getBLayoutValueI32() != static_cast<int>(pto::BLayout::RowMajor)) {
+        return false;
+    }
+    auto shape = parent.getShape();
+    auto sizes = view.getSizes();
+    if (child.getShape()[0] != 1 || child.getShape()[1] != shape[1] ||
+        !sizes || sizes.size() != 2 || cast<IntegerAttr>(sizes[0]).getInt() != 1 ||
+        cast<IntegerAttr>(sizes[1]).getInt() != shape[1]) {
+        return false;
+    }
+    auto base = getConstIndexValue(allocation.getAddr());
+    auto column = getConstIndexValue(view.getOffsets()[1]);
+    const auto width = pto::linearAccessBytes(parent.getElementType());
+    // Existing vector type bounds make both products fit in uint64_t. Keep
+    // the absolute end representable by the shared signed byte-map service.
+    if (!base || *base < 0 || !column || *column != 0) {
+        return false;
+    }
+    const uint64_t rowBytes = static_cast<uint64_t>(shape[1]) * width;
+    const uint64_t parentBytes = static_cast<uint64_t>(shape[0]) * rowBytes;
+    return static_cast<uint64_t>(*base) % requiredAlignment == 0 &&
+        parentBytes <= static_cast<uint64_t>(INT64_MAX - *base) &&
+        vectorSubviewRowInBounds(view.getOffsets()[0], shape[0]);
+}
+
+static bool plainVectorAccessTile(Value value, unsigned alignment, bool allowColumnMajor = false)
+{
+    auto type = dyn_cast<pto::TileBufType>(value.getType());
+    if (!plainVectorAccessType(type, alignment, allowColumnMajor)) {
+        return false;
+    }
+    auto view = value.getDefiningOp<pto::SubViewOp>();
+    return !view || alignedFullVectorRowSubview(view, alignment);
 }
 
 // The native ND/DN DMA consumes row/column dimensions and a uint32_t byte

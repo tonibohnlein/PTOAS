@@ -632,6 +632,20 @@ int runCompactRegionContract(const char* filename)
             llvm::outs() << llvm::json::Value(expandedPointChecks(*answer.mathematical)) << "\n";
             return 0;
         }
+        if (mathOnly && function->hasAttr("test.contract_allocation_probe")) {
+            auto prepared = session.prepareLogical(answer);
+            const SmallVector<int64_t> ids{0, 1, 2, 3, 4, 5};
+            const bool allocated = succeeded(prepared) &&
+                succeeded(session.attachAllocation(answer, **prepared, ids));
+            auto again = session.prepareLogical(answer);
+            llvm::outs() << llvm::json::Value(llvm::json::Object{
+                {"backend", answer.mathematical->backend},
+                {"prepared", succeeded(prepared)}, {"allocated", allocated},
+                {"retained_owner_reusable", succeeded(again)},
+                {"queries_retained", answer.regionalExports &&
+                    answer.regionalExports->capabilities.exactQueries}}) << "\n";
+            return 0;
+        }
         if (mathOnly && function->hasAttr("test.contract_emit")) {
             auto prepared = session.prepareLogical(answer);
             if (failed(prepared) || failed(fs::insertLogicalSynchronization(function, **prepared))) { return 1; }
